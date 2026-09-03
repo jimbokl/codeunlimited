@@ -16,9 +16,11 @@ pub struct Metrics {
 }
 
 pub fn compute(reqs: &[Request], long_session_turns: usize) -> Metrics {
-    let mut by: HashMap<&str, Vec<&Request>> = HashMap::new();
+    let mut by: HashMap<(&str, &str, &str), Vec<&Request>> = HashMap::new();
     for r in reqs {
-        by.entry(r.session.as_str()).or_default().push(r);
+        by.entry((r.source, r.project.as_str(), r.session.as_str()))
+            .or_default()
+            .push(r);
     }
     let mut growth = Vec::new();
     for rows in by.values_mut() {
@@ -101,5 +103,15 @@ mod tests {
     fn threshold_without_a_tail_is_flat() {
         let rows: Vec<_> = (0..30).map(request).collect();
         assert_eq!(compute(&rows, 30).context_growth, 1.0);
+    }
+
+    #[test]
+    fn equal_session_ids_in_different_projects_stay_separate() {
+        let mut first = request(0);
+        first.project = "first".into();
+        let mut second = request(1);
+        second.project = "second".into();
+
+        assert_eq!(compute(&[first, second], 30).sessions, 2);
     }
 }

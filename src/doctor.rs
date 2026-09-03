@@ -22,6 +22,13 @@ struct Tally {
     missing_usage: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceState {
+    Unavailable,
+    Healthy,
+    Unhealthy,
+}
+
 fn add(a: Tally, b: Tally) -> Tally {
     Tally {
         files: a.files + b.files,
@@ -64,12 +71,12 @@ fn scan(root: &Path, is_claude: bool) -> Tally {
                     continue;
                 };
                 let usage_ok = if is_claude {
-                    d.get("type").and_then(Value::as_str) != Some("assistant")
-                        || d["message"]["usage"].is_object()
+                    d.get("type").and_then(Value::as_str) == Some("assistant")
+                        && d["message"]["usage"].is_object()
                 } else {
-                    d["payload"].get("type").and_then(Value::as_str) != Some("token_count")
-                        || d["payload"]["info"]["last_token_usage"].is_object()
-                        || d["payload"]["rate_limits"].is_object()
+                    d["payload"].get("type").and_then(Value::as_str) == Some("token_count")
+                        && (d["payload"]["info"]["last_token_usage"].is_object()
+                            || d["payload"]["rate_limits"].is_object())
                 };
                 if usage_ok {
                     t.parsed += 1;
@@ -82,10 +89,17 @@ fn scan(root: &Path, is_claude: bool) -> Tally {
         .reduce(Tally::default, add)
 }
 
-fn print_source(name: &str, root: &Path, t: &Tally) -> bool {
+fn print_source(name: &str, root: &Path, t: &Tally) -> SourceState {
     if t.files == 0 {
         println!(" {name:6}: no logs found at {}", root.display());
-        return false;
+        return SourceState::Unavailable;
+    }
+    if t.candidates == 0 {
+        println!(
+            " {name:6}: {} files, no usage candidates recognized",
+            t.files
+        );
+        return SourceState::Unavailable;
     }
     let bad = t.json_errors + t.missing_usage;
     let rate = if t.candidates > 0 {
@@ -106,7 +120,11 @@ fn print_source(name: &str, root: &Path, t: &Tally) -> bool {
              {name} version."
         );
     }
-    healthy
+    if healthy {
+        SourceState::Healthy
+    } else {
+        SourceState::Unhealthy
+    }
 }
 
 pub fn run() -> i32 {
@@ -114,15 +132,18 @@ pub fn run() -> i32 {
     let claude_root = parsers::claude_root();
     let codex_root = parsers::codex_root();
     let (ct, xt) = rayon::join(|| scan(&claude_root, true), || scan(&codex_root, false));
-    let ok = print_source("claude", &claude_root, &ct) & print_source("codex", &codex_root, &xt);
+    let states = [
+        print_source("claude", &claude_root, &ct),
+        print_source("codex", &codex_root, &xt),
+    ];
     println!();
-    if ok {
-        println!(" All good: the parsers understand your logs.");
+    if states.contains(&SourceState::Unhealthy) {
+        1
+    } else if states.contains(&SourceState::Healthy) {
+        println!(" All good: the parsers understand your available logs.");
         0
     } else {
-        if ct.files == 0 && xt.files == 0 {
-            eprintln!("No local logs were available to validate.");
-        }
+        eprintln!("No local logs with recognizable usage data were available to validate.");
         1
     }
 }

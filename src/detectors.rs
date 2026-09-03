@@ -139,7 +139,11 @@ fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
         if rows.len() <= long {
             continue;
         }
-        let early = &rows[..EARLY_N.min(rows.len())];
+        let early_count = EARLY_N.min(long).min(rows.len());
+        if early_count == 0 {
+            continue;
+        }
+        let early = &rows[..early_count];
         let early_avg = early
             .iter()
             .map(|index| reqs[*index].prompt_total() as f64)
@@ -187,7 +191,8 @@ fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
 }
 
 fn cache_rewrites(reqs: &[Request]) -> Finding {
-    let (mut breaks, mut ttl, mut break_events, mut ttl_events) = (0u64, 0u64, 0u64, 0u64);
+    let (mut breaks, mut ttl, mut unknown) = (0u64, 0u64, 0u64);
+    let (mut break_events, mut ttl_events, mut unknown_events) = (0u64, 0u64, 0u64);
     let mut claims = Vec::new();
     for rows in sessions(reqs) {
         for position in 1..rows.len() {
@@ -201,18 +206,21 @@ fn cache_rewrites(reqs: &[Request]) -> Finding {
                 continue;
             }
             let previous = &reqs[rows[position - 1]];
-            if let (Some(a), Some(b)) = (request.ts, previous.ts) {
-                let gap = a.saturating_sub(b);
-                let limit = if request.w1h > 0 || previous.w1h > 0 {
-                    3_600
-                } else {
-                    300
-                };
-                if gap > limit {
-                    ttl = ttl.saturating_add(written);
-                    ttl_events = ttl_events.saturating_add(1);
-                    continue;
-                }
+            let (Some(a), Some(b)) = (request.ts, previous.ts) else {
+                unknown = unknown.saturating_add(written);
+                unknown_events = unknown_events.saturating_add(1);
+                continue;
+            };
+            let gap = a.saturating_sub(b);
+            let limit = if request.w1h > 0 || previous.w1h > 0 {
+                3_600
+            } else {
+                300
+            };
+            if gap > limit {
+                ttl = ttl.saturating_add(written);
+                ttl_events = ttl_events.saturating_add(1);
+                continue;
             }
             breaks = breaks.saturating_add(written);
             break_events = break_events.saturating_add(1);
@@ -229,13 +237,21 @@ fn cache_rewrites(reqs: &[Request]) -> Finding {
         "Mid-session cache re-writes",
         claims,
         format!(
-            "{} prefix breaks ({:.1}M tok.) and {} TTL expirations ({:.1}M tok.) \
-             re-paid for context instead of reading it back from cache. TTL expirations \
-             are diagnostic only and excluded from reclaimable totals.",
+            "{} prefix breaks ({:.1}M tok.), {} TTL expirations ({:.1}M tok.), and \
+             {} {} with an unknown gap ({:.1}M tok.) re-paid for context instead of \
+             reading it back from cache. TTL expirations and unknown gaps are diagnostic \
+             only and excluded from reclaimable totals.",
             break_events,
             breaks as f64 / 1e6,
             ttl_events,
-            ttl as f64 / 1e6
+            ttl as f64 / 1e6,
+            unknown_events,
+            if unknown_events == 1 {
+                "rewrite"
+            } else {
+                "rewrites"
+            },
+            unknown as f64 / 1e6
         ),
         "Breaks: move mutating blocks (timestamps, dynamic state) out of the \
          prompt prefix. Expirations: avoid 5+ minute pauses mid-task.",
@@ -249,15 +265,8 @@ fn heavy_session_start(reqs: &[Request], cfg: &Config) -> Finding {
         .filter(|index| reqs[*index].source == "claude")
         .map(|index| {
             let request = &reqs[index];
-            (
-                index,
-                request
-                    .w5
-                    .saturating_add(request.w1h)
-                    .saturating_add(request.unc_in),
-            )
+            (index, request.w5.saturating_add(request.w1h))
         })
-        .filter(|(_, written)| *written > 0)
         .collect();
     let mut sizes: Vec<u64> = firsts.iter().map(|(_, written)| *written).collect();
     sizes.sort_unstable();
@@ -425,6 +434,45 @@ mod tests {
         let finding = cache_rewrites(&rows);
         assert_eq!(finding.impact_tokens, 0);
         assert!(finding.detail.contains("1 TTL expiration"));
+    }
+
+    #[test]
+    fn unknown_cache_gap_is_not_reclaimable() {
+        let mut rows = vec![req("s", 0, 50_000, 10), req("s", 30, 50_000, 10)];
+        rows[1].ts = None;
+
+        let finding = cache_rewrites(&rows);
+
+        assert_eq!(finding.impact_tokens, 0);
+        assert!(finding.detail.contains("1 rewrite with an unknown gap"));
+    }
+
+    #[test]
+    fn uncached_prompt_is_not_a_fat_session_start() {
+        let mut row = req("s", 0, 0, 10);
+        row.unc_in = 100_000;
+
+        let finding = heavy_session_start(&[row], &Config::default());
+
+        assert_eq!(finding.impact_tokens, 0);
+        assert!(finding.detail.contains("0k tokens"));
+    }
+
+    #[test]
+    fn short_session_tail_is_not_used_in_its_own_baseline() {
+        let rows = vec![
+            req("s", 0, 10_000, 10),
+            req("s", 1, 10_000, 10),
+            req("s", 2, 100_000, 10),
+        ];
+        let cfg = Config {
+            long_session_turns: 2,
+            ..Config::default()
+        };
+
+        let finding = context_tax(&rows, &cfg);
+
+        assert!(finding.impact_tokens > 0);
     }
 
     #[test]

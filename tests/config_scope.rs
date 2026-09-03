@@ -77,3 +77,31 @@ fn fix_all_skips_globally_ignored_registered_project() {
     assert!(!skip.join("AGENTS.md").exists());
     assert!(!skip.join("CLAUDE.md").exists());
 }
+
+#[test]
+fn fix_all_skips_project_ignored_by_its_local_config() {
+    let project_parent = TempDir::new().expect("project parent");
+    let state = TempDir::new().expect("state tempdir");
+    let project = project_parent.path().join("local-ignore");
+    fs::create_dir(&project).expect("project");
+
+    base_cmd(state.path())
+        .arg("fix")
+        .arg(&project)
+        .assert()
+        .success();
+    fs::write(
+        project.join(".codeunlimited.toml"),
+        "ignore_projects = [\"local-ignore\"]\n",
+    )
+    .expect("local config");
+
+    base_cmd(state.path())
+        .args(["fix", "--all", "--apply"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Skipping ignored project"));
+
+    assert!(!project.join("AGENTS.md").exists());
+    assert!(!project.join("CLAUDE.md").exists());
+}

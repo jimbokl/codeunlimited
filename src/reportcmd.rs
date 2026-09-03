@@ -487,12 +487,25 @@ fn history_snapshot(
     })
 }
 
-fn read_history(path: &Path) -> Vec<Value> {
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
+fn parse_history(raw: &str) -> std::io::Result<Vec<Value>> {
+    let mut history = Vec::new();
+    for (index, line) in raw.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        history.push(serde_json::from_str(line).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid history JSON at line {}: {error}", index + 1),
+            )
+        })?);
+    }
+    Ok(history)
+}
+
+fn read_history(path: &Path) -> std::io::Result<Vec<Value>> {
+    let raw = crate::safeio::read_optional_text(path)?.unwrap_or_default();
+    parse_history(&raw)
 }
 
 fn append_history(path: &Path, snapshot: &Value) -> std::io::Result<Vec<Value>> {
@@ -509,16 +522,15 @@ fn append_history(path: &Path, snapshot: &Value) -> std::io::Result<Vec<Value>> 
         .write(true)
         .open(lock_path)?;
     lock.lock_exclusive()?;
-    let mut raw = std::fs::read_to_string(path).unwrap_or_default();
+    let mut raw = crate::safeio::read_optional_text(path)?.unwrap_or_default();
+    let mut history = parse_history(&raw)?;
     if !raw.is_empty() && !raw.ends_with('\n') {
         raw.push('\n');
     }
     writeln!(&mut raw, "{snapshot}").expect("writing to String cannot fail");
     crate::safeio::atomic_write(path, raw.as_bytes())?;
-    Ok(raw
-        .lines()
-        .filter_map(|ln| serde_json::from_str(ln).ok())
-        .collect())
+    history.push(snapshot.clone());
+    Ok(history)
 }
 
 fn html_path_for(markdown_path: &Path) -> std::io::Result<PathBuf> {
@@ -611,7 +623,13 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
     let now = chrono::Utc::now();
     let snapshot = history_snapshot(&reqs, reclaim, &now, cfg.long_session_turns);
     let history_path = root.join(HISTORY_FILE);
-    let mut history = read_history(&history_path);
+    let mut history = match read_history(&history_path) {
+        Ok(history) => history,
+        Err(error) => {
+            eprintln!("Cannot read {}: {error}", history_path.display());
+            return 1;
+        }
+    };
     history.push(snapshot.clone());
 
     let mut data = collect(
@@ -668,8 +686,21 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
 
     // Per-registered-project deltas.
     let mut project_deltas: Vec<ProjectDelta> = Vec::new();
-    for p in registry::projects() {
+    let projects = match registry::projects() {
+        Ok(projects) => projects,
+        Err(error) => {
+            eprintln!("Cannot read the project registry: {error}");
+            return 1;
+        }
+    };
+    for p in projects {
+        if cfg.is_ignored(&p.to_string_lossy()) {
+            continue;
+        }
         let project_cfg = crate::config::Config::load_for(Some(&p));
+        if project_cfg.is_ignored(&p.to_string_lossy()) {
+            continue;
+        }
         let mut pr = parsers::iter_claude(Some(&p));
         pr.extend(parsers::iter_codex(Some(&p)));
         let name = p
@@ -703,7 +734,13 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     }
     let history_path = registry::home_dir().join("history.jsonl");
     let snapshot = history_snapshot(&reqs, reclaim, &now, cfg.long_session_turns);
-    let mut history = read_history(&history_path);
+    let mut history = match read_history(&history_path) {
+        Ok(history) => history,
+        Err(error) => {
+            eprintln!("Cannot read {}: {error}", history_path.display());
+            return 1;
+        }
+    };
     history.push(snapshot.clone());
 
     let mut data = collect(

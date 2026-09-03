@@ -166,8 +166,14 @@ fn normalize_path_text(raw: &str) -> String {
     let windows = raw.starts_with(r"\\?\")
         || raw.contains('\\')
         || raw.as_bytes().get(1).is_some_and(|b| *b == b':');
-    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw);
-    let slash = stripped.replace('\\', "/");
+    let slash = if raw
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
+        format!("//{}", raw.get(8..).unwrap_or_default().replace('\\', "/"))
+    } else {
+        raw.strip_prefix(r"\\?\").unwrap_or(raw).replace('\\', "/")
+    };
     let absolute = slash.starts_with('/');
     let mut parts: Vec<&str> = Vec::new();
     for part in slash.split('/') {

@@ -22,25 +22,31 @@ fn registry_file() -> PathBuf {
     home_dir().join("projects.json")
 }
 
-pub fn projects() -> Vec<PathBuf> {
-    std::fs::read_to_string(registry_file())
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-        .unwrap_or_default()
+fn read_registry() -> std::io::Result<Vec<String>> {
+    let Some(raw) = crate::safeio::read_optional_text(&registry_file())? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&raw).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid project registry: {error}"),
+        )
+    })
+}
+
+pub fn projects() -> std::io::Result<Vec<PathBuf>> {
+    Ok(read_registry()?
         .into_iter()
         .map(PathBuf::from)
         .filter(|p| p.is_dir())
-        .collect()
+        .collect())
 }
 
 pub fn register(path: &Path) -> std::io::Result<()> {
     let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let s = canon.to_string_lossy();
     let s = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
-    let list: Vec<String> = std::fs::read_to_string(registry_file())
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
+    let list = read_registry()?;
     if list.iter().any(|p| p.eq_ignore_ascii_case(&s)) {
         return Ok(());
     }
@@ -53,10 +59,7 @@ pub fn register(path: &Path) -> std::io::Result<()> {
         .write(true)
         .open(lock_path)?;
     lock.lock_exclusive()?;
-    let mut list: Vec<String> = std::fs::read_to_string(registry_file())
-        .ok()
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default();
+    let mut list = read_registry()?;
     if list.iter().any(|p| p.eq_ignore_ascii_case(&s)) {
         return Ok(());
     }

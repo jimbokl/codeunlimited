@@ -58,7 +58,13 @@ fn mcp_servers(root: &Path) -> Vec<String> {
 
 /// `fix --all`: run the fix pass over every registered project.
 pub fn run_all(apply: bool) -> i32 {
-    let projects = crate::registry::projects();
+    let projects = match crate::registry::projects() {
+        Ok(projects) => projects,
+        Err(error) => {
+            eprintln!("Cannot read the project registry: {error}");
+            return 1;
+        }
+    };
     if projects.is_empty() {
         eprintln!("No registered projects yet - run `init`, `fix` or `report` on one first.");
         return 1;
@@ -71,6 +77,10 @@ pub fn run_all(apply: bool) -> i32 {
             continue;
         }
         let cfg = Config::load_for(Some(&p));
+        if cfg.is_ignored(&p.to_string_lossy()) {
+            println!("Skipping ignored project: {}", p.display());
+            continue;
+        }
         worst = worst.max(run_with_config(&p, apply, &cfg));
         println!();
     }

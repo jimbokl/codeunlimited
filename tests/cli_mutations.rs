@@ -92,3 +92,22 @@ fn fix_apply_repairs_a_partially_initialized_project() {
 
     assert!(project.path().join("AGENTS.md").is_file());
 }
+
+#[test]
+fn init_preserves_a_corrupt_project_registry() {
+    let project = TempDir::new().expect("project tempdir");
+    let state = TempDir::new().expect("state tempdir");
+    let registry_home = state.path().join("state");
+    fs::create_dir(&registry_home).expect("registry home");
+    let registry = registry_home.join("projects.json");
+    fs::write(&registry, [0xff, 0xfe, 0xfd]).expect("corrupt registry");
+
+    cmd(project.path(), state.path()).assert().failure();
+
+    assert_eq!(
+        fs::read(registry).expect("registry preserved"),
+        [0xff, 0xfe, 0xfd]
+    );
+    assert!(!project.path().join("CLAUDE.md").exists());
+    assert!(!project.path().join("AGENTS.md").exists());
+}

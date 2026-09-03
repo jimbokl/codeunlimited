@@ -41,7 +41,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           install_root="$RUNNER_TEMP/codeunlimited-install"
-          cargo install --path . --locked --root "$install_root"
+          cargo install --path "target/package/codeunlimited-$version" --locked --root "$install_root"
           "$install_root/bin/codeunlimited" --version | grep -Fx "codeunlimited $version"
 
   build:
