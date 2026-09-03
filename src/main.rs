@@ -1,8 +1,4 @@
-mod detectors;
-mod initcmd;
-mod parsers;
-mod report;
-mod types;
+use codeunlimited::{detectors, initcmd, parsers, report};
 
 use std::path::PathBuf;
 
@@ -36,6 +32,12 @@ enum Cmd {
         /// Scope the report to one project directory
         #[arg(long, value_name = "PATH")]
         project: Option<PathBuf>,
+        /// Only look at the last N days
+        #[arg(long, value_name = "N")]
+        days: Option<u64>,
+        /// Machine-readable output for scripting
+        #[arg(long)]
+        json: bool,
     },
     /// Set a project up: works for a brand-new project and for attaching to an
     /// existing one (prints its baseline from history)
@@ -48,7 +50,12 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Audit { source, project } => {
+        Cmd::Audit {
+            source,
+            project,
+            days,
+            json,
+        } => {
             let p = project.as_deref();
             let mut reqs = Vec::new();
             if matches!(source, Source::All | Source::Claude) {
@@ -57,11 +64,19 @@ fn main() {
             if matches!(source, Source::All | Source::Codex) {
                 reqs.extend(parsers::iter_codex(p));
             }
-            let findings = detectors::run_all(&reqs);
-            if let Some(p) = p {
-                println!("[scope: {}]", p.display());
+            if let Some(n) = days {
+                let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
+                reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
             }
-            println!("{}", report::render(&reqs, &findings));
+            let findings = detectors::run_all(&reqs);
+            if json {
+                println!("{}", report::render_json(&reqs, &findings));
+            } else {
+                if let Some(p) = p {
+                    println!("[scope: {}]", p.display());
+                }
+                println!("{}", report::render(&reqs, &findings));
+            }
         }
         Cmd::Init { path } => {
             std::process::exit(initcmd::run(&path));

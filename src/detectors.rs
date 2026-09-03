@@ -45,7 +45,9 @@ fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
         detail: format!(
             "{} requests to top-tier models ended in a reply shorter than {} tokens \
              while dragging {:.0}M tokens of context.",
-            n, TRIVIAL_OUT, toks as f64 / 1e6
+            n,
+            TRIVIAL_OUT,
+            toks as f64 / 1e6
         ),
         fix: "Delegate mechanical work (renames, repetitive edits, status checks) to \
               subagents on a light model / low effort: add a delegation rule to \

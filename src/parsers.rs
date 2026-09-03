@@ -65,19 +65,25 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
         .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let Ok(f) = File::open(path) else { return vec![] };
+    let Ok(f) = File::open(path) else {
+        return vec![];
+    };
     let mut out = Vec::new();
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
         if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
             continue;
         }
-        let Ok(d) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(d) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         if d.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
         let msg = d.get("message").cloned().unwrap_or(Value::Null);
-        let Some(u) = msg.get("usage").filter(|u| u.is_object()) else { continue };
+        let Some(u) = msg.get("usage").filter(|u| u.is_object()) else {
+            continue;
+        };
         let model = msg
             .get("model")
             .and_then(Value::as_str)
@@ -86,10 +92,7 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
         if model.contains("<synthetic>") {
             continue;
         }
-        let mid = msg
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
         let cw = u64_of(u, "cache_creation_input_tokens");
         let cc = u.get("cache_creation").cloned().unwrap_or(Value::Null);
         let w1h = u64_of(&cc, "ephemeral_1h_input_tokens");
@@ -167,7 +170,9 @@ fn str_field<'a>(line: &'a str, pat: &str) -> Option<&'a str> {
 }
 
 fn parse_codex_file(path: &Path, want: Option<&str>) -> Vec<Request> {
-    let Ok(f) = File::open(path) else { return vec![] };
+    let Ok(f) = File::open(path) else {
+        return vec![];
+    };
     let mut model = String::from("?");
     let mut project = String::from("?");
     let mut out = Vec::new();
@@ -196,7 +201,9 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> Vec<Request> {
                 continue;
             }
         }
-        let Ok(d) = serde_json::from_str::<Value>(&line) else { continue };
+        let Ok(d) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
         let p = d.get("payload").cloned().unwrap_or(Value::Null);
         if p.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;

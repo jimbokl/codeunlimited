@@ -1,0 +1,4 @@
+{"type":"turn_context","payload":{"model":"gpt-5.5","cwd":"C:\\code\\testcx"}}
+{"timestamp":"2026-01-02T00:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"cache_write_input_tokens":0,"output_tokens":50,"total_tokens":1050},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"cache_write_input_tokens":0,"output_tokens":50,"total_tokens":1050}}}}
+{"timestamp":"2026-01-02T00:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2000,"cached_input_tokens":1900,"cache_write_input_tokens":0,"output_tokens":100,"total_tokens":2100}}}}
+{"timestamp":"2026-01-02T00:02:00.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":42.0}}}}

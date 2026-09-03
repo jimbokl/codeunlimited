@@ -8,11 +8,11 @@ pub struct Request {
     pub session: String,
     pub ts: Option<i64>, // unix seconds
     pub model: String,
-    pub unc_in: u64,   // uncached input tokens
+    pub unc_in: u64,    // uncached input tokens
     pub cached_in: u64, // tokens served from cache
-    pub w5: u64,       // cache writes, 5m TTL (claude only)
-    pub w1h: u64,      // cache writes, 1h TTL (claude only)
-    pub out: u64,      // output tokens
+    pub w5: u64,        // cache writes, 5m TTL (claude only)
+    pub w1h: u64,       // cache writes, 1h TTL (claude only)
+    pub out: u64,       // output tokens
 }
 
 impl Request {

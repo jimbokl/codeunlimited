@@ -14,10 +14,12 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 - [ ] Prebuilt binaries: GitHub Releases, `cargo install codeunlimited`,
       Homebrew tap, Scoop bucket. (Python package remains as the
       prototyping sandbox for new detectors.)
-- [ ] Golden-fixture test suite: synthetic Claude Code / Codex logs with known
-      findings; CI on Linux/macOS/Windows (GitHub Actions).
-- [ ] `--json` output for scripting; `--days N` window filter.
-- [ ] Gemini CLI as third native source.
+- [x] Golden-fixture test suite: synthetic Claude Code / Codex logs with known
+      findings; CI workflow for Linux/macOS/Windows (fmt + clippy -D warnings
+      + tests) ready to activate on first push.
+- [x] `--json` output for scripting; `--days N` window filter.
+- [ ] Gemini CLI as third native source (needs real local logs to validate
+      the format against - accuracy over speed here).
 
 ## v0.3 — trust & measurement (the moat)
 

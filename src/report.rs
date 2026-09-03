@@ -7,6 +7,59 @@ use crate::types::Request;
 
 const BAR: &str = "================================================================";
 
+/// Machine-readable variant of the report for scripting (`audit --json`).
+pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
+    let mut per_src: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
+    let mut per_proj: BTreeMap<String, u64> = BTreeMap::new();
+    let mut tmin = i64::MAX;
+    let mut tmax = i64::MIN;
+    for r in reqs {
+        let s = per_src.entry(r.source).or_default();
+        s.0 += 1;
+        s.1 += r.prompt_total();
+        s.2 += r.out;
+        *per_proj
+            .entry(format!("{}:{}", r.source, r.project))
+            .or_default() += r.total();
+        if let Some(t) = r.ts {
+            tmin = tmin.min(t);
+            tmax = tmax.max(t);
+        }
+    }
+    let total_tokens: u64 = per_src.values().map(|s| s.1 + s.2).sum();
+    let days = if tmin < tmax {
+        (((tmax - tmin) as f64) / 86_400.0).floor().max(1.0)
+    } else {
+        1.0
+    };
+    let weekly = total_tokens as f64 / days * 7.0;
+    let mut projects: Vec<_> = per_proj.into_iter().collect();
+    projects.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+    projects.truncate(8);
+    let reclaimed: u64 = findings.iter().map(|f| f.impact_tokens).sum();
+    let obj = serde_json::json!({
+        "period_days": days as u64,
+        "sources": per_src.iter().map(|(src, s)| (src.to_string(), serde_json::json!({
+            "requests": s.0, "prompt_tokens": s.1, "output_tokens": s.2,
+        }))).collect::<serde_json::Map<_,_>>(),
+        "weekly_volume_tokens": weekly as u64,
+        "reclaimable_tokens": reclaimed,
+        "reclaimable_pct_of_weekly": if weekly > 0.0 {
+            (100.0 * (reclaimed as f64 / days * 7.0) / weekly) as u64
+        } else { 0 },
+        "findings": findings.iter().filter(|f| f.impact_tokens > 0).map(|f| serde_json::json!({
+            "title": f.title,
+            "impact_tokens": f.impact_tokens,
+            "detail": f.detail,
+            "fix": f.fix,
+        })).collect::<Vec<_>>(),
+        "top_projects": projects.iter().map(|(p, t)| serde_json::json!({
+            "project": p, "total_tokens": t,
+        })).collect::<Vec<_>>(),
+    });
+    serde_json::to_string_pretty(&obj).unwrap_or_default()
+}
+
 pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
     if reqs.is_empty() {
         return "No data: no Claude Code logs (~/.claude/projects) or Codex logs \
@@ -45,8 +98,12 @@ pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
     l.push(" CODEUNLIMITED - more code out of the limits you already pay for".into());
     l.push(BAR.into());
     if tmin < tmax {
-        let d0 = chrono::DateTime::from_timestamp(tmin, 0).unwrap().date_naive();
-        let d1 = chrono::DateTime::from_timestamp(tmax, 0).unwrap().date_naive();
+        let d0 = chrono::DateTime::from_timestamp(tmin, 0)
+            .unwrap()
+            .date_naive();
+        let d1 = chrono::DateTime::from_timestamp(tmax, 0)
+            .unwrap()
+            .date_naive();
         l.push(format!(" Period: {d0} ... {d1}  ({days:.0} days)"));
     }
     for (src, s) in &per_src {
@@ -103,6 +160,8 @@ pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
         l.push(format!("   {:44} {:>8.0}M tok.", p, t as f64 / 1e6));
     }
     l.push(String::new());
-    l.push(" Next: codeunlimited init <project> - efficiency rules into CLAUDE.md/AGENTS.md".into());
+    l.push(
+        " Next: codeunlimited init <project> - efficiency rules into CLAUDE.md/AGENTS.md".into(),
+    );
     l.join("\n")
 }
