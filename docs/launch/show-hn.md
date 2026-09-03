@@ -1,4 +1,4 @@
-# Show HN draft (fill [TREND] numbers after the dogfood week)
+# Show HN draft (ready to post)
 
 **Title:** Show HN: I reclaimed half of my Claude Code weekly limit with an offline audit
 
@@ -21,8 +21,11 @@ volume reclaimable. The two big leaks, in my case:
 `codeunlimited init` drops efficiency rules into CLAUDE.md/AGENTS.md and
 freezes a baseline; `fix --apply` adds a state-file scaffold for long loops;
 `report` then proves (or disproves) the savings against your own baseline,
-with a trend that grows one snapshot per run. After [TREND: N days] under
-the rules my context per turn is down [TREND: X%].
+with a trend that grows one snapshot per run. After day one under the rules
+my context per turn is down ~50% - and the tool itself warns you that day-1
+deltas are mechanically flattered (young sessions are cheap), so it tracks
+the weekly trend instead of extrapolating. I'll keep posting the trend as
+it accumulates.
 
 Details that matter:
 

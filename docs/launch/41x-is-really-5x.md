@@ -37,4 +37,5 @@ Target: HN / dev.to / blog. Angle: methodological honesty as the product.
      (docs/ACCURACY.md).
 
 6. **CTA.** codeunlimited on GitHub - audit your own logs, verify the
-   delta against your own baseline. [TREND numbers from dogfood week here.]
+   delta against your own baseline. Author's audit: ~52% of weekly volume
+   reclaimable across 71k requests; trend published as it accumulates.
