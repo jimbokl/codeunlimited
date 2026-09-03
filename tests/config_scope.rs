@@ -105,3 +105,52 @@ fn fix_all_skips_project_ignored_by_its_local_config() {
     assert!(!project.join("AGENTS.md").exists());
     assert!(!project.join("CLAUDE.md").exists());
 }
+
+#[test]
+fn report_all_omits_delta_for_locally_ignored_project() {
+    let project_parent = TempDir::new().expect("project parent");
+    let state = TempDir::new().expect("state tempdir");
+    let project = project_parent.path().join("local-report-ignore");
+    fs::create_dir(&project).expect("project");
+
+    let key = codeunlimited::parsers::claude_project_key(&project);
+    let logs = state.path().join("claude/projects").join(key);
+    fs::create_dir_all(&logs).expect("log directory");
+    fs::write(
+        logs.join("session.jsonl"),
+        r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-01-01T00:00:00Z","message":{"id":"m1","model":"claude-opus-5","usage":{"input_tokens":1000,"output_tokens":20}}}"#,
+    )
+    .expect("log fixture");
+    let baseline = codeunlimited::metrics::Metrics {
+        requests: 1,
+        sessions: 1,
+        avg_prompt_per_turn: 2_000.0,
+        context_growth: 1.0,
+    };
+    fs::write(
+        project.join(codeunlimited::deltacmd::BASELINE_FILE),
+        codeunlimited::metrics::to_json_multi(&[("claude", baseline)], 0),
+    )
+    .expect("baseline");
+
+    base_cmd(state.path())
+        .arg("fix")
+        .arg(&project)
+        .assert()
+        .success();
+    fs::write(
+        project.join(".codeunlimited.toml"),
+        "ignore_projects = [\"local-report-ignore\"]\n",
+    )
+    .expect("local config");
+
+    let out = state.path().join("report.md");
+    base_cmd(state.path())
+        .args(["report", "--all", "--out"])
+        .arg(&out)
+        .assert()
+        .success();
+
+    let report = fs::read_to_string(out).expect("report");
+    assert!(!report.contains("## Per-project delta since baseline"));
+}
