@@ -34,10 +34,20 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 ```
 
-`init` is the "start of a new project" step: it writes token-efficiency rules
-(fresh-session discipline, state-file pattern for long loops per
-[SKILL.state, arXiv 2608.26263](https://arxiv.org/abs/2608.26263), light-model
-delegation, MCP hygiene) that Claude Code and Codex pick up automatically.
+## Two ways to adopt — both first-class
+
+**Starting a new project:** run `codeunlimited init` in the fresh directory.
+Token-efficiency rules (fresh-session discipline, state-file pattern for long
+loops per [SKILL.state, arXiv 2608.26263](https://arxiv.org/abs/2608.26263),
+light-model delegation, MCP hygiene) are in place from day one and picked up
+by Claude Code and Codex automatically.
+
+**Attaching to an existing project:** the same `codeunlimited init` appends
+the rules to your existing CLAUDE.md/AGENTS.md (idempotent, marker-guarded)
+and — because the project already has history — instantly prints its
+baseline: requests, sessions, and the top limit leak found in *this* project.
+Then `codeunlimited audit --project <path>` gives the full scoped report,
+and re-running it later shows your delta.
 
 ## Privacy
 
