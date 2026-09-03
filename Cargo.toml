@@ -8,7 +8,7 @@ repository = "https://github.com/jimbokl/codeunlimited"
 readme = "README.md"
 keywords = ["claude-code", "codex", "tokens", "limits", "audit"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["codeunlimited/", "docs/launch/", ".github/"]
+exclude = ["/codeunlimited/", "/docs/launch/", "/.github/"]
 
 [dependencies]
 serde_json = "1"
