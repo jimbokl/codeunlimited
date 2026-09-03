@@ -1,11 +1,12 @@
 //! Parsers for Claude Code (~/.claude/projects) and Codex CLI (~/.codex/sessions) logs.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{mpsc::sync_channel, Arc};
 
 use rayon::prelude::*;
 use serde_json::Value;
@@ -91,6 +92,72 @@ struct CodexCandidate {
 
 type CodexFileScan = Option<(Vec<Request>, LimitSeries, ScanStats, FileObservation)>;
 
+struct ParsedCandidate {
+    key: String,
+    fingerprint: Option<FileFingerprint>,
+    scan: CodexFileScan,
+}
+
+#[derive(Default)]
+struct CodexAggregate {
+    requests: Vec<Request>,
+    series: LimitSeries,
+    stats: ScanStats,
+    observations: Vec<(String, FileFingerprint, FileObservation)>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexRecord<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    timestamp: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    payload: Option<CodexPayload<'a>>,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct CodexPayload<'a> {
+    #[serde(rename = "type", borrow)]
+    kind: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    model: Option<Cow<'a, str>>,
+    #[serde(borrow)]
+    cwd: Option<Cow<'a, str>>,
+    info: Option<CodexInfo>,
+    rate_limits: Option<CodexRateLimits>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexInfo {
+    last_token_usage: Option<CodexTokenUsage>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexTokenUsage {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    cached_input_tokens: u64,
+    #[serde(default)]
+    cache_write_input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexRateLimits {
+    primary: Option<CodexRateLimit>,
+}
+
+#[derive(serde::Deserialize)]
+struct CodexRateLimit {
+    #[serde(default)]
+    used_percent: f64,
+    #[serde(default)]
+    window_minutes: u64,
+}
+
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -167,7 +234,7 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
         if d.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
-        let msg = d.get("message").cloned().unwrap_or(Value::Null);
+        let msg = d.get("message").unwrap_or(&Value::Null);
         let Some(u) = msg.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
@@ -188,8 +255,8 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
         }
         let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
         let cw = u64_of(u, "cache_creation_input_tokens");
-        let cc = u.get("cache_creation").cloned().unwrap_or(Value::Null);
-        let w1h = u64_of(&cc, "ephemeral_1h_input_tokens");
+        let cc = u.get("cache_creation").unwrap_or(&Value::Null);
+        let w1h = u64_of(cc, "ephemeral_1h_input_tokens");
         let w5 = cc
             .get("ephemeral_5m_input_tokens")
             .and_then(Value::as_u64)
@@ -338,6 +405,18 @@ pub fn peak(series: &LimitSeries) -> LimitPeak {
         .map(|&(_, u, w)| (u, w))
 }
 
+fn leading_timestamp(line: &str) -> Option<i64> {
+    const PREFIX: &str = r#"{"timestamp":""#;
+    if !line.starts_with(PREFIX) || line.matches("\"timestamp\"").count() != 1 {
+        return None;
+    }
+    let value = line.get(PREFIX.len()..)?.split('"').next()?;
+    if value.contains('\\') {
+        return None;
+    }
+    parse_ts(value)
+}
+
 fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
     let f = File::open(path).ok()?;
     let mut stats = ScanStats {
@@ -360,69 +439,73 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
         if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
             continue;
         }
-        let Ok(d) = serde_json::from_str::<Value>(&line) else {
+        if let Some(cutoff) = since {
+            if line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
+                if let Some(ts) = leading_timestamp(&line) {
+                    observation.observe_ts(Some(ts));
+                    if ts < cutoff {
+                        continue;
+                    }
+                }
+            }
+        }
+        let Ok(record) = serde_json::from_str::<CodexRecord<'_>>(&line) else {
             continue;
         };
-        if d.get("type").and_then(Value::as_str) == Some("turn_context") {
-            let payload = d.get("payload").unwrap_or(&Value::Null);
-            if let Some(value) = payload.get("model").and_then(Value::as_str) {
-                model = Arc::from(value);
+        let payload = record.payload.unwrap_or_default();
+        if record.kind.as_deref() == Some("turn_context") {
+            if let Some(value) = payload.model {
+                model = Arc::from(value.as_ref());
             }
-            if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
-                cwd_key = path_key(Path::new(value));
-                project = project_label(value).into();
+            if let Some(value) = payload.cwd {
+                cwd_key = path_key(Path::new(value.as_ref()));
+                project = project_label(value.as_ref()).into();
                 observation.cwd_keys.insert(cwd_key.clone());
             }
             continue;
         }
-        let p = d.get("payload").cloned().unwrap_or(Value::Null);
-        if p.get("type").and_then(Value::as_str) != Some("token_count") {
+        let ts = record.timestamp.as_deref().and_then(parse_ts);
+        observation.observe_ts(ts);
+        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
             continue;
         }
-        let ts = d
-            .get("timestamp")
-            .and_then(Value::as_str)
-            .and_then(parse_ts);
-        observation.observe_ts(ts);
+        if payload.kind.as_deref() != Some("token_count") {
+            continue;
+        }
         if let Some(w) = want {
             if cwd_key != w {
                 continue;
             }
         }
-        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
-            continue;
+        if let Some(primary) = payload
+            .rate_limits
+            .as_ref()
+            .and_then(|limits| limits.primary.as_ref())
+        {
+            series.push((
+                ts.unwrap_or(0),
+                primary.used_percent,
+                primary.window_minutes,
+            ));
         }
-        if let Some(pr) = p.get("rate_limits").and_then(|rl| rl.get("primary")) {
-            let used = pr
-                .get("used_percent")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let win = pr
-                .get("window_minutes")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            series.push((ts.unwrap_or(0), used, win));
-        }
-        let Some(u) = p
-            .get("info")
-            .and_then(|i| i.get("last_token_usage"))
-            .filter(|u| u.is_object())
+        let Some(usage) = payload
+            .info
+            .as_ref()
+            .and_then(|info| info.last_token_usage.as_ref())
         else {
             continue;
         };
-        let inp = u64_of(u, "input_tokens");
-        let cch = u64_of(u, "cached_input_tokens");
         out.push(Request {
             source: "codex",
             project: Arc::clone(&project),
             session: Arc::clone(&session),
             ts,
             model: Arc::clone(&model),
-            unc_in: inp.saturating_sub(cch),
-            cached_in: cch,
-            w5: u64_of(u, "cache_write_input_tokens"),
+            unc_in: usage.input_tokens.saturating_sub(usage.cached_input_tokens),
+            cached_in: usage.cached_input_tokens,
+            w5: usage.cache_write_input_tokens,
             w1h: 0,
-            out: u64_of(u, "output_tokens"),
+            out: usage.output_tokens,
         });
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
@@ -488,30 +571,44 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
             fingerprint,
         });
     }
-    let parts: Vec<(&CodexCandidate, CodexFileScan)> = candidates
-        .par_iter()
-        .map(|candidate| {
-            (
-                candidate,
-                parse_codex_file(&candidate.path, want.as_deref(), options.since),
-            )
-        })
-        .collect();
-    let mut out = Vec::new();
-    let mut series: LimitSeries = Vec::new();
-    for (candidate, part) in parts {
-        let Some((reqs, s, file_stats, observation)) = part else {
-            continue;
-        };
-        stats += file_stats;
-        out.extend(reqs);
-        series.extend(s);
-        if let (IndexAccess::Enabled(index), Some(fingerprint)) =
-            (&mut index, candidate.fingerprint.clone())
-        {
-            index
-                .files
-                .insert(candidate.key.clone(), observation.into_entry(fingerprint));
+    let queue_capacity = rayon::current_num_threads().max(1).saturating_mul(2);
+    let (sender, receiver) = sync_channel::<ParsedCandidate>(queue_capacity);
+    let aggregate = std::thread::scope(|scope| {
+        let consumer = scope.spawn(|| {
+            let mut aggregate = CodexAggregate::default();
+            for parsed in receiver {
+                let Some((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
+                    continue;
+                };
+                aggregate.stats += file_stats;
+                aggregate.requests.append(&mut reqs);
+                aggregate.series.append(&mut series);
+                if let Some(fingerprint) = parsed.fingerprint {
+                    aggregate
+                        .observations
+                        .push((parsed.key, fingerprint, observation));
+                }
+            }
+            aggregate
+        });
+        candidates
+            .par_iter()
+            .for_each_with(sender, |sender, candidate| {
+                let _ = sender.send(ParsedCandidate {
+                    key: candidate.key.clone(),
+                    fingerprint: candidate.fingerprint.clone(),
+                    scan: parse_codex_file(&candidate.path, want.as_deref(), options.since),
+                });
+            });
+        consumer.join().expect("Codex aggregation thread panicked")
+    });
+    stats += aggregate.stats;
+    let mut out = aggregate.requests;
+    out.shrink_to_fit();
+    let mut series = aggregate.series;
+    if let IndexAccess::Enabled(index) = &mut index {
+        for (key, fingerprint, observation) in aggregate.observations {
+            index.files.insert(key, observation.into_entry(fingerprint));
         }
     }
     if let IndexAccess::Enabled(index) = &mut index {
@@ -546,6 +643,28 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn leading_timestamp_requires_one_unescaped_first_field() {
+        assert_eq!(
+            leading_timestamp(r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg"}"#),
+            Some(4_070_908_800)
+        );
+        assert_eq!(
+            leading_timestamp(r#"{"type":"event_msg","timestamp":"2099-01-01T00:00:00Z"}"#),
+            None
+        );
+        assert_eq!(
+            leading_timestamp(
+                r#"{"timestamp":"2099-01-01T00:00:00Z","timestamp":"2000-01-01T00:00:00Z"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            leading_timestamp(r#"{"timestamp":"2099-01-01T00:00:00\u005a"}"#),
+            None
+        );
+    }
 
     #[test]
     fn codex_records_in_one_context_share_metadata_allocations() {

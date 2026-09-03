@@ -130,12 +130,12 @@ fn heavy_model_on_trivial(reqs: &[Request], cfg: &Config) -> Finding {
     )
 }
 
-fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
+fn context_tax(reqs: &[Request], cfg: &Config, grouped: &[Vec<usize>]) -> Finding {
     let mut claims = Vec::new();
     let mut hit = 0u64;
     let mut growth = Vec::new();
     let long = cfg.long_session_turns;
-    for rows in sessions(reqs) {
+    for rows in grouped {
         if rows.len() <= long {
             continue;
         }
@@ -190,11 +190,11 @@ fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
     )
 }
 
-fn cache_rewrites(reqs: &[Request]) -> Finding {
+fn cache_rewrites(reqs: &[Request], grouped: &[Vec<usize>]) -> Finding {
     let (mut breaks, mut ttl, mut unknown) = (0u64, 0u64, 0u64);
     let (mut break_events, mut ttl_events, mut unknown_events) = (0u64, 0u64, 0u64);
     let mut claims = Vec::new();
-    for rows in sessions(reqs) {
+    for rows in grouped {
         for position in 1..rows.len() {
             let index = rows[position];
             let request = &reqs[index];
@@ -258,9 +258,9 @@ fn cache_rewrites(reqs: &[Request]) -> Finding {
     )
 }
 
-fn heavy_session_start(reqs: &[Request], cfg: &Config) -> Finding {
-    let firsts: Vec<(usize, u64)> = sessions(reqs)
-        .into_iter()
+fn heavy_session_start(reqs: &[Request], cfg: &Config, grouped: &[Vec<usize>]) -> Finding {
+    let firsts: Vec<(usize, u64)> = grouped
+        .iter()
         .filter_map(|rows| rows.first().copied())
         .filter(|index| reqs[*index].source == "claude")
         .map(|index| {
@@ -293,13 +293,13 @@ fn heavy_session_start(reqs: &[Request], cfg: &Config) -> Finding {
     )
 }
 
-fn retry_storms(reqs: &[Request]) -> Finding {
+fn retry_storms(reqs: &[Request], grouped: &[Vec<usize>]) -> Finding {
     // Same prompt size, back to back, within seconds - a re-sent request.
     // Token-count heuristics only; prompts are never read, so we demand a
     // strong signal: >=3 identical prompt sizes with <=90s gaps.
     let mut claims = Vec::new();
     let mut duplicates = 0u64;
-    for rows in sessions(reqs) {
+    for rows in grouped {
         let mut i = 0;
         while i < rows.len() {
             let mut j = i + 1;
@@ -340,12 +340,13 @@ fn retry_storms(reqs: &[Request]) -> Finding {
 }
 
 pub fn run_all(reqs: &[Request], cfg: &Config) -> Vec<Finding> {
+    let grouped = sessions(reqs);
     let mut findings = vec![
         heavy_model_on_trivial(reqs, cfg),
-        context_tax(reqs, cfg),
-        cache_rewrites(reqs),
-        heavy_session_start(reqs, cfg),
-        retry_storms(reqs),
+        context_tax(reqs, cfg, &grouped),
+        cache_rewrites(reqs, &grouped),
+        heavy_session_start(reqs, cfg, &grouped),
+        retry_storms(reqs, &grouped),
     ];
     findings.sort_by_key(|finding| std::cmp::Reverse(finding.impact_tokens));
     findings
@@ -354,6 +355,24 @@ pub fn run_all(reqs: &[Request], cfg: &Config) -> Vec<Finding> {
 /// Conservative union of all findings. If multiple detectors claim the same
 /// request, only the largest mid estimate is included in the headline total.
 pub fn reclaim_total(findings: &[Finding]) -> u64 {
+    let claim_count = findings
+        .iter()
+        .map(|finding| finding.claims.len())
+        .sum::<usize>();
+    let max_index = findings
+        .iter()
+        .flat_map(|finding| &finding.claims)
+        .map(|claim| claim.request_index)
+        .max();
+    if let Some(max_index) = max_index {
+        if max_index <= claim_count.saturating_mul(4).max(1_024) {
+            let mut by_request = vec![0u64; max_index.saturating_add(1)];
+            for claim in findings.iter().flat_map(|finding| &finding.claims) {
+                by_request[claim.request_index] = by_request[claim.request_index].max(claim.mid);
+            }
+            return by_request.into_iter().fold(0u64, u64::saturating_add);
+        }
+    }
     let mut by_request: HashMap<usize, u64> = HashMap::new();
     for claim in findings.iter().flat_map(|finding| &finding.claims) {
         by_request
@@ -386,17 +405,17 @@ mod tests {
     #[test]
     fn retry_storm_detects_bursts_only() {
         let storm: Vec<Request> = (0..4).map(|i| req("s1", i * 30, 50_000, 10)).collect();
-        let finding = retry_storms(&storm);
+        let finding = retry_storms(&storm, &sessions(&storm));
         assert!(finding.detail.starts_with("3 duplicate"));
         assert_eq!(finding.impact_tokens, 3 * 50_000 / 2);
         assert!(finding.impact_lo <= finding.impact_tokens);
         assert!(finding.impact_tokens <= finding.impact_hi);
 
         let slow: Vec<Request> = (0..4).map(|i| req("s2", i * 600, 50_000, 10)).collect();
-        assert_eq!(retry_storms(&slow).impact_tokens, 0);
+        assert_eq!(retry_storms(&slow, &sessions(&slow)).impact_tokens, 0);
 
         let pair: Vec<Request> = (0..2).map(|i| req("s3", i * 30, 50_000, 10)).collect();
-        assert_eq!(retry_storms(&pair).impact_tokens, 0);
+        assert_eq!(retry_storms(&pair, &sessions(&pair)).impact_tokens, 0);
     }
 
     #[test]
@@ -423,7 +442,7 @@ mod tests {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
             .collect();
-        let finding = context_tax(&reqs, &Config::default());
+        let finding = context_tax(&reqs, &Config::default(), &sessions(&reqs));
         assert!(finding.impact_tokens > 0);
         assert!(finding.detail.contains("1 sessions ran past 30 turns"));
     }
@@ -431,7 +450,7 @@ mod tests {
     #[test]
     fn ttl_expiration_is_not_reclaimable() {
         let rows = vec![req("s", 0, 50_000, 10), req("s", 301, 50_000, 10)];
-        let finding = cache_rewrites(&rows);
+        let finding = cache_rewrites(&rows, &sessions(&rows));
         assert_eq!(finding.impact_tokens, 0);
         assert!(finding.detail.contains("1 TTL expiration"));
     }
@@ -441,7 +460,7 @@ mod tests {
         let mut rows = vec![req("s", 0, 50_000, 10), req("s", 30, 50_000, 10)];
         rows[1].ts = None;
 
-        let finding = cache_rewrites(&rows);
+        let finding = cache_rewrites(&rows, &sessions(&rows));
 
         assert_eq!(finding.impact_tokens, 0);
         assert!(finding.detail.contains("1 rewrite with an unknown gap"));
@@ -452,7 +471,8 @@ mod tests {
         let mut row = req("s", 0, 0, 10);
         row.unc_in = 100_000;
 
-        let finding = heavy_session_start(&[row], &Config::default());
+        let rows = [row];
+        let finding = heavy_session_start(&rows, &Config::default(), &sessions(&rows));
 
         assert_eq!(finding.impact_tokens, 0);
         assert!(finding.detail.contains("0k tokens"));
@@ -470,7 +490,7 @@ mod tests {
             ..Config::default()
         };
 
-        let finding = context_tax(&rows, &cfg);
+        let finding = context_tax(&rows, &cfg, &sessions(&rows));
 
         assert!(finding.impact_tokens > 0);
     }
