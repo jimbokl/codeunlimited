@@ -1,6 +1,6 @@
 //! Parsers for Claude Code (~/.claude/projects) and Codex CLI (~/.codex/sessions) logs.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::AddAssign;
@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::scan_index::{self, FileFingerprint, FileIndexEntry, IndexAccess};
 use crate::types::{parse_ts, Request};
 
 #[derive(Debug, Clone, Default)]
@@ -55,6 +56,39 @@ pub struct CodexScan {
 
 type ClaudeRecord = (Option<String>, Request);
 type ClaudeFileScan = Option<(Vec<ClaudeRecord>, ScanStats)>;
+
+#[derive(Default)]
+struct FileObservation {
+    cwd_keys: BTreeSet<String>,
+    min_ts: Option<i64>,
+    max_ts: Option<i64>,
+}
+
+impl FileObservation {
+    fn observe_ts(&mut self, ts: Option<i64>) {
+        if let Some(ts) = ts {
+            self.min_ts = Some(self.min_ts.map_or(ts, |current| current.min(ts)));
+            self.max_ts = Some(self.max_ts.map_or(ts, |current| current.max(ts)));
+        }
+    }
+
+    fn into_entry(self, fingerprint: FileFingerprint) -> FileIndexEntry {
+        FileIndexEntry {
+            fingerprint,
+            cwd_keys: self.cwd_keys.into_iter().collect(),
+            min_ts: self.min_ts,
+            max_ts: self.max_ts,
+        }
+    }
+}
+
+struct CodexCandidate {
+    path: PathBuf,
+    key: String,
+    fingerprint: Option<FileFingerprint>,
+}
+
+type CodexFileScan = Option<(Vec<Request>, LimitSeries, ScanStats, FileObservation)>;
 
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -104,10 +138,7 @@ fn u64_of(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn parse_claude_file(
-    path: &Path,
-    since: Option<i64>,
-) -> ClaudeFileScan {
+fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
     let project = path
         .parent()
         .and_then(|p| p.file_name())
@@ -301,11 +332,7 @@ pub fn peak(series: &LimitSeries) -> LimitPeak {
         .map(|&(_, u, w)| (u, w))
 }
 
-fn parse_codex_file(
-    path: &Path,
-    want: Option<&str>,
-    since: Option<i64>,
-) -> Option<(Vec<Request>, LimitSeries, ScanStats)> {
+fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
     let f = File::open(path).ok()?;
     let mut stats = ScanStats {
         files_opened: 1,
@@ -316,6 +343,7 @@ fn parse_codex_file(
     let mut cwd_key = String::new();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
+    let mut observation = FileObservation::default();
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
         if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
@@ -332,13 +360,9 @@ fn parse_codex_file(
             if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
                 cwd_key = path_key(Path::new(value));
                 project = project_label(value);
+                observation.cwd_keys.insert(cwd_key.clone());
             }
             continue;
-        }
-        if let Some(w) = want {
-            if cwd_key != w {
-                continue;
-            }
         }
         let p = d.get("payload").cloned().unwrap_or(Value::Null);
         if p.get("type").and_then(Value::as_str) != Some("token_count") {
@@ -348,6 +372,12 @@ fn parse_codex_file(
             .get("timestamp")
             .and_then(Value::as_str)
             .and_then(parse_ts);
+        observation.observe_ts(ts);
+        if let Some(w) = want {
+            if cwd_key != w {
+                continue;
+            }
+        }
         if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
             continue;
         }
@@ -389,7 +419,7 @@ fn parse_codex_file(
         });
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    Some((out, series, stats))
+    Some((out, series, stats, observation))
 }
 
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
@@ -408,17 +438,79 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
         files_discovered: files.len() as u64,
         ..ScanStats::default()
     };
-    let parts: Vec<Option<(Vec<Request>, LimitSeries, ScanStats)>> = files
+    let mut index = if options.use_index {
+        IndexAccess::load()
+    } else {
+        IndexAccess::Disabled
+    };
+    let mut discovered_keys = HashSet::new();
+    let mut candidates = Vec::new();
+    for path in files {
+        let key = scan_index::file_key(&path);
+        discovered_keys.insert(key.clone());
+        let fingerprint = match &index {
+            IndexAccess::Enabled(_) => scan_index::fingerprint(&path).ok(),
+            IndexAccess::Disabled => None,
+        };
+        let cached = match (&index, &fingerprint) {
+            (IndexAccess::Enabled(index), Some(fingerprint)) => index
+                .files
+                .get(&key)
+                .filter(|entry| entry.fingerprint == *fingerprint),
+            _ => None,
+        };
+        if let Some(entry) = cached {
+            let wrong_project = want
+                .as_ref()
+                .is_some_and(|key| !entry.cwd_keys.iter().any(|cwd| cwd == key));
+            if wrong_project {
+                stats.files_skipped_by_index = stats.files_skipped_by_index.saturating_add(1);
+                continue;
+            }
+            let entirely_old = options
+                .since
+                .is_some_and(|cutoff| entry.max_ts.is_some_and(|ts| ts < cutoff));
+            if entirely_old {
+                stats.files_skipped_by_date = stats.files_skipped_by_date.saturating_add(1);
+                continue;
+            }
+        }
+        candidates.push(CodexCandidate {
+            path,
+            key,
+            fingerprint,
+        });
+    }
+    let parts: Vec<(&CodexCandidate, CodexFileScan)> = candidates
         .par_iter()
-        .map(|f| parse_codex_file(f, want.as_deref(), options.since))
+        .map(|candidate| {
+            (
+                candidate,
+                parse_codex_file(&candidate.path, want.as_deref(), options.since),
+            )
+        })
         .collect();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
-    for (reqs, s, file_stats) in parts.into_iter().flatten() {
+    for (candidate, part) in parts {
+        let Some((reqs, s, file_stats, observation)) = part else {
+            continue;
+        };
         stats += file_stats;
         out.extend(reqs);
         series.extend(s);
+        if let (IndexAccess::Enabled(index), Some(fingerprint)) =
+            (&mut index, candidate.fingerprint.clone())
+        {
+            index
+                .files
+                .insert(candidate.key.clone(), observation.into_entry(fingerprint));
+        }
     }
+    if let IndexAccess::Enabled(index) = &mut index {
+        index.files.retain(|key, _| discovered_keys.contains(key));
+    }
+    index.save();
     series.sort_unstable_by_key(|&(t, _, _)| t);
     CodexScan {
         requests: out,

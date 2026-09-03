@@ -15,6 +15,7 @@ pub mod registry;
 pub mod report;
 pub mod reportcmd;
 pub mod safeio;
+pub mod scan_index;
 pub mod schedule;
 pub mod skillcmd;
 pub mod types;
