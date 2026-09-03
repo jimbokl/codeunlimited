@@ -1,0 +1,103 @@
+import json
+import pathlib
+import sys
+import tempfile
+import unittest
+
+from scripts import benchmark_local
+
+
+class BenchmarkStatisticsTests(unittest.TestCase):
+    def test_nearest_rank_uses_the_observed_95th_percentile(self) -> None:
+        self.assertEqual(benchmark_local.nearest_rank([5.0, 1.0, 4.0, 2.0, 3.0], 0.95), 5.0)
+        self.assertEqual(benchmark_local.nearest_rank([2.0, 1.0], 0.50), 1.0)
+
+    def test_summary_reports_median_p95_and_maximum_rss(self) -> None:
+        summary = benchmark_local.summarize(
+            [
+                {"wall_seconds": 3.0, "max_rss_bytes": 100},
+                {"wall_seconds": 1.0, "max_rss_bytes": None},
+                {"wall_seconds": 2.0, "max_rss_bytes": 300},
+            ]
+        )
+        self.assertEqual(summary["wall_seconds"], {"median": 2.0, "p95": 3.0})
+        self.assertEqual(summary["max_rss_bytes"], 300)
+
+
+class BenchmarkOutputTests(unittest.TestCase):
+    def test_existing_output_is_preserved_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "result.json"
+            path.write_text("keep\n", encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                benchmark_local.write_output(path, {"new": True}, force=False)
+
+            self.assertEqual(path.read_text(encoding="utf-8"), "keep\n")
+
+    def test_force_replaces_output_without_leaving_a_temporary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / "result.json"
+            path.write_text("old\n", encoding="utf-8")
+
+            benchmark_local.write_output(path, {"new": True}, force=True)
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"new": True})
+            self.assertEqual([entry.name for entry in root.iterdir()], ["result.json"])
+
+
+class BenchmarkScenarioTests(unittest.TestCase):
+    def test_scenario_redacts_projects_findings_and_token_values(self) -> None:
+        payload = {
+            "sources": {
+                "codex": {"requests": 7, "prompt_tokens": 999_999, "output_tokens": 88}
+            },
+            "scan": {
+                "files_discovered": 4,
+                "files_opened": 2,
+                "files_skipped_by_date": 1,
+                "files_skipped_by_index": 1,
+                "usage_records": 7,
+            },
+            "top_projects": [{"project": "SECRET_PROJECT", "total_tokens": 999_999}],
+            "findings": [{"detail": "SECRET_PROMPT"}],
+        }
+        code = f"import json; print(json.dumps({payload!r}))"
+
+        result = benchmark_local.run_scenario(
+            "redaction",
+            [sys.executable, "-c", code],
+            env={},
+            runs=1,
+        )
+
+        encoded = json.dumps(result, sort_keys=True)
+        self.assertNotIn("SECRET_PROJECT", encoded)
+        self.assertNotIn("SECRET_PROMPT", encoded)
+        self.assertNotIn("999999", encoded)
+        sample = result["samples"][0]
+        self.assertEqual(sample["source_requests"], {"codex": 7})
+        self.assertEqual(sample["scan"]["files_opened"], 2)
+
+    def test_main_returns_nonzero_and_writes_results_when_a_scenario_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "failed.json"
+            status = benchmark_local.main(
+                [
+                    "--binary",
+                    sys.executable,
+                    "--runs",
+                    "1",
+                    "--output",
+                    str(output),
+                ]
+            )
+
+            self.assertNotEqual(status, 0)
+            result = json.loads(output.read_text(encoding="utf-8"))
+            self.assertTrue(any(item["status"] == "failed" for item in result["scenarios"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

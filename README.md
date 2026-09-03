@@ -20,7 +20,7 @@ your projects up so the same subscription produces more code.
 ## What it finds
 
 - **Context tax of long sessions** — by turn 40 every reply drags the whole
-  history through the context window; measured multiplier per session.
+  history through the context window; observed multiplier per session.
 - **Heavy model on mechanical replies** — top-tier requests that ended in a
   3-line answer; delegable to a light model.
 - **Mid-session cache re-writes** — broken prompt prefixes that re-pay for
@@ -95,7 +95,7 @@ and re-running it later shows your delta.
 `CODEUNLIMITED_REPORT.md` and a styled, self-contained
 `CODEUNLIMITED_REPORT.html` (light/dark, zero external requests — safe to
 open, mail, or screenshot). Both show current leaks in limit currency, the
-verified delta since `init` captured the baseline, and a trend with one row
+before/after delta since `init` captured the baseline, and a trend with one row
 per run (snapshots accumulate in `.codeunlimited.history.jsonl`).
 
 `codeunlimited report --all` produces one summary pair across every project
@@ -106,6 +106,9 @@ that the efficiency rules are paying off.
 Every estimate is deliberately conservative and documented in
 [docs/ACCURACY.md](docs/ACCURACY.md) — ranges from your own logs, not
 marketing multipliers.
+
+For reproducible scanner measurements and a separate real-work outcome
+protocol, see [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 
 ## Privacy
 
