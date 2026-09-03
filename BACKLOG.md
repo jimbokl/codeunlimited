@@ -1,116 +1,63 @@
 # Backlog
 
-Everything worth building, by priority. Sprints pull from here; ROADMAP.md
-tracks what's committed. Red lines still apply (no proxy, no tracker
-features, no silent semantic transforms).
+Only unshipped work belongs here. Completed capabilities are summarized in
+[ROADMAP.md](ROADMAP.md), and the privacy red lines still apply.
 
-## P0 — launch week
+## P0 — after the 1.6 pull request
 
-- [ ] crates.io publish (blocked: account email verification).
-- [ ] Post Show HN + r/ClaudeAI + X thread (texts in docs/launch/).
-- [ ] README screenshot/GIF of the HTML report + terminal audit (the
-      "install once" visual).
-- [ ] Social preview image for the GitHub repo.
-- [ ] Token hygiene: regenerate the crates.io token after launch.
-- [ ] Issue templates + "good first issue" labels for incoming traffic.
+- [ ] Review and merge the 1.6 hardening pull request.
+- [ ] Create the `v1.6.0` tag from the reviewed merge commit and verify all
+      three checksummed GitHub artifacts.
+- [ ] Publish crate 1.6.0 from that same commit, then install it from crates.io
+      and compare its embedded VCS SHA with the tag.
+- [ ] Update the repository release notes with any migration caveats found in
+      the final smoke test.
 
-## P1 — sprint v1.4: measurement depth (trust = moat)
+## P1 — measurement depth
 
-- [ ] **Per-model limit weights**: top-tier tokens burn the weekly window
-      faster than mid-tier; weigh reclaim numbers accordingly.
-- [ ] **Claude 5h-block ingestion**: reconstruct block/weekly windows from
-      log timestamps; show "you hit the wall N times this month, first
-      leak to fix to stop that".
-- [ ] **Codex rate-limit timeline**: used_percent over time as a chart in
-      the HTML report (the "I hit 100%" graph everyone screenshots).
-- [ ] **Compaction analytics**: detect /compact and context-summarization
-      events, measure what they saved vs a fresh session.
-- [ ] **Delegation adoption metric**: share of light-model subagent replies
-      over time - proves the delegation rule is being followed.
-- [ ] **Limit forecast**: "at the current pace you hit the weekly wall in
-      ~N hours; fixing leak #1 moves that to ~M" - turns the audit into a
-      countdown people act on.
-- [ ] Retry-storm detector: bursts of same-size requests in a short window
-      (token-count heuristics only - prompts are never read).
-- [ ] Ranges instead of point estimates in reports (min-max per detector).
-- [ ] `codeunlimited doctor`: sanity-check parsers against the local log
-      formats and report anything unrecognized (early warning for format
-      drift in Claude Code / Codex updates).
-- [ ] Per-detector unit tests on synthetic logs (beyond the golden e2e).
+- [ ] Per-model limit weights backed by observed provider accounting.
+- [ ] Claude five-hour and weekly-window reconstruction if logs expose a
+      defensible source of truth.
+- [ ] Compaction analytics: measured effect of `/compact` versus a fresh
+      session.
+- [ ] Per-MCP-server session-start attribution.
+- [ ] Delegation-adoption metric based only on model/session metadata.
+- [ ] Confidence flags when a parser sees partial or internally inconsistent
+      usage records.
 
-## P1 — sprint v1.5: fix engine v2
+## P1 — safer fixes
 
-- [ ] `fix` generates reviewable diffs for CLAUDE.md tuning (tighten noisy
-      sections, add missing delegation/state rules) - apply on approval.
-- [ ] Per-MCP-server cost attribution: estimate each configured server's
-      schema weight from session-start writes; name the expensive ones.
-- [ ] `fix --all`: run across every registered project in one pass.
-- [ ] `codeunlimited schedule`: install a weekly `report --all` task
-      (Task Scheduler on Windows, cron/launchd elsewhere).
-- [ ] State-file loop templates per task type (migration, monitoring,
-      batch-edit) instead of one generic scaffold.
-- [ ] Trust features for `--apply`: step-by-step confirmation mode,
-      `--backup` before writes, `codeunlimited rollback` to undo the last
-      applied change set.
-- [ ] `.codeunlimited.toml` config: thresholds, ignored projects,
-      per-project overrides.
+- [ ] Reviewable diffs for instruction-file tuning before application.
+- [ ] Step-by-step confirmation mode and a first-class rollback command.
+- [ ] Task-specific state templates for migrations, monitoring, and batch
+      edits.
+- [ ] Explain why each configured MCP server is a prune candidate without
+      editing `.mcp.json` automatically.
 
-## P2 — reach
+## P2 — scale and distribution
 
-- [ ] **Claude Code skill** `/codeunlimited` (audit + fix from inside a
-      session) + listing on skills.sh.
-- [ ] Statusline integration: estimated % of weekly window used, live.
-- [ ] `report --badge`: SVG badge "50% limit reclaimed" for READMEs -
-      every badge is an inbound link.
-- [ ] GitHub Action: PR comment "this change adds ~N tokens per session
-      start" (CLAUDE.md/MCP config diffs).
-- [ ] Gemini CLI as third source (needs real local logs to validate).
-- [ ] Other agent CLIs when formats are verifiable: OpenCode, Cursor CLI.
-- [ ] Homebrew tap, Scoop bucket, winget manifest.
-- [ ] Docs site (GitHub Pages from docs/) + user guide per scenario;
-      CONTRIBUTING.md + public roadmap on GitHub Projects.
-- [ ] Multi-machine merge: `export`/`import` of anonymized counters.
-- [ ] `--anonymize`: hash project names in reports so they can be shared
-      publicly (also the on-ramp for opt-in benchmarks).
-- [ ] `codeunlimited compare`: two periods or two branches side by side.
-- [ ] Interactive mode: after `audit`, pick a finding and jump straight
-      into `fix` for it.
-- [ ] Console polish: color output, progress while scanning huge logs.
-- [ ] Parser plugin interface so the community can add sources without
-      forking the core.
-- [ ] Big-log scaling: aggregate cache (skip unchanged files by mtime),
-      gzip/zstd log support, criterion benchmarks in CI.
+- [ ] Incremental cache keyed by path, size, and modification time.
+- [ ] gzip/zstd log support and benchmark fixtures for multi-gigabyte scans.
+- [ ] Homebrew tap, Scoop bucket, and winget manifest generated from verified
+      GitHub checksums.
+- [ ] Gemini CLI parser after real local logs and golden fixtures are available.
+- [ ] Parser extension contract for independently maintained sources.
+- [ ] Documentation site with platform-specific install and scheduling guides.
+- [ ] Status-line integration that reuses already parsed rate-limit metadata.
 
-## P2 — the moat (needs users first)
+## P3 — teams, only after user demand
 
-- [ ] **Opt-in anonymous benchmarks backend**: percentile comparisons
-      ("your context tax is x3.9 vs median x2.1"). Counts only, strict
-      opt-in. Accumulated data is the defensible asset.
-- [ ] Public aggregate stats page ("state of agent token efficiency") -
-      recurring content engine from the same data.
+- [ ] Explicit export/import of anonymized counters across machines.
+- [ ] Opt-in organization aggregation and monthly verified-delta reports.
+- [ ] API-log importer with documented ownership, retention, and deletion
+      controls.
+- [ ] Shared policy packs with organization defaults and project overrides.
 
-## P3 — B2B ladder (v0.5+)
+## Icebox
 
-- [ ] Org aggregation: many machines, one report.
-- [ ] Anthropic Admin Usage API + API-log importer: cost map by
-      team/feature/customer, unit economics per request.
-- [ ] CI gate: "this PR increases projected token spend by N%".
-- [ ] Monthly verified-delta report - the basis for savings-based pricing.
-- [ ] Team policy packs: shared CLAUDE.md efficiency rules with
-      org-level defaults.
-
-## Icebox (decided against, revisit only with strong signal)
-
-- Proxy/gateway anything (red line).
-- Usage-tracker features - dashboards of spend per day (ccusage's job).
-- Auto-editing MCP configs or anything that changes model behavior
-  without a reviewable diff.
-- RU localization of the product (EN-only; RU is a marketing channel,
-  not a product surface).
-- Detectors that require reading prompt/response content (duplicate-prompt
-  similarity, "unused tool results") - privacy red line; token-count
-  heuristics only.
-- Chart.js/Plotly in HTML reports - reports stay self-contained with zero
-  external requests; inline CSS/SVG only.
-- Auto-commit of applied fixes; Slack/Jira/Prometheus integrations;
-  mobile app; cloud SaaS - until the B2B ladder demands them.
+- Proxy or gateway features, API-key handling, and general spend dashboards.
+- Silent model or MCP configuration changes.
+- Detectors that inspect prompt/response content.
+- Third-party charting in generated reports; HTML stays self-contained.
+- Auto-commit, Slack/Jira integrations, a mobile app, or hosted SaaS without a
+  concrete team workflow that requires them.

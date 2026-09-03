@@ -23,8 +23,9 @@ your projects up so the same subscription produces more code.
   history through the context window; measured multiplier per session.
 - **Heavy model on mechanical replies** — top-tier requests that ended in a
   3-line answer; delegable to a light model.
-- **Mid-session cache re-writes** — broken prompt prefixes and expired TTLs
-  that re-pay for context instead of reading it back.
+- **Mid-session cache re-writes** — broken prompt prefixes that re-pay for
+  context instead of reading it back. Normal TTL expiry is shown separately
+  and excluded from reclaimable totals.
 - **Fat session starts** — unused MCP servers whose schemas are paid on every
   new session.
 - **Retry storms** — the same request re-sent in bursts (flaky tools, silent
@@ -43,7 +44,7 @@ The core is a single **Rust** binary - scans gigabytes of logs in ~2 seconds,
 no runtime dependencies:
 
 ```bash
-cargo install codeunlimited       # or grab a binary from GitHub Releases
+cargo install codeunlimited --locked  # or grab a binary from GitHub Releases
 
 codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
@@ -55,19 +56,22 @@ codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --app
 codeunlimited fix --all --apply   # same, across every project you've touched
 codeunlimited doctor              # parsers still understand your log formats?
 codeunlimited compare             # last 7 days vs the 7 before
-codeunlimited schedule            # weekly summary, hands-free
+codeunlimited schedule            # installs on Windows; prints a cron line elsewhere
 codeunlimited skill               # /codeunlimited inside Claude Code sessions
 ```
 
-Thresholds and ignored projects are tunable via `.codeunlimited.toml`
-(project root or `~/.codeunlimited/config.toml`) — see the header of
+Thresholds and ignored projects are tunable via `.codeunlimited.toml`.
+Machine-wide settings come from `~/.codeunlimited/config.toml`; an explicitly
+selected project's file is layered on top. See the header of
 [src/config.rs](src/config.rs) for the format.
 
 `report` extras: `--badge` writes an SVG "reclaimable %" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.
 
-A Python reference implementation lives in `codeunlimited/` (same detectors;
-used as the prototyping sandbox): `pip install -e . && python -m codeunlimited audit`.
+The shipped CLI is the Rust binary. A legacy Python reference lives in
+`codeunlimited/` for detector prototyping; it is not feature-equivalent and
+uses a non-conflicting command:
+`pip install -e . && codeunlimited-reference audit`.
 
 ## Two ways to adopt — both first-class
 
@@ -78,7 +82,8 @@ light-model delegation, MCP hygiene) are in place from day one and picked up
 by Claude Code and Codex automatically.
 
 **Attaching to an existing project:** the same `codeunlimited init` appends
-the rules to your existing CLAUDE.md/AGENTS.md (idempotent, marker-guarded)
+the rules to your existing CLAUDE.md/AGENTS.md (idempotent, marker-guarded,
+with a backup before replacement)
 and — because the project already has history — instantly prints its
 baseline: requests, sessions, and the top limit leak found in *this* project.
 Then `codeunlimited audit --project <path>` gives the full scoped report,
@@ -104,9 +109,11 @@ marketing multipliers.
 
 ## Privacy
 
-Everything runs offline on your machine. Only token counts, model names,
-timestamps and project names are read — prompts and responses are never
-parsed, stored, or transmitted.
+The runtime has no network client. It extracts token counts, model names,
+timestamps and project identifiers from local logs. Prompt and response text
+is not extracted, retained, printed, or transmitted. The files written by
+`init`, `fix`, `report`, `skill`, and `schedule` are listed in
+[SECURITY.md](SECURITY.md).
 
 ## Supported sources
 

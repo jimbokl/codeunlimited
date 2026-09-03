@@ -1,14 +1,14 @@
 [project]
-name = "codeunlimited"
+name = "codeunlimited-reference"
 version = "0.1.0"
-description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
+description = "Legacy Python reference implementation for codeunlimited detector prototyping."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 keywords = ["claude-code", "codex", "tokens", "rate-limits", "cost-optimization"]
 
 [project.scripts]
-codeunlimited = "codeunlimited.cli:main"
+codeunlimited-reference = "codeunlimited.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

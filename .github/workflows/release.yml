@@ -5,11 +5,50 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  validate:
+    name: validate tagged source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Check tag and package versions
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python scripts/check_release.py --expected "$version" --tag "$GITHUB_REF_NAME"
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --release --locked
+      - run: python -m unittest discover -v
+      - run: cargo package --locked
+      - name: Install packaged source and smoke-test it
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          install_root="$RUNNER_TEMP/codeunlimited-install"
+          cargo install --path . --locked --root "$install_root"
+          "$install_root/bin/codeunlimited" --version | grep -Fx "codeunlimited $version"
+
   build:
+    name: build ${{ matrix.asset }}
+    needs: validate
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -26,15 +65,47 @@ jobs:
             asset: codeunlimited-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release --target ${{ matrix.target }}
-      - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.asset }}
-        shell: bash
-      - uses: softprops/action-gh-release@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
-          files: ${{ matrix.asset }}
+          key: release-${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Copy, smoke-test, and checksum artifact
+        shell: bash
+        run: |
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
+          "./${{ matrix.asset }}" --version | grep -Fx "codeunlimited ${GITHUB_REF_NAME#v}"
+          python -c 'import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); pathlib.Path(str(p)+".sha256").write_text(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name+"\n", encoding="utf-8")' "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Verify checksums
+        working-directory: dist
+        run: sha256sum --check ./*.sha256
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
           generate_release_notes: true

@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.6.0 - 2026-09-03
+
+- Project-scoped commands now load global configuration first and then the
+  selected project's `.codeunlimited.toml`. `fix --all` respects the global
+  ignore list.
+- Codex project filtering compares normalized full paths, so unrelated
+  directories with the same basename no longer share a report. Only actual
+  `turn_context` records can set Codex model and working-directory metadata.
+- Reclaimable totals now form a conservative union of per-request detector
+  claims. A request found by two detectors is counted once, and normal cache
+  TTL expiry remains visible without being presented as avoidable savings.
+- Token arithmetic saturates safely, long-session metrics require a real tail,
+  and JSON output includes `schema_version: 1` plus stable finding keys.
+- Project, registry, baseline, history, report, badge, state, and skill writes
+  now fail visibly and use atomic replacement where applicable. Instruction
+  files and forced skill updates retain a backup; symlinked instruction targets
+  are rejected.
+- `doctor` fails when there are no logs to inspect. Day windows are restricted
+  to 1–36,500, report output cannot alias its generated HTML file, and history
+  is appended only after the report files succeed.
+- The legacy Python prototype has a distinct distribution and command name.
+  CI now covers the Rust 1.82 MSRV, release metadata, package contents, RustSec,
+  and tag-to-artifact version consistency.
+
 ## 1.5.0 - 2026-09-03
 
 - **Claude Code skill**: `codeunlimited skill` installs `/codeunlimited` -
@@ -88,5 +112,5 @@ First stable release.
   (`~/.codex/sessions`) supported natively. Gemini CLI planned once real
   logs are available to validate against.
 - **Privacy**: offline only; token counts, models, timestamps and project
-  names - prompts and responses are never parsed, stored, or transmitted.
+  names - prompt and response text is not extracted, stored, or transmitted.
 - Golden-fixture test suite and 3-OS CI (fmt, clippy -D warnings, tests).

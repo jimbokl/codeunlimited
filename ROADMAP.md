@@ -1,113 +1,61 @@
-# Roadmap to production
+# Roadmap
 
-Committed work only; the full idea pool lives in [BACKLOG.md](BACKLOG.md).
+Mission: **fit more useful agent work into the subscription limits people
+already pay for.** The Rust CLI is the product. The Python package remains a
+legacy detector prototype and has a separate distribution name.
 
-Mission: **more code out of the subscription limits you already pay for.**
-v0.1 (Python) is the validated reference implementation — the detector logic
-was proven on 71k real requests before a line of product code was written.
-From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
+## Shipped through 1.6
 
-## v0.2 — Rust core (speed + distribution)
+- Fast local parsing for Claude Code and Codex logs, project-scoped audit,
+  bounded time windows, and versioned JSON output.
+- Five explainable detectors: long-session context growth, heavy models on
+  short replies, cache-prefix rewrites, fat session starts, and retry storms.
+- Conservative estimates with ranges, per-request union accounting, explicit
+  treatment of normal cache TTL expiry, and overflow-safe counters.
+- `init`, per-source baselines, `delta`, Markdown/HTML reports, trend history,
+  anonymization, badges, forecasts, comparisons, and parser diagnostics.
+- Dry-run-first fixes, long-loop state scaffolds, project registry,
+  project/global configuration, global ignore rules, and the Claude Code skill.
+- Atomic file replacement, backups, symlink rejection, non-zero mutation
+  failures, exact Codex path scope, and three-platform CI.
+- Rust 1.82 MSRV, RustSec and package gates, tag/version validation, checksummed
+  release artifacts, MIT license, and a distinct Python reference command.
 
-- [x] Port scanner + detectors to Rust (`serde_json` + `rayon` parallel walk):
-      **3.6 GB of logs in 2.4 s** (vs ~2 min for the Python reference) —
-      audit, scoped audit, init with per-project baseline, both adoption cases.
-- [x] Single binary, no Python required (`cargo build --release`).
-- [ ] Prebuilt binaries: GitHub Releases, `cargo install codeunlimited`,
-      Homebrew tap, Scoop bucket. (Python package remains as the
-      prototyping sandbox for new detectors.)
-- [x] Golden-fixture test suite: synthetic Claude Code / Codex logs with known
-      findings; CI workflow for Linux/macOS/Windows (fmt + clippy -D warnings
-      + tests) ready to activate on first push.
-- [x] `--json` output for scripting; `--days N` window filter.
-- [ ] Gemini CLI as third native source (needs real local logs to validate
-      the format against - accuracy over speed here).
+## Next: measurement depth
 
-## v0.3 — trust & measurement (the moat)
+- Per-model limit weights once provider behavior can be measured reliably.
+- Claude five-hour/weekly-window ingestion when the local logs expose enough
+  evidence to reconstruct those windows.
+- Compaction analytics: detect compaction events and compare their effect with
+  a fresh session.
+- Per-MCP-server schema attribution for session-start context.
+- Delegation-adoption metrics based only on metadata, never prompt content.
+- Incremental indexing for very large histories, plus compressed-log support
+  and reproducible benchmarks.
 
-- [x] **Verified delta**: `init` captures `.codeunlimited.baseline.json`;
-      `delta` reports before/after per project (claude source; codex planned).
-- [x] Rate-limit ingestion: Codex `used_percent` peak surfaced in the report.
-- [x] Saved Markdown reports with trend history (`codeunlimited report`):
-      findings + verified delta + one snapshot row per run.
-- [ ] Per-model limit weights; Claude 5-hour block ingestion.
-- [ ] **Opt-in anonymous benchmarks** (post-1.0 — needs a backend):
-      percentile comparisons ("your context tax is x3.9 vs median x2.1").
-      Accumulated data is the defensible asset; strict opt-in, counts only.
-- [x] Conservative-estimate policy documented per detector (docs/ACCURACY.md).
+## Distribution and reach
 
-## Sprint v1.2 (2026-09) — fix engine + measured savings
+- Publish the approved 1.6 crate and `v1.6.0` tag after review.
+- Homebrew, Scoop, and winget packages driven from the checksummed GitHub
+  artifacts.
+- A small documentation site and verified installation guides for each
+  supported platform.
+- Add another agent CLI only after real fixtures establish a stable parser
+  contract; Gemini remains the first candidate.
 
-- [x] `codeunlimited fix [--apply]`: turns audit findings into concrete project
-      changes — efficiency-rules block, state-file scaffold for long loops,
-      MCP prune candidates (listed, never auto-edited). Dry-run by default.
-- [x] Codex delta: baselines, `delta` and `report` become per-source
-      (claude + codex), old single-source baselines still readable.
-- [x] Apply to the top-volume local projects and measure the savings with
-      the `report` trend: ~10.4B tokens of history now under the rules;
-      measured after day 1 on the author's project - context per turn
-      down 46%, long-session growth 10x -> 0.2x.
+## Teams
 
-## Sprint v1.3 (2026-09) — launch prep
+- Explicit export/import of anonymized counters across machines.
+- Opt-in organization summaries and monthly verified-delta reports.
+- API-log importers and policy packs only with a documented privacy boundary
+  and a user-controlled data path.
 
-- [x] Styled self-contained HTML reports (light/dark) next to Markdown.
-- [x] `report --all`: cross-project summary, per-project delta table,
-      global trend; project registry at `~/.codeunlimited/`.
-- [x] docs/ACCURACY.md — the conservative math behind every estimate.
-- [x] crates.io metadata; GitHub storefront (description, topics);
-      positioning: set up once - up to 50% more work from the same limits.
-- [x] Launch drafts: Show HN + "41x is really 5x" (docs/launch/).
-- [ ] Dogfood week: `report --all` every 1-2 days, fill [TREND] numbers.
-- [ ] Launch day (owner decisions: cargo token, date): public flip +
-      crates.io publish + posts, all at once.
+## Red lines
 
-## Sprint v1.4 (2026-09) — measurement depth [SHIPPED]
+- No proxy or gateway, and no API-key handling.
+- No general usage-tracker clone; accounting tools already cover that job.
+- No silent semantic edits to MCP or model configuration.
+- No detector that needs prompt or response text.
+- No telemetry or upload without a separate, explicit opt-in design.
 
-- [x] Limit forecast (Codex capacity calibration + Claude proxy ceiling).
-- [x] Retry-storm detector (token-count heuristics only).
-- [x] Honest lo-hi ranges on every assumption-based estimate.
-- [x] Rate-limit timeline (daily peaks) in HTML/MD summaries.
-- [x] `doctor` - log-format drift early warning.
-- [x] `fix --all`, backups before writes, `report --badge`, `--anonymize`.
-- [x] Colored TTY output, detector unit tests, CONTRIBUTING + templates,
-      README terminal mockup.
-
-## Sprint v1.5 (2026-09) — rituals & reach [SHIPPED]
-
-- [x] Claude Code skill (`codeunlimited skill` -> `/codeunlimited`).
-- [x] `schedule` - weekly report --all (Task Scheduler / cron line).
-- [x] `compare` - period vs previous, leak-share verdict.
-- [x] `.codeunlimited.toml` - thresholds + ignore_projects.
-
-## v0.4 — the fix engine
-
-- [ ] `codeunlimited fix`: generated diffs, applied only on user approval —
-      CLAUDE.md tuning, `.mcp.json` pruning of unused servers, session
-      hygiene suggestions.
-- [ ] Claude Code skill (`/codeunlimited`) for in-agent audit + fix flow;
-      listing on skills.sh.
-- [x] State-file loop scaffold (SKILL.state pattern) for long-running tasks
-      (`fix --apply` creates `state/state.json` where long sessions are seen).
-
-## v0.5 — teams (B2B ladder)
-
-- [ ] Org aggregation: many machines, one report.
-- [ ] API-log importer + Anthropic Admin Usage API: cost map by
-      feature/team/customer, unit economics per request.
-- [ ] CI gate (GitHub Action): "this PR increases projected token spend by N%".
-- [ ] Monthly verified-delta report — the basis for savings-based pricing.
-
-## v1.0 — launch
-
-- [ ] PyPI + crates.io + GitHub release, docs site.
-- [ ] Launch content: "I reclaimed 52% of my Claude Code weekly limit"
-      (real numbers from the author's own logs) and
-      "41x is really 5x" (honest cache math behind the detectors).
-- [ ] SECURITY.md, privacy statement, CHANGELOG, SemVer discipline.
-
-## Red lines (what we will not build)
-
-- No proxy/gateway: we never sit in the request path, never touch API keys.
-- No usage-tracker features: accounting is ccusage's job — we link to it.
-- No auto-transformations that can change model output quality;
-  anything semantic ships as a reviewable diff.
+The prioritised idea pool is kept in [BACKLOG.md](BACKLOG.md).

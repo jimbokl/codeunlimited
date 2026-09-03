@@ -1,27 +1,49 @@
-# Security & Privacy
+# Security and privacy
 
-## What this tool reads
+## Runtime boundary
 
-`codeunlimited` runs entirely offline on your machine. It reads local session
-logs of Claude Code (`~/.claude/projects/**/*.jsonl`) and Codex CLI
-(`~/.codex/sessions/**/*.jsonl`) and extracts **only**:
+`codeunlimited` has no network client and makes no runtime network requests.
+It reads Claude Code logs from `~/.claude/projects/**/*.jsonl` and Codex logs
+from `~/.codex/sessions/**/*.jsonl`. JSON records are decoded locally, but the
+tool extracts only:
 
-- token counts (input / cached / cache-write / output),
-- model identifiers,
-- timestamps, session identifiers and project directory names,
-- rate-limit percentages (Codex).
+- token counts and cache counters;
+- model, timestamp, session, and project identifiers;
+- Codex rate-limit percentages and window lengths.
 
-Prompts, responses, file contents and tool arguments are **never parsed,
-stored, or transmitted**. The tool makes no network requests.
+Prompt text, response text, and tool arguments are not extracted, retained,
+printed, or transmitted. Reports can contain project names unless
+`report --anonymize` is used.
 
-## What it writes
+## Files and system state it can change
 
-- `CLAUDE.md` / `AGENTS.md` efficiency blocks in a project you `init`
-  (idempotent, marker-guarded);
-- `.codeunlimited.baseline.json` in that project (aggregate token metrics
-  only - safe to commit, safe to delete).
+Commands write only when their documented behavior requires it:
+
+- `init` and `fix --apply` can create or update `CLAUDE.md` and `AGENTS.md`,
+  preserving the first changed version as `*.codeunlimited.bak`;
+- `init` writes `.codeunlimited.baseline.json`;
+- `fix --apply` can create `state/state.json` for projects with long sessions;
+- `report` writes a Markdown file, a sibling HTML file, optional
+  `CODEUNLIMITED_BADGE.svg`, and a local history JSONL file;
+- `init`, `fix`, and `report` maintain the path-only project registry and lock
+  files under `~/.codeunlimited/` (or `CODEUNLIMITED_HOME`);
+- `report --all` maintains `~/.codeunlimited/history.jsonl`;
+- `skill` writes `~/.claude/skills/codeunlimited/SKILL.md`; replacing different
+  content requires `--force` and keeps a backup;
+- on Windows, `schedule` creates or removes the named Task Scheduler entry.
+  On other platforms it only prints the crontab line for the user to add or
+  remove.
+
+File replacements use a temporary sibling plus atomic persistence. Existing
+instruction-file and skill permissions are preserved where the platform
+supports them. Symlinked instruction or skill targets are rejected rather than
+followed. A failed mutation returns a non-zero exit status.
+
+The release workflows themselves use GitHub's network and artifact services;
+that build-time behavior is separate from the installed CLI.
 
 ## Reporting a vulnerability
 
-Open a GitHub issue with the `security` label, or use GitHub private
-vulnerability reporting on this repository.
+Use GitHub private vulnerability reporting for this repository. If private
+reporting is unavailable, open an issue without exploit details and ask the
+maintainer for a private contact channel.

@@ -1,28 +1,38 @@
 [package]
 name = "codeunlimited"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2021"
+rust-version = "1.82"
 description = "Set up once - up to 50% more work from the same Claude Code & Codex CLI limits. Offline token-leak audit, one-command fixes, verified savings."
 license = "MIT"
 repository = "https://github.com/jimbokl/codeunlimited"
 readme = "README.md"
 keywords = ["claude-code", "codex", "tokens", "limits", "audit"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["/codeunlimited/", "/docs/launch/", "/.github/"]
+exclude = [
+    "/codeunlimited/",
+    "/pyproject.toml",
+    "/scripts/",
+    "/docs/launch/",
+    "/docs/superpowers/",
+    "/.github/",
+]
 
 [dependencies]
 serde_json = "1"
 rayon = "1"
 walkdir = "2"
 chrono = "0.4"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "=4.5.48", features = ["derive"] }
 toml = "0.8"
 fs2 = "0.4"
-tempfile = "3"
+tempfile = "=3.14.0"
+# Keep fresh Cargo 1.82 resolution from selecting edition-2024 indexmap.
+indexmap = "=2.11.4"
 
 [dev-dependencies]
-assert_cmd = "2"
-predicates = "3"
+assert_cmd = "=2.0.16"
+predicates = "=3.1.3"
 
 [profile.release]
 lto = true

@@ -51,6 +51,15 @@ context 25-75% (mid 50%), fat-start excess 25-75% (mid 50%), retry storms
 25-75% (mid 50%). Mid-session cache re-writes are directly measured waste,
 so no range is shown.
 
+## Overlapping findings
+
+One request can match more than one detector. For example, a large first
+request may be both a fat session start and a top-tier request with a short
+reply. Individual finding rows keep their own estimates, but the headline
+total uses the largest midpoint claim for each request. It does not add those
+overlapping claims together. This conservative union is also used by JSON,
+Markdown/HTML reports, comparisons, and history snapshots.
+
 ## Limit forecast
 
 - **Codex**: the logs record `used_percent` of the rate-limit window, which
@@ -73,8 +82,9 @@ single day-1 delta. The tool never extrapolates a day into a week for you.
 
 ## What the tool never does
 
-- Never reads prompts or responses — only token counts, models, timestamps,
-  project names.
+- Never extracts, retains, prints, or transmits prompt/response text. The JSONL
+  records are decoded locally so the named token and metadata fields can be
+  selected.
 - Never touches the network. No telemetry, no uploads.
 - Never auto-edits configs that could change agent behavior beyond the
   documented efficiency rules; those changes are printed as suggestions.
