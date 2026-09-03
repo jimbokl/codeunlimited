@@ -1,6 +1,6 @@
 ---
 name: codeunlimited
-description: Audit where the subscription limit leaks, apply efficiency fixes, and report verified savings using the codeunlimited CLI. Use when the user asks about token usage, hitting limits, or wants more work out of Claude Code.
+description: Audit estimated subscription-limit leaks, apply efficiency fixes, and report observed before/after trends using the codeunlimited CLI. Use when the user asks about token usage, hitting limits, or wants more work out of Claude Code.
 ---
 
 # codeunlimited - more work from the same limit
@@ -19,7 +19,8 @@ or download a binary from https://github.com/jimbokl/codeunlimited/releases).
    the user whether to apply. On yes: `codeunlimited fix . --apply`.
 3. **Set up measurement.** If the project has no baseline yet, `fix --apply`
    captures one. Tell the user to re-check in a few days with
-   `codeunlimited report .` - the trend table proves (or disproves) savings.
+   `codeunlimited report .` - the trend table provides observational evidence,
+   not proof that codeunlimited caused a change.
 4. **Weekly ritual.** For "keep an eye on it" requests, suggest
    `codeunlimited schedule` (weekly summary) and `codeunlimited compare`
    (this week vs last).
@@ -28,7 +29,8 @@ or download a binary from https://github.com/jimbokl/codeunlimited/releases).
 
 - The tool is offline and reads only token counts - never claim it reads
   prompts.
-- Quote numbers exactly as the tool prints them, including ranges; they are
-  deliberately conservative (docs/ACCURACY.md in the repo).
+- Describe opportunities as estimates and quote numbers exactly as the tool
+  prints them, including ranges; they are deliberately conservative
+  (docs/ACCURACY.md in the repo).
 - If a command reports unrecognized log lines, run `codeunlimited doctor`
   and suggest filing a format-drift issue.

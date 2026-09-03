@@ -27,12 +27,21 @@ Commands write only when their documented behavior requires it:
   `CODEUNLIMITED_BADGE.svg`, and a local history JSONL file;
 - `init`, `fix`, and `report` maintain the path-only project registry and lock
   files under `~/.codeunlimited/` (or `CODEUNLIMITED_HOME`);
+- `audit` may maintain `codex-index-v1.json` in that directory. The index
+  contains JSONL file paths, normalized cwd keys, file size/modification
+  fingerprints, and timestamp ranges. These paths can identify projects, but
+  the index contains no prompts, responses, models, token events, or counts.
+  `audit --no-index` neither reads nor writes it;
 - `report --all` maintains `~/.codeunlimited/history.jsonl`;
 - `skill` writes `~/.claude/skills/codeunlimited/SKILL.md`; replacing different
   content requires `--force` and keeps a backup;
 - on Windows, `schedule` creates or removes the named Task Scheduler entry.
   On other platforms it only prints the crontab line for the user to add or
   remove.
+- `scripts/benchmark_local.py` writes a benchmark JSON only when `--output` is
+  supplied. It contains timings, RSS, exit codes, source request counts, scan
+  counters, and non-identifying platform fields; it excludes audit findings,
+  token totals, models, projects, paths, prompts, and responses.
 
 File replacements use a temporary sibling plus atomic persistence. Existing
 instruction-file and skill permissions are preserved where the platform

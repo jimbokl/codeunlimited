@@ -1,0 +1,323 @@
+{
+  "corpus": {
+    "bytes": 32474157211,
+    "jsonl_files": 668
+  },
+  "days": 30,
+  "generated_at_utc": "2026-09-03T20:43:01.930082+00:00",
+  "platform": {
+    "machine": "arm64",
+    "python": "3.14.4",
+    "system": "Darwin",
+    "total_memory_bytes": 17179869184
+  },
+  "provenance": {
+    "codeunlimited_version": "1.7.0",
+    "git_sha": "cd3234ea6f5c8ccb0a0b9ab4df0cae625b435d8b"
+  },
+  "runs_per_scenario": 3,
+  "scenarios": [
+    {
+      "name": "fixture",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7241728,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 1.177431
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7290880,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 0.013082
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7192576,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 0.009152
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 7290880,
+        "wall_seconds": {
+          "median": 0.013082,
+          "p95": 1.177431
+        }
+      }
+    },
+    {
+      "name": "full_no_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 1079459840,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748187
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2748082
+          },
+          "wall_seconds": 18.827567
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 1048444928,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748188
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2748083
+          },
+          "wall_seconds": 19.586918
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 1102708736,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748189
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2748084
+          },
+          "wall_seconds": 18.915418
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 1102708736,
+        "wall_seconds": {
+          "median": 18.915418,
+          "p95": 19.586918
+        }
+      }
+    },
+    {
+      "name": "bounded_time_warm_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 422412288,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728114
+          },
+          "source_requests": {
+            "codex": 728114
+          },
+          "wall_seconds": 6.925679
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 363757568,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728115
+          },
+          "source_requests": {
+            "codex": 728115
+          },
+          "wall_seconds": 7.002285
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 388382720,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728115
+          },
+          "source_requests": {
+            "codex": 728115
+          },
+          "wall_seconds": 7.095458
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 422412288,
+        "wall_seconds": {
+          "median": 7.002285,
+          "p95": 7.095458
+        }
+      },
+      "warmup_exit_code": 0
+    },
+    {
+      "name": "scoped_no_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 257327104,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.044589
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 243744768,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.106753
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 257671168,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.203361
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 257671168,
+        "wall_seconds": {
+          "median": 18.106753,
+          "p95": 18.203361
+        }
+      }
+    },
+    {
+      "name": "scoped_warm_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8224768,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.02372
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8224768,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.024979
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8241152,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.02485
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 8241152,
+        "wall_seconds": {
+          "median": 0.02485,
+          "p95": 0.024979
+        }
+      },
+      "warmup_exit_code": 0
+    }
+  ],
+  "schema_version": 1
+}

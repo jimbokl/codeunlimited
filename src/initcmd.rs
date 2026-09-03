@@ -88,7 +88,7 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
         println!("  history: none yet - new project, baseline starts now");
         return Ok(());
     }
-    let sessions: HashSet<&str> = reqs.iter().map(|r| r.session.as_str()).collect();
+    let sessions: HashSet<&str> = reqs.iter().map(|r| r.session.as_ref()).collect();
     let total = reqs
         .iter()
         .fold(0u64, |total, request| total.saturating_add(request.total()));
