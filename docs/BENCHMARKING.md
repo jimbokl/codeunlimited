@@ -80,14 +80,14 @@ not as laboratory constants.
 
 | Scenario | Median | p95 | Maximum RSS | Target result |
 |---|---:|---:|---:|---|
-| Synthetic fixture | 0.0065 s | 0.0078 s | 7,340,032 B | smoke pass |
-| Full, no index | 19.6015 s | 19.7042 s | 1,054,916,608 B | time hit; RSS miss |
-| 30 days, warm index | 6.8883 s | 6.8888 s | 423,116,800 B | time miss; RSS miss |
-| Project scope, no index | 18.5268 s | 18.8338 s | 275,562,496 B | diagnostic only |
-| Project scope, warm index | 0.0260 s | 0.0276 s | 8,323,072 B | time and RSS hit |
+| Synthetic fixture | 0.0131 s | 1.1774 s | 7,290,880 B | smoke pass; one timing outlier |
+| Full, no index | 18.9154 s | 19.5869 s | 1,102,708,736 B | time hit; RSS miss |
+| 30 days, warm index | 7.0023 s | 7.0955 s | 422,412,288 B | time miss; RSS miss |
+| Project scope, no index | 18.1068 s | 18.2034 s | 257,671,168 B | diagnostic only |
+| Project scope, warm index | 0.0249 s | 0.0250 s | 8,241,152 B | time and RSS hit |
 
-Against the 1.6 observations, the full median improved by about 8% and maximum
-RSS by about 37%; the 30-day median improved by about 64% and RSS by about 69%.
+Against the 1.6 observations, the full median improved by about 12% and maximum
+RSS by about 34%; the 30-day median improved by about 64% and RSS by about 69%.
 The fixed 5-second/350-MiB bounded targets and 800-MiB full-memory target remain
 recorded as misses. The selected worktree had no matching retained sessions in
 the scoped run, so its warm-index result is specifically the all-files-skipped

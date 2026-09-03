@@ -18,9 +18,9 @@
   separately.
 - Product wording now describes estimated token-leak opportunities and
   observational before/after tracking instead of causal or guaranteed savings.
-- On the documented Apple M4 history, the final three-run median was 19.60 s
-  for a full unindexed audit, 6.89 s for a warm indexed 30-day audit, and
-  0.026 s for the all-files-skipped warm project scope. The published benchmark
+- On the documented Apple M4 history, the final three-run median was 18.92 s
+  for a full unindexed audit, 7.00 s for a warm indexed 30-day audit, and
+  0.025 s for the all-files-skipped warm project scope. The published benchmark
   records the full and 30-day memory targets as misses rather than moving them.
 
 ## 1.6.0 - 2026-09-03
