@@ -69,3 +69,26 @@ fn init_rejects_symlinked_instruction_file() {
     );
     assert!(!project.path().join("CLAUDE.md").exists());
 }
+
+#[test]
+fn fix_apply_repairs_a_partially_initialized_project() {
+    let project = TempDir::new().expect("project tempdir");
+    let state = TempDir::new().expect("state tempdir");
+    fs::write(
+        project.path().join("CLAUDE.md"),
+        "<!-- codeunlimited:v1 -->\n",
+    )
+    .expect("partial rules");
+
+    let mut command = Command::cargo_bin("codeunlimited").expect("binary");
+    command
+        .env("CLAUDE_HOME", state.path().join("claude"))
+        .env("CODEX_HOME", state.path().join("codex"))
+        .env("CODEUNLIMITED_HOME", state.path().join("state"))
+        .args(["fix", "--apply"])
+        .arg(project.path())
+        .assert()
+        .success();
+
+    assert!(project.path().join("AGENTS.md").is_file());
+}

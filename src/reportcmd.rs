@@ -466,18 +466,17 @@ fn deltas_for(root: &Path, reqs: &[Request], long_session_turns: usize) -> Vec<D
         .collect()
 }
 
-fn append_history(
-    path: &Path,
+fn history_snapshot(
     reqs: &[Request],
     reclaim: u64,
     now: &chrono::DateTime<chrono::Utc>,
     long_session_turns: usize,
-) -> std::io::Result<Vec<Value>> {
+) -> Value {
     let m = metrics::compute(reqs, long_session_turns);
     let total = reqs
         .iter()
         .fold(0u64, |total, request| total.saturating_add(request.total()));
-    let snap = serde_json::json!({
+    serde_json::json!({
         "ts": now.timestamp(),
         "date": now.date_naive().to_string(),
         "requests": m.requests,
@@ -485,7 +484,18 @@ fn append_history(
         "context_growth": (m.context_growth * 100.0).round() / 100.0,
         "total_tokens": total,
         "reclaimable_tokens": reclaim,
-    });
+    })
+}
+
+fn read_history(path: &Path) -> Vec<Value> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+fn append_history(path: &Path, snapshot: &Value) -> std::io::Result<Vec<Value>> {
     let lock_path = path.with_file_name(format!(
         "{}.lock",
         path.file_name()
@@ -503,7 +513,7 @@ fn append_history(
     if !raw.is_empty() && !raw.ends_with('\n') {
         raw.push('\n');
     }
-    writeln!(&mut raw, "{snap}").expect("writing to String cannot fail");
+    writeln!(&mut raw, "{snapshot}").expect("writing to String cannot fail");
     crate::safeio::atomic_write(path, raw.as_bytes())?;
     Ok(raw
         .lines()
@@ -511,12 +521,34 @@ fn append_history(
         .collect())
 }
 
+fn html_path_for(markdown_path: &Path) -> std::io::Result<PathBuf> {
+    if markdown_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+        })
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "--out is the Markdown destination and cannot end in .html or .htm",
+        ));
+    }
+    Ok(markdown_path.with_extension("html"))
+}
+
 fn write_pair(md_path: &Path, data: &ReportData, badge: bool) -> i32 {
+    let html_path = match html_path_for(md_path) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Invalid report output {}: {e}", md_path.display());
+            return 1;
+        }
+    };
     if let Err(e) = crate::safeio::atomic_write(md_path, build_markdown(data).as_bytes()) {
         eprintln!("Cannot write {}: {e}", md_path.display());
         return 1;
     }
-    let html_path = md_path.with_extension("html");
     if let Err(e) = crate::safeio::atomic_write(&html_path, html::build_html(data).as_bytes()) {
         eprintln!("Cannot write {}: {e}", html_path.display());
         return 1;
@@ -551,6 +583,13 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| disp.clone());
+    let md_path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join(REPORT_FILE));
+    if let Err(e) = html_path_for(&md_path) {
+        eprintln!("Invalid report output {}: {e}", md_path.display());
+        return 1;
+    }
 
     let mut reqs = parsers::iter_claude(Some(&root));
     reqs.extend(parsers::iter_codex(Some(&root)));
@@ -570,24 +609,10 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
     let deltas = deltas_for(&root, &reqs, cfg.long_session_turns);
     let reclaim = detectors::reclaim_total(&findings);
     let now = chrono::Utc::now();
-    let history = match append_history(
-        &root.join(HISTORY_FILE),
-        &reqs,
-        reclaim,
-        &now,
-        cfg.long_session_turns,
-    ) {
-        Ok(history) => history,
-        Err(e) => {
-            eprintln!("Cannot write {}: {e}", root.join(HISTORY_FILE).display());
-            return 1;
-        }
-    };
-    println!(
-        " Snapshot #{} recorded in {} - the trend grows with every run.",
-        history.len(),
-        HISTORY_FILE
-    );
+    let snapshot = history_snapshot(&reqs, reclaim, &now, cfg.long_session_turns);
+    let history_path = root.join(HISTORY_FILE);
+    let mut history = read_history(&history_path);
+    history.push(snapshot.clone());
 
     let mut data = collect(
         &name,
@@ -602,13 +627,34 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
     if anon_flag {
         anonymize(&mut data);
     }
-    let md_path = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| root.join(REPORT_FILE));
-    write_pair(&md_path, &data, badge)
+    let result = write_pair(&md_path, &data, badge);
+    if result != 0 {
+        return result;
+    }
+    match append_history(&history_path, &snapshot) {
+        Ok(history) => {
+            println!(
+                " Snapshot #{} recorded in {} - the trend grows with every run.",
+                history.len(),
+                HISTORY_FILE
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("Cannot write {}: {e}", history_path.display());
+            1
+        }
+    }
 }
 
 pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
+    let md_path = out
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(SUMMARY_FILE));
+    if let Err(e) = html_path_for(&md_path) {
+        eprintln!("Invalid report output {}: {e}", md_path.display());
+        return 1;
+    }
     let cfg = crate::config::Config::load_for(None);
     let mut reqs = parsers::iter_claude(None);
     let (codex, series) = parsers::iter_codex_full(None);
@@ -656,19 +702,9 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
         return 1;
     }
     let history_path = registry::home_dir().join("history.jsonl");
-    let history = match append_history(&history_path, &reqs, reclaim, &now, cfg.long_session_turns)
-    {
-        Ok(history) => history,
-        Err(e) => {
-            eprintln!("Cannot write {}: {e}", history_path.display());
-            return 1;
-        }
-    };
-    println!(
-        " Snapshot #{} recorded in {} - the trend grows with every run.",
-        history.len(),
-        registry::home_dir().join("history.jsonl").display()
-    );
+    let snapshot = history_snapshot(&reqs, reclaim, &now, cfg.long_session_turns);
+    let mut history = read_history(&history_path);
+    history.push(snapshot.clone());
 
     let mut data = collect(
         "all projects",
@@ -696,8 +732,22 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     if anon_flag {
         anonymize(&mut data);
     }
-    let md_path = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(SUMMARY_FILE));
-    write_pair(&md_path, &data, badge)
+    let result = write_pair(&md_path, &data, badge);
+    if result != 0 {
+        return result;
+    }
+    match append_history(&history_path, &snapshot) {
+        Ok(history) => {
+            println!(
+                " Snapshot #{} recorded in {} - the trend grows with every run.",
+                history.len(),
+                history_path.display()
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("Cannot write {}: {e}", history_path.display());
+            1
+        }
+    }
 }

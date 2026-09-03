@@ -8,6 +8,16 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+fn parse_days(value: &str) -> Result<u64, String> {
+    let days = value
+        .parse::<u64>()
+        .map_err(|_| "days must be an integer from 1 through 36500".to_string())?;
+    (1..=36_500)
+        .contains(&days)
+        .then_some(days)
+        .ok_or_else(|| "days must be from 1 through 36500".to_string())
+}
+
 #[derive(Parser)]
 #[command(
     name = "codeunlimited",
@@ -37,7 +47,7 @@ enum Cmd {
         #[arg(long, value_name = "PATH")]
         project: Option<PathBuf>,
         /// Only look at the last N days
-        #[arg(long, value_name = "N")]
+        #[arg(long, value_name = "N", value_parser = parse_days)]
         days: Option<u64>,
         /// Machine-readable output for scripting
         #[arg(long)]
@@ -88,7 +98,7 @@ enum Cmd {
     /// This period vs the previous one: is the limit spent better or worse?
     Compare {
         /// Window size in days (compares last N days vs the N before)
-        #[arg(long, default_value = "7")]
+        #[arg(long, default_value = "7", value_parser = parse_days)]
         days: u64,
     },
     /// Install a weekly `report --all` task (Windows Task Scheduler / cron line)
@@ -98,7 +108,11 @@ enum Cmd {
         remove: bool,
     },
     /// Install the Claude Code skill (/codeunlimited inside a session)
-    Skill,
+    Skill {
+        /// Replace a different existing skill, preserving its first backup
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() {
@@ -124,7 +138,9 @@ fn main() {
             let cfg = config::Config::load_for(p);
             reqs.retain(|r| !cfg.is_ignored(&r.project));
             if let Some(n) = days {
-                let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
+                let cutoff = chrono::Utc::now()
+                    .timestamp()
+                    .saturating_sub((n as i64).saturating_mul(86_400));
                 reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
                 series.retain(|&(t, _, _)| t >= cutoff);
             }
@@ -180,13 +196,13 @@ fn main() {
             std::process::exit(doctor::run());
         }
         Cmd::Compare { days } => {
-            std::process::exit(comparecmd::run(days.max(1)));
+            std::process::exit(comparecmd::run(days));
         }
         Cmd::Schedule { remove } => {
             std::process::exit(schedule::run(remove));
         }
-        Cmd::Skill => {
-            std::process::exit(skillcmd::run());
+        Cmd::Skill { force } => {
+            std::process::exit(skillcmd::run(force));
         }
     }
 }

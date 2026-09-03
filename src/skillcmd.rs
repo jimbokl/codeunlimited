@@ -3,7 +3,7 @@
 
 const SKILL_MD: &str = include_str!("../skill/codeunlimited/SKILL.md");
 
-pub fn run() -> i32 {
+pub fn run(force: bool) -> i32 {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(std::path::PathBuf::from)
@@ -14,11 +14,42 @@ pub fn run() -> i32 {
         return 1;
     }
     let path = dir.join("SKILL.md");
-    if let Err(e) = std::fs::write(&path, SKILL_MD) {
-        eprintln!("Cannot write {}: {e}", path.display());
+    let current = match crate::safeio::read_optional_text(&path) {
+        Ok(current) => current,
+        Err(e) => {
+            eprintln!("Cannot safely read {}: {e}", path.display());
+            return 1;
+        }
+    };
+    if current.as_deref() == Some(SKILL_MD) {
+        println!("Skill already installed: {}", path.display());
+        return 0;
+    }
+    if current.is_some() && !force {
+        eprintln!(
+            "Refusing to replace a different skill at {}; re-run with `skill --force` \
+             to update it and preserve a backup.",
+            path.display()
+        );
         return 1;
     }
-    println!("Skill installed: {}", path.display());
+    let outcome = match crate::safeio::update_text_with_backup(&path, SKILL_MD) {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            eprintln!("Cannot write {}: {e}", path.display());
+            return 1;
+        }
+    };
+    match outcome {
+        crate::safeio::UpdateOutcome::Updated { backup } => {
+            println!(
+                "Skill updated: {} (previous content: {})",
+                path.display(),
+                backup.display()
+            );
+        }
+        _ => println!("Skill installed: {}", path.display()),
+    }
     println!("In Claude Code, run /codeunlimited (new sessions pick it up automatically).");
     0
 }

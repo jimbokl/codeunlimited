@@ -110,17 +110,21 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
 
     let mut n = 0;
     let mut applied = 0;
+    let mut failed = false;
 
     // 1. Efficiency rules block present?
     let has_rules = ["CLAUDE.md", "AGENTS.md"]
         .iter()
-        .any(|f| std::fs::read_to_string(root.join(f)).is_ok_and(|t| t.contains(initcmd::MARKER)));
+        .all(|f| std::fs::read_to_string(root.join(f)).is_ok_and(|t| t.contains(initcmd::MARKER)));
     if !has_rules {
         n += 1;
         println!(" {n}. [rules] CLAUDE.md/AGENTS.md lack the efficiency block");
         if apply {
-            initcmd::run(root);
-            applied += 1;
+            if initcmd::run(root) == 0 {
+                applied += 1;
+            } else {
+                failed = true;
+            }
         } else {
             println!("        -> --apply runs `init` here (rules + baseline)");
         }
@@ -138,9 +142,9 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
         );
         if apply {
             let ok = std::fs::create_dir_all(state.parent().unwrap()).and_then(|_| {
-                std::fs::write(
+                crate::safeio::atomic_write(
                     &state,
-                    "{\n  \"task\": \"\",\n  \"done\": [],\n  \"remaining\": [],\n  \"counters\": {}\n}\n",
+                    b"{\n  \"task\": \"\",\n  \"done\": [],\n  \"remaining\": [],\n  \"counters\": {}\n}\n",
                 )
             });
             match ok {
@@ -148,7 +152,10 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
                     applied += 1;
                     println!("        -> created {STATE_SCAFFOLD} (agents keep loop state there instead of re-reading history)");
                 }
-                Err(e) => println!("        -> cannot create {STATE_SCAFFOLD}: {e}"),
+                Err(e) => {
+                    failed = true;
+                    eprintln!("        -> cannot create {STATE_SCAFFOLD}: {e}");
+                }
             }
         } else {
             println!("        -> --apply creates a compact state file for long loops");
@@ -184,5 +191,5 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
         println!(" Applied {applied} of {n} finding(s); the rest are manual suggestions.");
     }
     println!(" Measure the effect later: codeunlimited report \"{disp}\"");
-    0
+    i32::from(failed)
 }

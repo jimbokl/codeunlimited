@@ -85,7 +85,7 @@ fn scan(root: &Path, is_claude: bool) -> Tally {
 fn print_source(name: &str, root: &Path, t: &Tally) -> bool {
     if t.files == 0 {
         println!(" {name:6}: no logs found at {}", root.display());
-        return true;
+        return false;
     }
     let bad = t.json_errors + t.missing_usage;
     let rate = if t.candidates > 0 {
@@ -120,6 +120,9 @@ pub fn run() -> i32 {
         println!(" All good: the parsers understand your logs.");
         0
     } else {
+        if ct.files == 0 && xt.files == 0 {
+            eprintln!("No local logs were available to validate.");
+        }
         1
     }
 }
