@@ -6,4 +6,5 @@ pub mod initcmd;
 pub mod metrics;
 pub mod parsers;
 pub mod report;
+pub mod reportcmd;
 pub mod types;

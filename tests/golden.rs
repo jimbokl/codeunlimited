@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use codeunlimited::{detectors, parsers, report};
+use codeunlimited::{detectors, metrics, parsers, report, reportcmd};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -62,6 +62,33 @@ fn golden_end_to_end() {
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
     assert_eq!(v["sources"]["claude"]["requests"], 2);
     assert_eq!(v["sources"]["codex"]["requests"], 2);
+
+    // --- Markdown report builder (pure, no filesystem) ---
+    let delta = reportcmd::DeltaInfo {
+        since: "2026-01-01".into(),
+        b_requests: 2,
+        b_prompt: 40_000.0,
+        b_growth: 2.0,
+        now: metrics::compute(&claude),
+    };
+    let history = vec![serde_json::json!({
+        "date": "2026-01-02", "requests": 4, "avg_prompt_per_turn": 16000,
+        "context_growth": 1.0, "reclaimable_tokens": 30000u64,
+    })];
+    let md = reportcmd::build_markdown(
+        "test-proj",
+        &all,
+        &findings,
+        Some(&delta),
+        &history,
+        "2026-01-02",
+    );
+    assert!(md.starts_with("# codeunlimited report - test-proj"));
+    assert!(md.contains("## Where the limit leaks"));
+    assert!(md.contains("## Delta since baseline (2026-01-01)"));
+    assert!(md.contains("| 2026-01-02 | 4 | 16k | 1.0x | 0 |"));
+    assert!(md.contains("| claude | 2 |"));
+    assert!(md.contains("| codex | 2 |"));
 
     // --- Project key sanitizer (path -> claude log dir name) ---
     assert_eq!(

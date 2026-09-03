@@ -1,4 +1,4 @@
-use codeunlimited::{deltacmd, detectors, initcmd, parsers, report};
+use codeunlimited::{deltacmd, detectors, initcmd, parsers, report, reportcmd};
 
 use std::path::PathBuf;
 
@@ -50,6 +50,15 @@ enum Cmd {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Write a Markdown report for a project (findings + delta + trend);
+    /// each run appends a snapshot, so the trend table grows over time
+    Report {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Where to write the report (default: CODEUNLIMITED_REPORT.md in the project)
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -99,6 +108,9 @@ fn main() {
         }
         Cmd::Delta { path } => {
             std::process::exit(deltacmd::run(&path));
+        }
+        Cmd::Report { path, out } => {
+            std::process::exit(reportcmd::run(&path, out.as_deref()));
         }
     }
 }

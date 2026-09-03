@@ -37,6 +37,7 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # verified before/after since init's baseline
+codeunlimited report myproject/   # saved Markdown report: findings + delta + trend
 ```
 
 A Python reference implementation lives in `codeunlimited/` (same detectors;
@@ -56,6 +57,15 @@ and — because the project already has history — instantly prints its
 baseline: requests, sessions, and the top limit leak found in *this* project.
 Then `codeunlimited audit --project <path>` gives the full scoped report,
 and re-running it later shows your delta.
+
+## Reports you can keep and share
+
+`codeunlimited report <project>` writes `CODEUNLIMITED_REPORT.md` into the
+project: current leaks in limit currency, the verified delta since `init`
+captured the baseline, and a trend table with one row per run (snapshots
+accumulate in `.codeunlimited.history.jsonl`). Re-run it weekly — the trend
+table is the proof that the efficiency rules are paying off. Both files are
+plain text you can commit, ignore, or paste into a standup.
 
 ## Privacy
 

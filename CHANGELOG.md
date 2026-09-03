@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0 - 2026-09-03
+
+- **`report`**: saved, shareable Markdown report per project
+  (`CODEUNLIMITED_REPORT.md`, or `--out FILE`) - findings in limit currency,
+  verified delta vs the `init` baseline, and a trend table. Each run appends
+  a snapshot to `.codeunlimited.history.jsonl`, so the trend grows over time.
+
 ## 1.0.0 - 2026-09-03
 
 First stable release.

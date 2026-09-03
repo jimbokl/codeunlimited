@@ -26,6 +26,8 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 - [x] **Verified delta**: `init` captures `.codeunlimited.baseline.json`;
       `delta` reports before/after per project (claude source; codex planned).
 - [x] Rate-limit ingestion: Codex `used_percent` peak surfaced in the report.
+- [x] Saved Markdown reports with trend history (`codeunlimited report`):
+      findings + verified delta + one snapshot row per run.
 - [ ] Per-model limit weights; Claude 5-hour block ingestion.
 - [ ] **Opt-in anonymous benchmarks** (post-1.0 — needs a backend):
       percentile comparisons ("your context tax is x3.9 vs median x2.1").
