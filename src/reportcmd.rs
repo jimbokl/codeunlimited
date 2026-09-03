@@ -15,8 +15,10 @@ use crate::{deltacmd, metrics, parsers};
 pub const HISTORY_FILE: &str = ".codeunlimited.history.jsonl";
 pub const REPORT_FILE: &str = "CODEUNLIMITED_REPORT.md";
 
-/// Delta vs the baseline captured by `init` (claude source only, like `delta`).
+/// Delta vs the baseline captured by `init`, one entry per source with
+/// activity since the baseline.
 pub struct DeltaInfo {
+    pub source: String,
     pub since: String,
     pub b_requests: u64,
     pub b_prompt: f64,
@@ -71,7 +73,7 @@ pub fn build_markdown(
     name: &str,
     reqs: &[Request],
     findings: &[Finding],
-    delta: Option<&DeltaInfo>,
+    deltas: &[DeltaInfo],
     history: &[Value],
     generated: &str,
 ) -> String {
@@ -149,43 +151,49 @@ pub fn build_markdown(
         l.push(String::new());
     }
 
-    if let Some(d) = delta {
-        l.push(format!("## Delta since baseline ({})", d.since));
+    if let Some(first) = deltas.first() {
+        l.push(format!("## Delta since baseline ({})", first.since));
         l.push(String::new());
-        l.push("| metric | baseline | now |".into());
-        l.push("|---|---:|---:|".into());
-        l.push(format!(
-            "| requests analyzed | {} | {} |",
-            d.b_requests, d.now.requests
-        ));
-        l.push(format!(
-            "| avg context per turn | {}k | {}k |",
-            (d.b_prompt / 1e3).round() as u64,
-            (d.now.avg_prompt_per_turn / 1e3).round() as u64
-        ));
-        l.push(format!(
-            "| long-session context growth | {:.1}x | {:.1}x |",
-            d.b_growth, d.now.context_growth
-        ));
-        l.push(String::new());
-        if d.b_prompt > 0.0 {
-            let change = 100.0 * (d.now.avg_prompt_per_turn - d.b_prompt) / d.b_prompt;
-            l.push(if change <= -1.0 {
-                format!(
-                    "**Verdict:** context per turn is down {:.0}% - about {:.0}% more \
-                     work now fits into the same limit.",
-                    -change,
-                    100.0 * (d.b_prompt / d.now.avg_prompt_per_turn.max(1.0) - 1.0)
-                )
-            } else if change >= 1.0 {
-                format!(
-                    "**Verdict:** context per turn is up {change:.0}% - the leaks are \
-                     growing; see the findings above."
-                )
-            } else {
-                "**Verdict:** flat so far - keep the rules on and re-check later.".into()
-            });
+        for d in deltas {
+            if deltas.len() > 1 {
+                l.push(format!("### {}", d.source));
+                l.push(String::new());
+            }
+            l.push("| metric | baseline | now |".into());
+            l.push("|---|---:|---:|".into());
+            l.push(format!(
+                "| requests analyzed | {} | {} |",
+                d.b_requests, d.now.requests
+            ));
+            l.push(format!(
+                "| avg context per turn | {}k | {}k |",
+                (d.b_prompt / 1e3).round() as u64,
+                (d.now.avg_prompt_per_turn / 1e3).round() as u64
+            ));
+            l.push(format!(
+                "| long-session context growth | {:.1}x | {:.1}x |",
+                d.b_growth, d.now.context_growth
+            ));
             l.push(String::new());
+            if d.b_prompt > 0.0 {
+                let change = 100.0 * (d.now.avg_prompt_per_turn - d.b_prompt) / d.b_prompt;
+                l.push(if change <= -1.0 {
+                    format!(
+                        "**Verdict:** context per turn is down {:.0}% - about {:.0}% more \
+                         work now fits into the same limit.",
+                        -change,
+                        100.0 * (d.b_prompt / d.now.avg_prompt_per_turn.max(1.0) - 1.0)
+                    )
+                } else if change >= 1.0 {
+                    format!(
+                        "**Verdict:** context per turn is up {change:.0}% - the leaks are \
+                         growing; see the findings above."
+                    )
+                } else {
+                    "**Verdict:** flat so far - keep the rules on and re-check later.".into()
+                });
+                l.push(String::new());
+            }
         }
     }
 
@@ -251,29 +259,30 @@ pub fn run(path: &Path, out: Option<&Path>) -> i32 {
     }
     let findings = detectors::run_all(&reqs);
 
-    let delta = std::fs::read_to_string(root.join(deltacmd::BASELINE_FILE))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .and_then(|bl| {
-            let created = bl["created_unix"].as_i64()?;
-            let cl: Vec<Request> = reqs
+    let mut deltas: Vec<DeltaInfo> = Vec::new();
+    if let Some((created, baselines)) = deltacmd::load_baseline(&root) {
+        let since = chrono::DateTime::from_timestamp(created, 0)
+            .map(|d| d.date_naive().to_string())
+            .unwrap_or_else(|| "?".into());
+        for b in baselines {
+            let now: Vec<Request> = reqs
                 .iter()
-                .filter(|r| r.source == "claude" && r.ts.is_some_and(|t| t >= created))
+                .filter(|r| r.source == b.source && r.ts.is_some_and(|t| t >= created))
                 .cloned()
                 .collect();
-            if cl.is_empty() {
-                return None;
+            if now.is_empty() {
+                continue;
             }
-            Some(DeltaInfo {
-                since: chrono::DateTime::from_timestamp(created, 0)
-                    .map(|d| d.date_naive().to_string())
-                    .unwrap_or_else(|| "?".into()),
-                b_requests: bl["metrics"]["requests"].as_u64().unwrap_or(0),
-                b_prompt: bl["metrics"]["avg_prompt_per_turn"].as_u64().unwrap_or(0) as f64,
-                b_growth: bl["metrics"]["context_growth"].as_f64().unwrap_or(1.0),
-                now: metrics::compute(&cl),
-            })
-        });
+            deltas.push(DeltaInfo {
+                source: b.source,
+                since: since.clone(),
+                b_requests: b.requests,
+                b_prompt: b.prompt,
+                b_growth: b.growth,
+                now: metrics::compute(&now),
+            });
+        }
+    }
 
     // Append today's snapshot to the trend history (one line per run).
     let v = volume(&reqs);
@@ -308,7 +317,7 @@ pub fn run(path: &Path, out: Option<&Path>) -> i32 {
         &name,
         &reqs,
         &findings,
-        delta.as_ref(),
+        &deltas,
         &history,
         &now.date_naive().to_string(),
     );

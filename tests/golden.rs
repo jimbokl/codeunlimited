@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use codeunlimited::{detectors, metrics, parsers, report, reportcmd};
+use codeunlimited::{deltacmd, detectors, metrics, parsers, report, reportcmd};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -63,8 +63,23 @@ fn golden_end_to_end() {
     assert_eq!(v["sources"]["claude"]["requests"], 2);
     assert_eq!(v["sources"]["codex"]["requests"], 2);
 
+    // --- Baseline: both formats parse (v1 single-source and v2 multi) ---
+    let (c1, v1) = deltacmd::parse_baseline(
+        r#"{"created_unix":100,"source":"claude","metrics":{"requests":5,"avg_prompt_per_turn":1000,"context_growth":2.5}}"#,
+    )
+    .expect("v1 format");
+    assert_eq!((c1, v1.len()), (100, 1));
+    assert_eq!((v1[0].source.as_str(), v1[0].requests), ("claude", 5));
+    let (c2, v2) = deltacmd::parse_baseline(
+        r#"{"created_unix":200,"sources":{"claude":{"requests":7},"codex":{"requests":3,"avg_prompt_per_turn":500}}}"#,
+    )
+    .expect("v2 format");
+    assert_eq!((c2, v2.len()), (200, 2));
+    assert!(v2.iter().any(|b| b.source == "codex" && b.prompt == 500.0));
+
     // --- Markdown report builder (pure, no filesystem) ---
     let delta = reportcmd::DeltaInfo {
+        source: "claude".into(),
         since: "2026-01-01".into(),
         b_requests: 2,
         b_prompt: 40_000.0,
@@ -79,7 +94,7 @@ fn golden_end_to_end() {
         "test-proj",
         &all,
         &findings,
-        Some(&delta),
+        std::slice::from_ref(&delta),
         &history,
         "2026-01-02",
     );

@@ -50,16 +50,29 @@ pub fn compute(reqs: &[Request]) -> Metrics {
     }
 }
 
+fn metrics_json(m: &Metrics) -> serde_json::Value {
+    serde_json::json!({
+        "requests": m.requests,
+        "sessions": m.sessions,
+        "avg_prompt_per_turn": m.avg_prompt_per_turn as u64,
+        "context_growth": (m.context_growth * 100.0).round() / 100.0,
+    })
+}
+
 pub fn to_json(m: &Metrics, created_unix: i64) -> String {
     serde_json::json!({
         "created_unix": created_unix,
         "source": "claude",
-        "metrics": {
-            "requests": m.requests,
-            "sessions": m.sessions,
-            "avg_prompt_per_turn": m.avg_prompt_per_turn as u64,
-            "context_growth": (m.context_growth * 100.0).round() / 100.0,
-        }
+        "metrics": metrics_json(m),
     })
     .to_string()
+}
+
+/// Baseline format v2: one metrics block per source (claude + codex).
+pub fn to_json_multi(sources: &[(&str, Metrics)], created_unix: i64) -> String {
+    let map: serde_json::Map<String, serde_json::Value> = sources
+        .iter()
+        .map(|(src, m)| (src.to_string(), metrics_json(m)))
+        .collect();
+    serde_json::json!({ "created_unix": created_unix, "sources": map }).to_string()
 }

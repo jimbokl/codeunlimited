@@ -59,20 +59,26 @@ fn append_block(path: &Path, block: &str) -> &'static str {
 }
 
 fn baseline(root: &Path, disp: &str) {
-    let reqs = parsers::iter_claude(Some(root));
+    let mut reqs = parsers::iter_claude(Some(root));
+    let codex = parsers::iter_codex(Some(root));
     // Capture the baseline once; `codeunlimited delta` compares against it.
     let bl = root.join(crate::deltacmd::BASELINE_FILE);
     if !bl.exists() {
-        let m = crate::metrics::compute(&reqs);
+        let m_claude = crate::metrics::compute(&reqs);
+        let m_codex = crate::metrics::compute(&codex);
         let _ = std::fs::write(
             &bl,
-            crate::metrics::to_json(&m, chrono::Utc::now().timestamp()),
+            crate::metrics::to_json_multi(
+                &[("claude", m_claude), ("codex", m_codex)],
+                chrono::Utc::now().timestamp(),
+            ),
         );
         println!(
             "  baseline captured: {} (check progress later with `codeunlimited delta`)",
             crate::deltacmd::BASELINE_FILE
         );
     }
+    reqs.extend(codex);
     if reqs.is_empty() {
         println!("  history: none yet - new project, baseline starts now");
         return;

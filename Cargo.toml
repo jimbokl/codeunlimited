@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
 license = "MIT"

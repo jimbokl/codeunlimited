@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0 - 2026-09-03
+
+- **`fix`**: turns audit findings into concrete project changes - efficiency
+  rules block (runs `init`), `state/state.json` scaffold for long loops
+  (SKILL.state pattern), MCP prune candidates for fat session starts
+  (listed only - config is never auto-edited). Dry-run by default, `--apply`
+  to write.
+- **Codex delta**: baselines now capture both sources; `delta` and `report`
+  show a per-source before/after. Old single-source baselines stay readable.
+- Measured on the author's own project after 1 day under the rules:
+  context per turn down 46%, long-session growth 10x -> 0.2x.
+
 ## 1.1.0 - 2026-09-03
 
 - **`report`**: saved, shareable Markdown report per project

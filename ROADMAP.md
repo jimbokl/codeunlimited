@@ -34,6 +34,18 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
       Accumulated data is the defensible asset; strict opt-in, counts only.
 - [ ] Conservative-estimate policy documented per detector (ranges, not hype).
 
+## Sprint v1.2 (2026-09) — fix engine + measured savings
+
+- [x] `codeunlimited fix [--apply]`: turns audit findings into concrete project
+      changes — efficiency-rules block, state-file scaffold for long loops,
+      MCP prune candidates (listed, never auto-edited). Dry-run by default.
+- [x] Codex delta: baselines, `delta` and `report` become per-source
+      (claude + codex), old single-source baselines still readable.
+- [x] Apply to the top-volume local projects and measure the savings with
+      the `report` trend: ~10.4B tokens of history now under the rules;
+      measured after day 1 on the author's project - context per turn
+      down 46%, long-session growth 10x -> 0.2x.
+
 ## v0.4 — the fix engine
 
 - [ ] `codeunlimited fix`: generated diffs, applied only on user approval —
@@ -41,7 +53,8 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
       hygiene suggestions.
 - [ ] Claude Code skill (`/codeunlimited`) for in-agent audit + fix flow;
       listing on skills.sh.
-- [ ] State-file loop scaffold (SKILL.state pattern) for long-running tasks.
+- [x] State-file loop scaffold (SKILL.state pattern) for long-running tasks
+      (`fix --apply` creates `state/state.json` where long sessions are seen).
 
 ## v0.5 — teams (B2B ladder)
 

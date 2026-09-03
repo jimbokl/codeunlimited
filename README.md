@@ -38,6 +38,7 @@ codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # verified before/after since init's baseline
 codeunlimited report myproject/   # saved Markdown report: findings + delta + trend
+codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --apply)
 ```
 
 A Python reference implementation lives in `codeunlimited/` (same detectors;

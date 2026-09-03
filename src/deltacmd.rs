@@ -5,9 +5,95 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::types::Request;
 use crate::{metrics, parsers};
 
 pub const BASELINE_FILE: &str = ".codeunlimited.baseline.json";
+
+/// One source's slice of the baseline captured by `init`.
+pub struct BaselineSrc {
+    pub source: String,
+    pub requests: u64,
+    pub prompt: f64,
+    pub growth: f64,
+}
+
+/// Parses both baseline formats: v2 `{"sources": {...}}` and the original
+/// single-source `{"source": "claude", "metrics": {...}}`.
+pub fn parse_baseline(raw: &str) -> Option<(i64, Vec<BaselineSrc>)> {
+    let bl: Value = serde_json::from_str(raw).ok()?;
+    let created = bl["created_unix"].as_i64()?;
+    let of = |src: &str, m: &Value| BaselineSrc {
+        source: src.to_string(),
+        requests: m["requests"].as_u64().unwrap_or(0),
+        prompt: m["avg_prompt_per_turn"].as_u64().unwrap_or(0) as f64,
+        growth: m["context_growth"].as_f64().unwrap_or(1.0),
+    };
+    let mut out = Vec::new();
+    if let Some(srcs) = bl["sources"].as_object() {
+        for (k, m) in srcs {
+            out.push(of(k, m));
+        }
+    } else if bl["metrics"].is_object() {
+        out.push(of(
+            bl["source"].as_str().unwrap_or("claude"),
+            &bl["metrics"],
+        ));
+    }
+    (!out.is_empty()).then_some((created, out))
+}
+
+pub fn load_baseline(root: &Path) -> Option<(i64, Vec<BaselineSrc>)> {
+    let raw = std::fs::read_to_string(root.join(BASELINE_FILE)).ok()?;
+    parse_baseline(&raw)
+}
+
+fn since(root: &Path, source: &str, created: i64) -> Vec<Request> {
+    let mut reqs = match source {
+        "codex" => parsers::iter_codex(Some(root)),
+        _ => parsers::iter_claude(Some(root)),
+    };
+    reqs.retain(|r| r.ts.is_some_and(|t| t >= created));
+    reqs
+}
+
+fn print_source(b: &BaselineSrc, now: &metrics::Metrics) {
+    println!(" [{}]", b.source);
+    println!(" {:26} {:>14} {:>14}", "", "baseline", "now");
+    println!(
+        " {:26} {:>14} {:>14}",
+        "requests analyzed", b.requests, now.requests
+    );
+    println!(
+        " {:26} {:>13}k {:>13}k",
+        "avg context per turn",
+        (b.prompt / 1e3).round() as u64,
+        (now.avg_prompt_per_turn / 1e3).round() as u64
+    );
+    println!(
+        " {:26} {:>13.1}x {:>13.1}x",
+        "long-session context growth", b.growth, now.context_growth
+    );
+    if b.prompt > 0.0 {
+        let change = 100.0 * (now.avg_prompt_per_turn - b.prompt) / b.prompt;
+        if change <= -1.0 {
+            println!(
+                " VERDICT: context per turn is down {:.0}% - about {:.0}% more work \
+                 now fits into the same limit.",
+                -change,
+                100.0 * (b.prompt / now.avg_prompt_per_turn.max(1.0) - 1.0)
+            );
+        } else if change >= 1.0 {
+            println!(
+                " VERDICT: context per turn is up {change:.0}% - the leaks are growing; \
+                 run `codeunlimited audit --project .` to see where."
+            );
+        } else {
+            println!(" VERDICT: flat so far - keep the rules on and re-check later.");
+        }
+    }
+    println!();
+}
 
 pub fn run(path: &Path) -> i32 {
     let root = match path.canonicalize() {
@@ -17,74 +103,33 @@ pub fn run(path: &Path) -> i32 {
             return 1;
         }
     };
-    let bl_path = root.join(BASELINE_FILE);
-    let Ok(raw) = std::fs::read_to_string(&bl_path) else {
+    let Some((created, baselines)) = load_baseline(&root) else {
         eprintln!(
             "No baseline found ({}). Run `codeunlimited init` first - it captures \
              the baseline this command compares against.",
-            bl_path.display()
+            root.join(BASELINE_FILE).display()
         );
         return 1;
     };
-    let Ok(bl) = serde_json::from_str::<Value>(&raw) else {
-        eprintln!("Baseline file is corrupted: {}", bl_path.display());
-        return 1;
-    };
-    let created = bl["created_unix"].as_i64().unwrap_or(0);
-    let b = &bl["metrics"];
-    let (b_req, b_prompt, b_growth) = (
-        b["requests"].as_u64().unwrap_or(0),
-        b["avg_prompt_per_turn"].as_u64().unwrap_or(0) as f64,
-        b["context_growth"].as_f64().unwrap_or(1.0),
-    );
-
-    let mut reqs = parsers::iter_claude(Some(&root));
-    reqs.retain(|r| r.ts.is_some_and(|t| t >= created));
-    if reqs.is_empty() {
-        println!(
-            "No activity in this project since the baseline was captured - \
-             work a while, then re-run `codeunlimited delta`."
-        );
-        return 0;
-    }
-    let m = metrics::compute(&reqs);
 
     let when = chrono::DateTime::from_timestamp(created, 0)
         .map(|d| d.date_naive().to_string())
         .unwrap_or_else(|| "?".into());
-    println!("DELTA since baseline ({when}) - source: claude, this project only\n");
-    println!(" {:26} {:>14} {:>14}", "", "baseline", "now");
-    println!(
-        " {:26} {:>14} {:>14}",
-        "requests analyzed", b_req, m.requests
-    );
-    println!(
-        " {:26} {:>13}k {:>13}k",
-        "avg context per turn",
-        (b_prompt / 1e3).round() as u64,
-        (m.avg_prompt_per_turn / 1e3).round() as u64
-    );
-    println!(
-        " {:26} {:>13.1}x {:>13.1}x",
-        "long-session context growth", b_growth, m.context_growth
-    );
-    if b_prompt > 0.0 {
-        let change = 100.0 * (m.avg_prompt_per_turn - b_prompt) / b_prompt;
-        if change <= -1.0 {
-            println!(
-                "\n VERDICT: context per turn is down {:.0}% - about {:.0}% more work \
-                 now fits into the same limit.",
-                -change,
-                100.0 * (b_prompt / m.avg_prompt_per_turn.max(1.0) - 1.0)
-            );
-        } else if change >= 1.0 {
-            println!(
-                "\n VERDICT: context per turn is up {change:.0}% - the leaks are growing; \
-                 run `codeunlimited audit --project .` to see where."
-            );
-        } else {
-            println!("\n VERDICT: flat so far - keep the rules on and re-check later.");
+    println!("DELTA since baseline ({when}) - this project only\n");
+    let mut any = false;
+    for b in &baselines {
+        let reqs = since(&root, &b.source, created);
+        if reqs.is_empty() {
+            continue;
         }
+        any = true;
+        print_source(b, &metrics::compute(&reqs));
+    }
+    if !any {
+        println!(
+            "No activity in this project since the baseline was captured - \
+             work a while, then re-run `codeunlimited delta`."
+        );
     }
     0
 }

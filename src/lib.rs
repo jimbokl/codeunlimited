@@ -2,6 +2,7 @@
 
 pub mod deltacmd;
 pub mod detectors;
+pub mod fixcmd;
 pub mod initcmd;
 pub mod metrics;
 pub mod parsers;

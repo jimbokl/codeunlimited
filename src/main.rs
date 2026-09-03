@@ -1,4 +1,4 @@
-use codeunlimited::{deltacmd, detectors, initcmd, parsers, report, reportcmd};
+use codeunlimited::{deltacmd, detectors, fixcmd, initcmd, parsers, report, reportcmd};
 
 use std::path::PathBuf;
 
@@ -59,6 +59,14 @@ enum Cmd {
         #[arg(long, value_name = "FILE")]
         out: Option<PathBuf>,
     },
+    /// Turn audit findings into concrete project changes (dry-run by default)
+    Fix {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Actually write the changes (default is a dry run)
+        #[arg(long)]
+        apply: bool,
+    },
 }
 
 fn main() {
@@ -111,6 +119,9 @@ fn main() {
         }
         Cmd::Report { path, out } => {
             std::process::exit(reportcmd::run(&path, out.as_deref()));
+        }
+        Cmd::Fix { path, apply } => {
+            std::process::exit(fixcmd::run(&path, apply));
         }
     }
 }
