@@ -1,0 +1,108 @@
+//! Console report: findings converted into limit currency (reclaimed work).
+
+use std::collections::BTreeMap;
+
+use crate::detectors::Finding;
+use crate::types::Request;
+
+const BAR: &str = "================================================================";
+
+pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
+    if reqs.is_empty() {
+        return "No data: no Claude Code logs (~/.claude/projects) or Codex logs \
+                (~/.codex/sessions) found."
+            .into();
+    }
+    let mut per_src: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
+    let mut per_proj: BTreeMap<String, u64> = BTreeMap::new();
+    let mut tmin = i64::MAX;
+    let mut tmax = i64::MIN;
+    for r in reqs {
+        let s = per_src.entry(r.source).or_default();
+        s.0 += 1;
+        s.1 += r.prompt_total();
+        s.2 += r.out;
+        *per_proj
+            .entry(format!("{}:{}", r.source, r.project))
+            .or_default() += r.total();
+        if let Some(t) = r.ts {
+            tmin = tmin.min(t);
+            tmax = tmax.max(t);
+        }
+    }
+    let total_tokens: u64 = per_src.values().map(|s| s.1 + s.2).sum();
+    let out_total: u64 = per_src.values().map(|s| s.2).sum();
+    let days = if tmin < tmax {
+        (((tmax - tmin) as f64) / 86_400.0).floor().max(1.0)
+    } else {
+        1.0
+    };
+    let weekly = total_tokens as f64 / days * 7.0;
+    let avg_out = out_total as f64 / reqs.len() as f64;
+
+    let mut l: Vec<String> = Vec::new();
+    l.push(BAR.into());
+    l.push(" CODEUNLIMITED - more code out of the limits you already pay for".into());
+    l.push(BAR.into());
+    if tmin < tmax {
+        let d0 = chrono::DateTime::from_timestamp(tmin, 0).unwrap().date_naive();
+        let d1 = chrono::DateTime::from_timestamp(tmax, 0).unwrap().date_naive();
+        l.push(format!(" Period: {d0} ... {d1}  ({days:.0} days)"));
+    }
+    for (src, s) in &per_src {
+        l.push(format!(
+            " {:6}: {:>6} requests | context {:>8.0}M tok. | code/answers {:>6.1}M tok.",
+            src,
+            s.0,
+            s.1 as f64 / 1e6,
+            s.2 as f64 / 1e6
+        ));
+    }
+    l.push(format!(
+        " Weekly volume (limit proxy): ~{:.0}M tokens",
+        weekly / 1e6
+    ));
+    l.push(String::new());
+    l.push(" FINDINGS - where your limit leaks (by impact):".into());
+    l.push(String::new());
+
+    let mut reclaimed = 0u64;
+    let mut i = 0;
+    for f in findings.iter().filter(|f| f.impact_tokens > 0) {
+        i += 1;
+        let pct = 100.0 * (f.impact_tokens as f64 / days * 7.0) / weekly.max(1.0);
+        let answers = f.impact_tokens as f64
+            * (out_total as f64 / (total_tokens - out_total).max(1) as f64)
+            / avg_out.max(1.0);
+        reclaimed += f.impact_tokens;
+        l.push(format!(" {}. {}", i, f.title));
+        l.push(format!("    {}", f.detail));
+        l.push(format!(
+            "    Reclaim: ~{:.0}M tok. (~{:.0}% of weekly volume, ~{:.0} extra agent replies)",
+            f.impact_tokens as f64 / 1e6,
+            pct,
+            answers
+        ));
+        l.push(format!("    Fix: {}", f.fix));
+        l.push(String::new());
+    }
+
+    let pct_all = 100.0 * (reclaimed as f64 / days * 7.0) / weekly.max(1.0);
+    l.push(BAR.into());
+    l.push(format!(
+        " TOTAL reclaimable: ~{:.0}M tokens ~ {:.0}% of weekly volume - that much more \
+         work fits into the same limit.",
+        reclaimed as f64 / 1e6,
+        pct_all
+    ));
+    l.push(BAR.into());
+    l.push(" Top projects by volume:".into());
+    let mut projects: Vec<_> = per_proj.into_iter().collect();
+    projects.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+    for (p, t) in projects.into_iter().take(8) {
+        l.push(format!("   {:44} {:>8.0}M tok.", p, t as f64 / 1e6));
+    }
+    l.push(String::new());
+    l.push(" Next: codeunlimited init <project> - efficiency rules into CLAUDE.md/AGENTS.md".into());
+    l.join("\n")
+}

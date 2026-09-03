@@ -1,0 +1,18 @@
+[package]
+name = "codeunlimited"
+version = "0.2.0"
+edition = "2021"
+description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
+license = "MIT"
+repository = "https://github.com/codeunlimited/codeunlimited"
+
+[dependencies]
+serde_json = "1"
+rayon = "1"
+walkdir = "2"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

@@ -7,10 +7,11 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 
 ## v0.2 — Rust core (speed + distribution)
 
-- [ ] Port scanner + detectors to Rust (`serde_json` + `rayon` parallel walk):
-      3.2 GB of Codex logs in seconds instead of minutes.
-- [ ] Single static binary per platform — no Python required.
-      Distribution: GitHub Releases, `cargo install codeunlimited`,
+- [x] Port scanner + detectors to Rust (`serde_json` + `rayon` parallel walk):
+      **3.6 GB of logs in 2.4 s** (vs ~2 min for the Python reference) —
+      audit, scoped audit, init with per-project baseline, both adoption cases.
+- [x] Single binary, no Python required (`cargo build --release`).
+- [ ] Prebuilt binaries: GitHub Releases, `cargo install codeunlimited`,
       Homebrew tap, Scoop bucket. (Python package remains as the
       prototyping sandbox for new detectors.)
 - [ ] Golden-fixture test suite: synthetic Claude Code / Codex logs with known

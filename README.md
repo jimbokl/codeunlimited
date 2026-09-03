@@ -27,12 +27,19 @@ weekly volume, extra agent answers that fit into the same limit.
 
 ## Quick start
 
+The core is a single **Rust** binary - scans gigabytes of logs in ~2 seconds,
+no runtime dependencies:
+
 ```bash
-pipx install codeunlimited        # or: pip install codeunlimited
+cargo install codeunlimited       # or grab a binary from GitHub Releases
 
 codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
+codeunlimited audit --project .   # report scoped to one project
 ```
+
+A Python reference implementation lives in `codeunlimited/` (same detectors;
+used as the prototyping sandbox): `pip install -e . && python -m codeunlimited audit`.
 
 ## Two ways to adopt — both first-class
 
