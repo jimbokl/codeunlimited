@@ -18,7 +18,7 @@ pub struct Metrics {
 pub fn compute(reqs: &[Request], long_session_turns: usize) -> Metrics {
     let mut by: HashMap<(&str, &str, &str), Vec<&Request>> = HashMap::new();
     for r in reqs {
-        by.entry((r.source, r.project.as_str(), r.session.as_str()))
+        by.entry((r.source, r.project.as_ref(), r.session.as_ref()))
             .or_default()
             .push(r);
     }

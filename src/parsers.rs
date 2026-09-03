@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use serde_json::Value;
@@ -139,11 +140,16 @@ fn u64_of(v: &Value, key: &str) -> u64 {
 }
 
 fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
-    let project = path
+    let project: Arc<str> = path
         .parent()
         .and_then(|p| p.file_name())
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map(|s| s.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| Arc::from(""));
+    let file_session: Arc<str> = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
+        .into();
     let f = File::open(path).ok()?;
     let mut stats = ScanStats {
         files_opened: 1,
@@ -165,11 +171,11 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
         let Some(u) = msg.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
-        let model = msg
+        let model: Arc<str> = msg
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or("?")
-            .to_string();
+            .into();
         if model.contains("<synthetic>") {
             continue;
         }
@@ -192,12 +198,12 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
             mid,
             Request {
                 source: "claude",
-                project: project.clone(),
+                project: Arc::clone(&project),
                 session: d
                     .get("sessionId")
                     .and_then(Value::as_str)
-                    .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or("?"))
-                    .to_string(),
+                    .map(Arc::from)
+                    .unwrap_or_else(|| Arc::clone(&file_session)),
                 ts,
                 model,
                 unc_in: u64_of(u, "input_tokens"),
@@ -338,8 +344,13 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
         files_opened: 1,
         ..ScanStats::default()
     };
-    let mut model = String::from("?");
-    let mut project = String::from("?");
+    let session: Arc<str> = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
+        .into();
+    let mut model: Arc<str> = Arc::from("?");
+    let mut project: Arc<str> = Arc::from("?");
     let mut cwd_key = String::new();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
@@ -355,11 +366,11 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
         if d.get("type").and_then(Value::as_str) == Some("turn_context") {
             let payload = d.get("payload").unwrap_or(&Value::Null);
             if let Some(value) = payload.get("model").and_then(Value::as_str) {
-                model = value.to_string();
+                model = Arc::from(value);
             }
             if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
                 cwd_key = path_key(Path::new(value));
-                project = project_label(value);
+                project = project_label(value).into();
                 observation.cwd_keys.insert(cwd_key.clone());
             }
             continue;
@@ -403,14 +414,10 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
         let cch = u64_of(u, "cached_input_tokens");
         out.push(Request {
             source: "codex",
-            project: project.clone(),
-            session: path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?")
-                .to_string(),
+            project: Arc::clone(&project),
+            session: Arc::clone(&session),
             ts,
-            model: model.clone(),
+            model: Arc::clone(&model),
             unc_in: inp.saturating_sub(cch),
             cached_in: cch,
             w5: u64_of(u, "cache_write_input_tokens"),
@@ -530,4 +537,37 @@ pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
 
 pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
     iter_codex_full(project).0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn codex_records_in_one_context_share_metadata_allocations() {
+        let root = TempDir::new().expect("fixture root");
+        let path = root.path().join("session.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"turn_context","payload":{"model":"gpt-shared","cwd":"/work/shared"}}"#,
+                "\n",
+                r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#,
+                "\n",
+                r#"{"timestamp":"2099-01-01T00:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":2}}}}"#,
+                "\n",
+            ),
+        )
+        .expect("fixture session");
+
+        let (requests, _, _, _) = parse_codex_file(&path, None, None).expect("parsed file");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].session.as_ptr(), requests[1].session.as_ptr());
+        assert_eq!(requests[0].project.as_ptr(), requests[1].project.as_ptr());
+        assert_eq!(requests[0].model.as_ptr(), requests[1].model.as_ptr());
+    }
 }

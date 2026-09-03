@@ -15,7 +15,7 @@ fn long_sessions(reqs: &[Request], cfg: &Config) -> usize {
     let long = cfg.long_session_turns;
     let mut by: HashMap<(&str, &str), usize> = HashMap::new();
     for r in reqs {
-        *by.entry((r.source, r.session.as_str())).or_default() += 1;
+        *by.entry((r.source, r.session.as_ref())).or_default() += 1;
     }
     by.values().filter(|&&n| n > long).count()
 }
@@ -25,7 +25,7 @@ fn long_sessions(reqs: &[Request], cfg: &Config) -> usize {
 fn median_session_start(reqs: &[Request]) -> u64 {
     let mut by: HashMap<&str, &Request> = HashMap::new();
     for r in reqs.iter().filter(|r| r.source == "claude") {
-        by.entry(r.session.as_str())
+        by.entry(r.session.as_ref())
             .and_modify(|cur| {
                 if r.ts < cur.ts {
                     *cur = r;

@@ -1,13 +1,15 @@
 //! Unified request record extracted from local agent logs.
 //! Only token counts, models, timestamps and project names - never prompts.
 
+use std::sync::Arc;
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub source: &'static str, // "claude" | "codex"
-    pub project: String,
-    pub session: String,
+    pub project: Arc<str>,
+    pub session: Arc<str>,
     pub ts: Option<i64>, // unix seconds
-    pub model: String,
+    pub model: Arc<str>,
     pub unc_in: u64,    // uncached input tokens
     pub cached_in: u64, // tokens served from cache
     pub w5: u64,        // cache writes, 5m TTL (claude only)
@@ -36,6 +38,11 @@ pub fn parse_ts(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_metadata_layout_stays_compact() {
+        assert!(std::mem::size_of::<Request>() <= 128);
+    }
 
     #[test]
     fn token_totals_saturate() {

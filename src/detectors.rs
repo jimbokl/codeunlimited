@@ -82,8 +82,8 @@ fn sessions(reqs: &[Request]) -> Vec<Vec<usize>> {
     for (index, request) in reqs.iter().enumerate() {
         by.entry((
             request.source,
-            request.project.as_str(),
-            request.session.as_str(),
+            request.project.as_ref(),
+            request.session.as_ref(),
         ))
         .or_default()
         .push(index);
