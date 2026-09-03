@@ -4,6 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
+
 pub fn home_dir() -> PathBuf {
     std::env::var_os("CODEUNLIMITED_HOME")
         .map(PathBuf::from)
@@ -31,22 +33,35 @@ pub fn projects() -> Vec<PathBuf> {
         .collect()
 }
 
-pub fn register(path: &Path) {
+pub fn register(path: &Path) -> std::io::Result<()> {
     let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let s = canon.to_string_lossy();
     let s = s.strip_prefix(r"\\?\").unwrap_or(&s).to_string();
+    let list: Vec<String> = std::fs::read_to_string(registry_file())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    if list.iter().any(|p| p.eq_ignore_ascii_case(&s)) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(home_dir())?;
+    let lock_path = home_dir().join("projects.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock_exclusive()?;
     let mut list: Vec<String> = std::fs::read_to_string(registry_file())
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default();
     if list.iter().any(|p| p.eq_ignore_ascii_case(&s)) {
-        return;
+        return Ok(());
     }
     list.push(s);
     list.sort();
-    let _ = std::fs::create_dir_all(home_dir());
-    let _ = std::fs::write(
-        registry_file(),
-        serde_json::to_string_pretty(&list).unwrap_or_default(),
-    );
+    let encoded = serde_json::to_vec_pretty(&list).map_err(std::io::Error::other)?;
+    crate::safeio::atomic_write(&registry_file(), &encoded)
 }

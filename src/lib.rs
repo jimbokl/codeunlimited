@@ -14,6 +14,7 @@ pub mod parsers;
 pub mod registry;
 pub mod report;
 pub mod reportcmd;
+pub mod safeio;
 pub mod schedule;
 pub mod skillcmd;
 pub mod types;

@@ -4,9 +4,10 @@
 //! grows over time.
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use fs2::FileExt;
 use serde_json::Value;
 
 use crate::detectors::{self, Finding};
@@ -412,7 +413,7 @@ fn anonymize(data: &mut ReportData) {
     }
 }
 
-fn write_badge(md_path: &Path, pct: f64) {
+fn write_badge(md_path: &Path, pct: f64) -> std::io::Result<()> {
     let value = format!("~{pct:.0}% of weekly limit");
     let vw = 10 + value.len() * 7;
     let svg = format!(
@@ -430,10 +431,10 @@ fn write_badge(md_path: &Path, pct: f64) {
         vx = 102 + vw / 2,
     );
     let path = md_path.with_file_name("CODEUNLIMITED_BADGE.svg");
-    if std::fs::write(&path, svg).is_ok() {
-        let p = path.to_string_lossy();
-        println!("          Badge: {}", strip_verbatim(&p));
-    }
+    crate::safeio::atomic_write(&path, svg.as_bytes())?;
+    let p = path.to_string_lossy();
+    println!("          Badge: {}", strip_verbatim(&p));
+    Ok(())
 }
 
 fn deltas_for(root: &Path, reqs: &[Request]) -> Vec<DeltaInfo> {
@@ -468,7 +469,7 @@ fn append_history(
     reqs: &[Request],
     reclaim: u64,
     now: &chrono::DateTime<chrono::Utc>,
-) -> Vec<Value> {
+) -> std::io::Result<Vec<Value>> {
     let m = metrics::compute(reqs);
     let total: u64 = reqs.iter().map(|r| r.total()).sum();
     let snap = serde_json::json!({
@@ -480,28 +481,38 @@ fn append_history(
         "total_tokens": total,
         "reclaimable_tokens": reclaim,
     });
-    let appended = std::fs::OpenOptions::new()
+    let lock_path = path.with_file_name(format!(
+        "{}.lock",
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("history")
+    ));
+    let lock = std::fs::OpenOptions::new()
         .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut f| writeln!(f, "{snap}"));
-    if let Err(e) = appended {
-        eprintln!("Cannot write {}: {e}", path.display());
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock_exclusive()?;
+    let mut raw = std::fs::read_to_string(path).unwrap_or_default();
+    if !raw.is_empty() && !raw.ends_with('\n') {
+        raw.push('\n');
     }
-    std::fs::read_to_string(path)
-        .unwrap_or_default()
+    writeln!(&mut raw, "{snap}").expect("writing to String cannot fail");
+    crate::safeio::atomic_write(path, raw.as_bytes())?;
+    Ok(raw
         .lines()
         .filter_map(|ln| serde_json::from_str(ln).ok())
-        .collect()
+        .collect())
 }
 
 fn write_pair(md_path: &Path, data: &ReportData, badge: bool) -> i32 {
-    if let Err(e) = std::fs::write(md_path, build_markdown(data)) {
+    if let Err(e) = crate::safeio::atomic_write(md_path, build_markdown(data).as_bytes()) {
         eprintln!("Cannot write {}: {e}", md_path.display());
         return 1;
     }
     let html_path = md_path.with_extension("html");
-    if let Err(e) = std::fs::write(&html_path, html::build_html(data)) {
+    if let Err(e) = crate::safeio::atomic_write(&html_path, html::build_html(data).as_bytes()) {
         eprintln!("Cannot write {}: {e}", html_path.display());
         return 1;
     }
@@ -513,7 +524,10 @@ fn write_pair(md_path: &Path, data: &ReportData, badge: bool) -> i32 {
         strip_verbatim(&ht)
     );
     if badge {
-        write_badge(md_path, data.reclaim_pct);
+        if let Err(e) = write_badge(md_path, data.reclaim_pct) {
+            eprintln!("Cannot write badge: {e}");
+            return 1;
+        }
     }
     0
 }
@@ -542,12 +556,21 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
         );
         return 1;
     }
-    registry::register(&root);
+    if let Err(e) = registry::register(&root) {
+        eprintln!("Cannot register {}: {e}", root.display());
+        return 1;
+    }
     let findings = detectors::run_all(&reqs);
     let deltas = deltas_for(&root, &reqs);
     let reclaim: u64 = findings.iter().map(|f| f.impact_tokens).sum();
     let now = chrono::Utc::now();
-    let history = append_history(&root.join(HISTORY_FILE), &reqs, reclaim, &now);
+    let history = match append_history(&root.join(HISTORY_FILE), &reqs, reclaim, &now) {
+        Ok(history) => history,
+        Err(e) => {
+            eprintln!("Cannot write {}: {e}", root.join(HISTORY_FILE).display());
+            return 1;
+        }
+    };
     println!(
         " Snapshot #{} recorded in {} - the trend grows with every run.",
         history.len(),
@@ -613,13 +636,18 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
 
     let reclaim: u64 = findings.iter().map(|f| f.impact_tokens).sum();
     let now = chrono::Utc::now();
-    let _ = std::fs::create_dir_all(registry::home_dir());
-    let history = append_history(
-        &registry::home_dir().join("history.jsonl"),
-        &reqs,
-        reclaim,
-        &now,
-    );
+    if let Err(e) = std::fs::create_dir_all(registry::home_dir()) {
+        eprintln!("Cannot create {}: {e}", registry::home_dir().display());
+        return 1;
+    }
+    let history_path = registry::home_dir().join("history.jsonl");
+    let history = match append_history(&history_path, &reqs, reclaim, &now) {
+        Ok(history) => history,
+        Err(e) => {
+            eprintln!("Cannot write {}: {e}", history_path.display());
+            return 1;
+        }
+    };
     println!(
         " Snapshot #{} recorded in {} - the trend grows with every run.",
         history.len(),

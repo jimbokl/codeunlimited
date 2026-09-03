@@ -2,6 +2,7 @@
 //! per-project baseline when the project already has history.
 
 use std::collections::HashSet;
+use std::io;
 use std::path::Path;
 
 use crate::{detectors, parsers};
@@ -44,27 +45,23 @@ const AGENTS_BLOCK: &str = r#"<!-- codeunlimited:v1 -->
 - Keep answers to: outcome, files changed, next command.
 "#;
 
-fn append_block(path: &Path, block: &str) -> &'static str {
-    if path.exists() {
-        let text = std::fs::read_to_string(path).unwrap_or_default();
-        if text.contains(MARKER) {
-            return "already set up";
+fn append_block(path: &Path, block: &str, current: Option<&str>) -> io::Result<&'static str> {
+    if current.is_some_and(|text| text.contains(MARKER)) {
+        return Ok("already set up");
+    }
+    let next = current
+        .map(|text| format!("{}\n\n{}", text.trim_end(), block))
+        .unwrap_or_else(|| block.to_string());
+    match crate::safeio::update_text_with_backup(path, &next)? {
+        crate::safeio::UpdateOutcome::Created => Ok("created"),
+        crate::safeio::UpdateOutcome::Updated { .. } => {
+            Ok("updated (backup kept as *.codeunlimited.bak)")
         }
-        // Backup before the first modification - cheap insurance.
-        let bak = path.with_file_name(format!(
-            "{}.codeunlimited.bak",
-            path.file_name().and_then(|s| s.to_str()).unwrap_or("file")
-        ));
-        let _ = std::fs::write(&bak, &text);
-        let _ = std::fs::write(path, format!("{}\n\n{}", text.trim_end(), block));
-        "updated (backup kept as *.codeunlimited.bak)"
-    } else {
-        let _ = std::fs::write(path, block);
-        "created"
+        crate::safeio::UpdateOutcome::Unchanged => Ok("already set up"),
     }
 }
 
-fn baseline(root: &Path, disp: &str) {
+fn baseline(root: &Path, disp: &str) -> io::Result<()> {
     let mut reqs = parsers::iter_claude(Some(root));
     let codex = parsers::iter_codex(Some(root));
     // Capture the baseline once; `codeunlimited delta` compares against it.
@@ -72,13 +69,14 @@ fn baseline(root: &Path, disp: &str) {
     if !bl.exists() {
         let m_claude = crate::metrics::compute(&reqs);
         let m_codex = crate::metrics::compute(&codex);
-        let _ = std::fs::write(
+        crate::safeio::atomic_write(
             &bl,
             crate::metrics::to_json_multi(
                 &[("claude", m_claude), ("codex", m_codex)],
                 chrono::Utc::now().timestamp(),
-            ),
-        );
+            )
+            .as_bytes(),
+        )?;
         println!(
             "  baseline captured: {} (check progress later with `codeunlimited delta`)",
             crate::deltacmd::BASELINE_FILE
@@ -87,7 +85,7 @@ fn baseline(root: &Path, disp: &str) {
     reqs.extend(codex);
     if reqs.is_empty() {
         println!("  history: none yet - new project, baseline starts now");
-        return;
+        return Ok(());
     }
     let sessions: HashSet<&str> = reqs.iter().map(|r| r.session.as_str()).collect();
     let total: u64 = reqs.iter().map(|r| r.total()).sum();
@@ -108,6 +106,7 @@ fn baseline(root: &Path, disp: &str) {
         );
     }
     println!("  full scoped report: codeunlimited audit --project \"{disp}\"");
+    Ok(())
 }
 
 pub fn run(path: &Path) -> i32 {
@@ -121,17 +120,47 @@ pub fn run(path: &Path) -> i32 {
     // strip windows verbatim prefix for display
     let disp = root.to_string_lossy();
     let disp = disp.strip_prefix(r"\\?\").unwrap_or(&disp).to_string();
-    crate::registry::register(&root);
+    let claude_path = root.join("CLAUDE.md");
+    let agents_path = root.join("AGENTS.md");
+    let claude_current = match crate::safeio::read_optional_text(&claude_path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("Cannot safely read {}: {e}", claude_path.display());
+            return 1;
+        }
+    };
+    let agents_current = match crate::safeio::read_optional_text(&agents_path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("Cannot safely read {}: {e}", agents_path.display());
+            return 1;
+        }
+    };
+    if let Err(e) = crate::registry::register(&root) {
+        eprintln!("Cannot register {}: {e}", root.display());
+        return 1;
+    }
     println!("codeunlimited init -> {disp}");
-    println!(
-        "  CLAUDE.md: {}",
-        append_block(&root.join("CLAUDE.md"), CLAUDE_BLOCK)
-    );
-    println!(
-        "  AGENTS.md: {}",
-        append_block(&root.join("AGENTS.md"), AGENTS_BLOCK)
-    );
-    baseline(&root, &disp);
+    let claude_status = match append_block(&claude_path, CLAUDE_BLOCK, claude_current.as_deref()) {
+        Ok(status) => status,
+        Err(e) => {
+            eprintln!("Cannot update {}: {e}", claude_path.display());
+            return 1;
+        }
+    };
+    println!("  CLAUDE.md: {claude_status}");
+    let agents_status = match append_block(&agents_path, AGENTS_BLOCK, agents_current.as_deref()) {
+        Ok(status) => status,
+        Err(e) => {
+            eprintln!("Cannot update {}: {e}", agents_path.display());
+            return 1;
+        }
+    };
+    println!("  AGENTS.md: {agents_status}");
+    if let Err(e) = baseline(&root, &disp) {
+        eprintln!("Cannot capture baseline in {}: {e}", root.display());
+        return 1;
+    }
     println!("Done. Claude Code and Codex pick the rules up automatically.");
     0
 }
