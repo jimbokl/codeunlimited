@@ -56,7 +56,7 @@ fn golden_end_to_end() {
     // --- Detectors + reports run clean on the combined set ---
     let mut all = claude.clone();
     all.extend(codex.iter().cloned());
-    let findings = detectors::run_all(&all);
+    let findings = detectors::run_all(&all, &codeunlimited::config::Config::default());
     assert_eq!(findings.len(), 5);
     let text = report::render(&all, &findings, false);
     assert!(text.contains("CODEUNLIMITED"));

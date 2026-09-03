@@ -20,14 +20,14 @@ struct Side {
     reclaim: u64,
 }
 
-fn side(reqs: &[Request]) -> Side {
+fn side(reqs: &[Request], cfg: &config::Config) -> Side {
     let m = metrics::compute(reqs);
     Side {
         volume: reqs.iter().map(|r| r.total()).sum(),
         requests: m.requests,
         avg_prompt: m.avg_prompt_per_turn,
         growth: m.context_growth,
-        reclaim: detectors::run_all(reqs)
+        reclaim: detectors::run_all(reqs, cfg)
             .iter()
             .map(|f| f.impact_tokens)
             .sum(),
@@ -46,9 +46,10 @@ fn row(name: &str, a: f64, b: f64, unit: &str, better_down: bool) {
 }
 
 pub fn run(days: u64) -> i32 {
+    let cfg = config::Config::load_for(None);
     let mut reqs = parsers::iter_claude(None);
     reqs.extend(parsers::iter_codex(None));
-    reqs.retain(|r| !config::ignored(&r.project));
+    reqs.retain(|r| !cfg.is_ignored(&r.project));
     let Some(anchor) = reqs.iter().filter_map(|r| r.ts).max() else {
         eprintln!("No local logs found.");
         return 1;
@@ -60,7 +61,7 @@ pub fn run(days: u64) -> i32 {
         eprintln!("Not enough history for two {days}-day windows - try a smaller --days.");
         return 1;
     }
-    let (a, b) = (side(&cur), side(&prev));
+    let (a, b) = (side(&cur, &cfg), side(&prev, &cfg));
     println!("COMPARE - last {days} days vs the {days} before (anchored at your last activity)\n");
     println!(" {:28} {:>13} {:>13}", "", "previous", "current");
     row(

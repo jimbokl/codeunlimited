@@ -560,7 +560,8 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
         eprintln!("Cannot register {}: {e}", root.display());
         return 1;
     }
-    let findings = detectors::run_all(&reqs);
+    let cfg = crate::config::Config::load_for(Some(&root));
+    let findings = detectors::run_all(&reqs, &cfg);
     let deltas = deltas_for(&root, &reqs);
     let reclaim: u64 = findings.iter().map(|f| f.impact_tokens).sum();
     let now = chrono::Utc::now();
@@ -597,15 +598,16 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
 }
 
 pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
+    let cfg = crate::config::Config::load_for(None);
     let mut reqs = parsers::iter_claude(None);
     let (codex, series) = parsers::iter_codex_full(None);
     reqs.extend(codex);
-    reqs.retain(|r| !crate::config::ignored(&r.project));
+    reqs.retain(|r| !cfg.is_ignored(&r.project));
     if reqs.is_empty() {
         eprintln!("No local Claude Code / Codex logs found.");
         return 1;
     }
-    let findings = detectors::run_all(&reqs);
+    let findings = detectors::run_all(&reqs, &cfg);
 
     // Per-registered-project deltas.
     let mut project_deltas: Vec<ProjectDelta> = Vec::new();

@@ -121,13 +121,14 @@ fn main() {
                 reqs.extend(cx);
                 series = s;
             }
-            reqs.retain(|r| !config::ignored(&r.project));
+            let cfg = config::Config::load_for(p);
+            reqs.retain(|r| !cfg.is_ignored(&r.project));
             if let Some(n) = days {
                 let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
                 reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
                 series.retain(|&(t, _, _)| t >= cutoff);
             }
-            let findings = detectors::run_all(&reqs);
+            let findings = detectors::run_all(&reqs, &cfg);
             if json {
                 println!("{}", report::render_json(&reqs, &findings));
             } else {

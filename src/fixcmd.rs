@@ -7,12 +7,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::types::Request;
-use crate::{initcmd, parsers};
+use crate::{config::Config, initcmd, parsers};
 
 pub const STATE_SCAFFOLD: &str = "state/state.json";
 
-fn long_sessions(reqs: &[Request]) -> usize {
-    let long = crate::config::get().long_session_turns;
+fn long_sessions(reqs: &[Request], cfg: &Config) -> usize {
+    let long = cfg.long_session_turns;
     let mut by: HashMap<(&str, &str), usize> = HashMap::new();
     for r in reqs {
         *by.entry((r.source, r.session.as_str())).or_default() += 1;
@@ -60,9 +60,15 @@ pub fn run_all(apply: bool) -> i32 {
         eprintln!("No registered projects yet - run `init`, `fix` or `report` on one first.");
         return 1;
     }
+    let global_cfg = Config::load_for(None);
     let mut worst = 0;
     for p in projects {
-        worst = worst.max(run(&p, apply));
+        if global_cfg.is_ignored(&p.to_string_lossy()) {
+            println!("Skipping ignored project: {}", p.display());
+            continue;
+        }
+        let cfg = Config::load_for(Some(&p));
+        worst = worst.max(run_with_config(&p, apply, &cfg));
         println!();
     }
     worst
@@ -76,9 +82,14 @@ pub fn run(path: &Path, apply: bool) -> i32 {
             return 1;
         }
     };
+    let cfg = Config::load_for(Some(&root));
+    run_with_config(&root, apply, &cfg)
+}
+
+fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
     let disp = root.to_string_lossy();
     let disp = disp.strip_prefix(r"\\?\").unwrap_or(&disp).to_string();
-    if let Err(e) = crate::registry::register(&root) {
+    if let Err(e) = crate::registry::register(root) {
         eprintln!("Cannot register {}: {e}", root.display());
         return 1;
     }
@@ -91,8 +102,8 @@ pub fn run(path: &Path, apply: bool) -> i32 {
         }
     );
 
-    let mut reqs = parsers::iter_claude(Some(&root));
-    reqs.extend(parsers::iter_codex(Some(&root)));
+    let mut reqs = parsers::iter_claude(Some(root));
+    reqs.extend(parsers::iter_codex(Some(root)));
 
     let mut n = 0;
     let mut applied = 0;
@@ -105,7 +116,7 @@ pub fn run(path: &Path, apply: bool) -> i32 {
         n += 1;
         println!(" {n}. [rules] CLAUDE.md/AGENTS.md lack the efficiency block");
         if apply {
-            initcmd::run(&root);
+            initcmd::run(root);
             applied += 1;
         } else {
             println!("        -> --apply runs `init` here (rules + baseline)");
@@ -113,14 +124,14 @@ pub fn run(path: &Path, apply: bool) -> i32 {
     }
 
     // 2. Long loops without a state-file scaffold (SKILL.state pattern).
-    let long = long_sessions(&reqs);
+    let long = long_sessions(&reqs, cfg);
     let state = root.join(STATE_SCAFFOLD);
     if long > 0 && !state.exists() {
         n += 1;
         println!(
             " {n}. [state] {long} session(s) ran past {} turns and no \
              {STATE_SCAFFOLD} scaffold exists",
-            crate::config::get().long_session_turns
+            cfg.long_session_turns
         );
         if apply {
             let ok = std::fs::create_dir_all(state.parent().unwrap()).and_then(|_| {
@@ -143,13 +154,13 @@ pub fn run(path: &Path, apply: bool) -> i32 {
 
     // 3. Fat session starts: suggested only - MCP config is never auto-edited.
     let start = median_session_start(&reqs);
-    if start > crate::config::get().fat_start_tokens {
+    if start > cfg.fat_start_tokens {
         n += 1;
         println!(
             " {n}. [mcp]   median session start writes {}k tokens of context before any work",
             start / 1000
         );
-        let servers = mcp_servers(&root);
+        let servers = mcp_servers(root);
         if servers.is_empty() {
             println!(
                 "        -> check user-level MCP servers (`claude mcp list`): every \

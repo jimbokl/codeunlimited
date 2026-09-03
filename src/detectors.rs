@@ -2,17 +2,11 @@
 
 use std::collections::HashMap;
 
+use crate::config::Config;
 use crate::types::Request;
 
 const HEAVY: [&str; 3] = ["fable", "mythos", "opus"];
 const EARLY_N: usize = 5;
-
-fn trivial_out() -> u64 {
-    crate::config::get().trivial_output_tokens
-}
-fn long_session() -> usize {
-    crate::config::get().long_session_turns
-}
 
 pub struct Finding {
     pub title: String,
@@ -40,11 +34,14 @@ fn sessions(reqs: &[Request]) -> Vec<Vec<&Request>> {
     out
 }
 
-fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
+fn heavy_model_on_trivial(reqs: &[Request], cfg: &Config) -> Finding {
     let mut n = 0u64;
     let mut toks = 0u64;
     for r in reqs {
-        if r.out > 0 && r.out < trivial_out() && HEAVY.iter().any(|h| r.model.contains(h)) {
+        if r.out > 0
+            && r.out < cfg.trivial_output_tokens
+            && HEAVY.iter().any(|h| r.model.contains(h))
+        {
             n += 1;
             toks += r.prompt_total();
         }
@@ -58,7 +55,7 @@ fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
             "{} requests to top-tier models ended in a reply shorter than {} tokens \
              while dragging {:.0}M tokens of context.",
             n,
-            trivial_out(),
+            cfg.trivial_output_tokens,
             toks as f64 / 1e6
         ),
         fix: "Delegate mechanical work (renames, repetitive edits, status checks) to \
@@ -68,11 +65,11 @@ fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
     }
 }
 
-fn context_tax(reqs: &[Request]) -> Finding {
+fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
     let mut excess = 0f64;
     let mut hit = 0u64;
     let mut growth = Vec::new();
-    let long = long_session();
+    let long = cfg.long_session_turns;
     for rows in sessions(reqs) {
         if rows.len() < long {
             continue;
@@ -108,9 +105,7 @@ fn context_tax(reqs: &[Request]) -> Finding {
         detail: format!(
             "{} sessions ran past {} turns; by the tail of a session each turn costs \
              on average x{:.1} of an early turn.",
-            hit,
-            long_session(),
-            g
+            hit, cfg.long_session_turns, g
         ),
         fix: "New task = new session (/clear). For long repetitive loops keep a compact \
               state file instead of conversation history (SKILL.state pattern, \
@@ -164,7 +159,7 @@ fn cache_rewrites(reqs: &[Request]) -> Finding {
     }
 }
 
-fn heavy_session_start(reqs: &[Request]) -> Finding {
+fn heavy_session_start(reqs: &[Request], cfg: &Config) -> Finding {
     let mut firsts: Vec<u64> = sessions(reqs)
         .into_iter()
         .filter_map(|rows| rows.first().copied().cloned())
@@ -173,7 +168,7 @@ fn heavy_session_start(reqs: &[Request]) -> Finding {
         .filter(|w| *w > 0)
         .collect();
     firsts.sort_unstable();
-    let fat = crate::config::get().fat_start_tokens;
+    let fat = cfg.fat_start_tokens;
     let med = firsts.get(firsts.len() / 2).copied().unwrap_or(0);
     let over: u64 = firsts.iter().map(|w| w.saturating_sub(fat)).sum();
     Finding {
@@ -237,12 +232,12 @@ fn retry_storms(reqs: &[Request]) -> Finding {
     }
 }
 
-pub fn run_all(reqs: &[Request]) -> Vec<Finding> {
+pub fn run_all(reqs: &[Request], cfg: &Config) -> Vec<Finding> {
     let mut f = vec![
-        heavy_model_on_trivial(reqs),
-        context_tax(reqs),
+        heavy_model_on_trivial(reqs, cfg),
+        context_tax(reqs, cfg),
         cache_rewrites(reqs),
-        heavy_session_start(reqs),
+        heavy_session_start(reqs, cfg),
         retry_storms(reqs),
     ];
     f.sort_by_key(|x| std::cmp::Reverse(x.impact_tokens));
@@ -291,7 +286,7 @@ mod tests {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
             .collect();
-        for f in run_all(&reqs) {
+        for f in run_all(&reqs, &Config::default()) {
             assert!(f.impact_lo <= f.impact_tokens, "{}", f.title);
             assert!(f.impact_tokens <= f.impact_hi, "{}", f.title);
         }
@@ -302,7 +297,7 @@ mod tests {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
             .collect();
-        let f = context_tax(&reqs);
+        let f = context_tax(&reqs, &Config::default());
         assert!(f.impact_tokens > 0);
         assert!(f.detail.contains("1 sessions ran past 30 turns"));
     }

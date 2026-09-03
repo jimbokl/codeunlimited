@@ -62,6 +62,7 @@ fn append_block(path: &Path, block: &str, current: Option<&str>) -> io::Result<&
 }
 
 fn baseline(root: &Path, disp: &str) -> io::Result<()> {
+    let cfg = crate::config::Config::load_for(Some(root));
     let mut reqs = parsers::iter_claude(Some(root));
     let codex = parsers::iter_codex(Some(root));
     // Capture the baseline once; `codeunlimited delta` compares against it.
@@ -95,7 +96,7 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
         sessions.len(),
         total as f64 / 1e6
     );
-    if let Some(top) = detectors::run_all(&reqs)
+    if let Some(top) = detectors::run_all(&reqs, &cfg)
         .into_iter()
         .find(|f| f.impact_tokens > 0)
     {
