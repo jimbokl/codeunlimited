@@ -1,0 +1,18 @@
+[project]
+name = "codeunlimited"
+version = "0.1.0"
+description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["claude-code", "codex", "tokens", "rate-limits", "cost-optimization"]
+
+[project.scripts]
+codeunlimited = "codeunlimited.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["codeunlimited"]
