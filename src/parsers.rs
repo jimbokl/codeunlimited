@@ -1,12 +1,11 @@
 //! Parsers for Claude Code (~/.claude/projects) and Codex CLI (~/.codex/sessions) logs.
 
-use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc::sync_channel, Arc};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use serde_json::Value;
@@ -56,7 +55,7 @@ pub struct CodexScan {
     pub stats: ScanStats,
 }
 
-type ClaudeRecord = (Option<String>, Request);
+type ClaudeRecord = (Option<String>, Option<Request>);
 type ClaudeFileScan = Option<(Vec<ClaudeRecord>, ScanStats)>;
 
 #[derive(Default)]
@@ -106,58 +105,6 @@ struct CodexAggregate {
     observations: Vec<(String, FileFingerprint, FileObservation)>,
 }
 
-#[derive(serde::Deserialize)]
-struct CodexRecord<'a> {
-    #[serde(rename = "type", borrow)]
-    kind: Option<Cow<'a, str>>,
-    #[serde(borrow)]
-    timestamp: Option<Cow<'a, str>>,
-    #[serde(borrow)]
-    payload: Option<CodexPayload<'a>>,
-}
-
-#[derive(Default, serde::Deserialize)]
-struct CodexPayload<'a> {
-    #[serde(rename = "type", borrow)]
-    kind: Option<Cow<'a, str>>,
-    #[serde(borrow)]
-    model: Option<Cow<'a, str>>,
-    #[serde(borrow)]
-    cwd: Option<Cow<'a, str>>,
-    info: Option<CodexInfo>,
-    rate_limits: Option<CodexRateLimits>,
-}
-
-#[derive(serde::Deserialize)]
-struct CodexInfo {
-    last_token_usage: Option<CodexTokenUsage>,
-}
-
-#[derive(serde::Deserialize)]
-struct CodexTokenUsage {
-    #[serde(default)]
-    input_tokens: u64,
-    #[serde(default)]
-    cached_input_tokens: u64,
-    #[serde(default)]
-    cache_write_input_tokens: u64,
-    #[serde(default)]
-    output_tokens: u64,
-}
-
-#[derive(serde::Deserialize)]
-struct CodexRateLimits {
-    primary: Option<CodexRateLimit>,
-}
-
-#[derive(serde::Deserialize)]
-struct CodexRateLimit {
-    #[serde(default)]
-    used_percent: f64,
-    #[serde(default)]
-    window_minutes: u64,
-}
-
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -193,13 +140,15 @@ pub fn claude_project_key(project: &Path) -> String {
 }
 
 fn jsonl_files(base: &Path) -> Vec<PathBuf> {
-    WalkDir::new(base)
+    let mut files: Vec<_> = WalkDir::new(base)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
         .map(|e| e.into_path())
-        .collect()
+        .collect();
+    files.sort_unstable();
+    files
 }
 
 fn u64_of(v: &Value, key: &str) -> u64 {
@@ -250,10 +199,13 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
             .get("timestamp")
             .and_then(Value::as_str)
             .and_then(parse_ts);
+        let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
         if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
+            // Keep the id so global first-seen deduplication stays identical to
+            // an unfiltered scan, without retaining the excluded request.
+            out.push((mid, None));
             continue;
         }
-        let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
         let cw = u64_of(u, "cache_creation_input_tokens");
         let cc = u.get("cache_creation").unwrap_or(&Value::Null);
         let w1h = u64_of(cc, "ephemeral_1h_input_tokens");
@@ -263,7 +215,7 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
             .unwrap_or(cw.saturating_sub(w1h));
         out.push((
             mid,
-            Request {
+            Some(Request {
                 source: "claude",
                 project: Arc::clone(&project),
                 session: d
@@ -278,7 +230,7 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
                 w5,
                 w1h,
                 out: u64_of(u, "output_tokens"),
-            },
+            }),
         ));
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
@@ -319,13 +271,15 @@ pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
     let mut out = Vec::new();
     for (chunk, file_stats) in parsed.into_iter().flatten() {
         stats += file_stats;
-        for (mid, r) in chunk {
+        for (mid, request) in chunk {
             if let Some(id) = mid {
                 if !seen.insert(id) {
                     continue;
                 }
             }
-            out.push(r);
+            if let Some(request) = request {
+                out.push(request);
+            }
         }
     }
     ClaudeScan {
@@ -449,27 +403,30 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
                 }
             }
         }
-        let Ok(record) = serde_json::from_str::<CodexRecord<'_>>(&line) else {
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        let payload = record.payload.unwrap_or_default();
-        if record.kind.as_deref() == Some("turn_context") {
-            if let Some(value) = payload.model {
-                model = Arc::from(value.as_ref());
+        let payload = record.get("payload").unwrap_or(&Value::Null);
+        if record.get("type").and_then(Value::as_str) == Some("turn_context") {
+            if let Some(value) = payload.get("model").and_then(Value::as_str) {
+                model = Arc::from(value);
             }
-            if let Some(value) = payload.cwd {
-                cwd_key = path_key(Path::new(value.as_ref()));
-                project = project_label(value.as_ref()).into();
+            if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
+                cwd_key = path_key(Path::new(value));
+                project = project_label(value).into();
                 observation.cwd_keys.insert(cwd_key.clone());
             }
             continue;
         }
-        let ts = record.timestamp.as_deref().and_then(parse_ts);
+        let ts = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_ts);
         observation.observe_ts(ts);
         if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
             continue;
         }
-        if payload.kind.as_deref() != Some("token_count") {
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
         }
         if let Some(w) = want {
@@ -478,38 +435,60 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
             }
         }
         if let Some(primary) = payload
-            .rate_limits
-            .as_ref()
-            .and_then(|limits| limits.primary.as_ref())
+            .get("rate_limits")
+            .and_then(|limits| limits.get("primary"))
         {
             series.push((
                 ts.unwrap_or(0),
-                primary.used_percent,
-                primary.window_minutes,
+                primary
+                    .get("used_percent")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+                primary
+                    .get("window_minutes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
             ));
         }
         let Some(usage) = payload
-            .info
-            .as_ref()
-            .and_then(|info| info.last_token_usage.as_ref())
+            .get("info")
+            .and_then(|info| info.get("last_token_usage"))
+            .filter(|usage| usage.is_object())
         else {
             continue;
         };
+        let input_tokens = u64_of(usage, "input_tokens");
+        let cached_input_tokens = u64_of(usage, "cached_input_tokens");
         out.push(Request {
             source: "codex",
             project: Arc::clone(&project),
             session: Arc::clone(&session),
             ts,
             model: Arc::clone(&model),
-            unc_in: usage.input_tokens.saturating_sub(usage.cached_input_tokens),
-            cached_in: usage.cached_input_tokens,
-            w5: usage.cache_write_input_tokens,
+            unc_in: input_tokens.saturating_sub(cached_input_tokens),
+            cached_in: cached_input_tokens,
+            w5: u64_of(usage, "cache_write_input_tokens"),
             w1h: 0,
-            out: usage.output_tokens,
+            out: u64_of(usage, "output_tokens"),
         });
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
     Some((out, series, stats, observation))
+}
+
+fn parse_codex_batch(
+    candidates: &[CodexCandidate],
+    want: Option<&str>,
+    since: Option<i64>,
+) -> Vec<ParsedCandidate> {
+    candidates
+        .par_iter()
+        .map(|candidate| ParsedCandidate {
+            key: candidate.key.clone(),
+            fingerprint: candidate.fingerprint.clone(),
+            scan: parse_codex_file(&candidate.path, want, since),
+        })
+        .collect()
 }
 
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
@@ -571,37 +550,23 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
             fingerprint,
         });
     }
-    let queue_capacity = rayon::current_num_threads().max(1).saturating_mul(2);
-    let (sender, receiver) = sync_channel::<ParsedCandidate>(queue_capacity);
-    let aggregate = std::thread::scope(|scope| {
-        let consumer = scope.spawn(|| {
-            let mut aggregate = CodexAggregate::default();
-            for parsed in receiver {
-                let Some((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
-                    continue;
-                };
-                aggregate.stats += file_stats;
-                aggregate.requests.append(&mut reqs);
-                aggregate.series.append(&mut series);
-                if let Some(fingerprint) = parsed.fingerprint {
-                    aggregate
-                        .observations
-                        .push((parsed.key, fingerprint, observation));
-                }
+    let batch_size = rayon::current_num_threads().max(1).saturating_mul(2);
+    let mut aggregate = CodexAggregate::default();
+    for batch in candidates.chunks(batch_size) {
+        for parsed in parse_codex_batch(batch, want.as_deref(), options.since) {
+            let Some((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
+                continue;
+            };
+            aggregate.stats += file_stats;
+            aggregate.requests.append(&mut reqs);
+            aggregate.series.append(&mut series);
+            if let Some(fingerprint) = parsed.fingerprint {
+                aggregate
+                    .observations
+                    .push((parsed.key, fingerprint, observation));
             }
-            aggregate
-        });
-        candidates
-            .par_iter()
-            .for_each_with(sender, |sender, candidate| {
-                let _ = sender.send(ParsedCandidate {
-                    key: candidate.key.clone(),
-                    fingerprint: candidate.fingerprint.clone(),
-                    scan: parse_codex_file(&candidate.path, want.as_deref(), options.since),
-                });
-            });
-        consumer.join().expect("Codex aggregation thread panicked")
-    });
+        }
+    }
     stats += aggregate.stats;
     let mut out = aggregate.requests;
     out.shrink_to_fit();
@@ -688,5 +653,49 @@ mod tests {
         assert_eq!(requests[0].session.as_ptr(), requests[1].session.as_ptr());
         assert_eq!(requests[0].project.as_ptr(), requests[1].project.as_ptr());
         assert_eq!(requests[0].model.as_ptr(), requests[1].model.as_ptr());
+    }
+
+    #[test]
+    fn codex_parallel_batch_preserves_candidate_order() {
+        let root = TempDir::new().expect("fixture root");
+        let first = root.path().join("a-first.jsonl");
+        let second = root.path().join("b-second.jsonl");
+        for (path, cwd) in [(&first, "/work/first"), (&second, "/work/second")] {
+            fs::write(
+                path,
+                format!(
+                    concat!(
+                        "{{\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-test\",\"cwd\":\"{}\"}}}}\n",
+                        "{{\"timestamp\":\"2099-01-01T00:00:00Z\",\"type\":\"event_msg\",",
+                        "\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":",
+                        "{{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":1}}}}}}}}\n"
+                    ),
+                    cwd
+                ),
+            )
+            .expect("fixture session");
+        }
+        let candidates = vec![
+            CodexCandidate {
+                path: first,
+                key: "first".to_string(),
+                fingerprint: None,
+            },
+            CodexCandidate {
+                path: second,
+                key: "second".to_string(),
+                fingerprint: None,
+            },
+        ];
+
+        let parsed = parse_codex_batch(&candidates, None, None);
+        let sessions: Vec<_> = parsed
+            .into_iter()
+            .filter_map(|candidate| candidate.scan)
+            .flat_map(|(requests, _, _, _)| requests)
+            .map(|request| request.session.to_string())
+            .collect();
+
+        assert_eq!(sessions, ["a-first", "b-second"]);
     }
 }

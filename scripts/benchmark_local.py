@@ -109,13 +109,23 @@ def _measure(command: Sequence[str], env: Mapping[str, str]) -> dict[str, Any]:
     child_env = os.environ.copy()
     child_env.update(env)
     started = time.perf_counter()
-    completed = subprocess.run(
-        measured_command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=child_env,
-    )
+    try:
+        completed = subprocess.run(
+            measured_command,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=child_env,
+        )
+    except OSError:
+        return {
+            "exit_code": None,
+            "wall_seconds": round(time.perf_counter() - started, 6),
+            "max_rss_bytes": None,
+            "json_valid": False,
+            "source_requests": {},
+            "scan": {},
+        }
     wall_seconds = time.perf_counter() - started
     source_requests, scan, json_valid = _safe_audit_fields(completed.stdout)
     return {
@@ -191,6 +201,95 @@ def write_output(path: pathlib.Path, payload: Mapping[str, Any], force: bool) ->
 
 def _audit_command(binary: pathlib.Path, *args: str) -> list[str]:
     return [str(binary), "audit", "--json", "--scan-stats", *args]
+
+
+def _codeunlimited_version(binary: pathlib.Path) -> str:
+    try:
+        completed = subprocess.run(
+            [str(binary), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    for line in (completed.stdout + "\n" + completed.stderr).splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2 and parts[0] == "codeunlimited":
+            return parts[1]
+    return "unknown"
+
+
+def _git_sha(root: pathlib.Path) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    sha = completed.stdout.strip().lower()
+    if completed.returncode == 0 and len(sha) == 40 and all(
+        character in "0123456789abcdef" for character in sha
+    ):
+        return sha
+    return "unknown"
+
+
+def _total_memory_bytes() -> int | None:
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            completed = subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "hw.memsize"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            value = completed.stdout.strip()
+            if completed.returncode == 0 and value.isdigit():
+                return int(value)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    if system == "Linux":
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if isinstance(pages, int) and isinstance(page_size, int):
+                return pages * page_size
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _corpus_metadata() -> dict[str, int]:
+    home = pathlib.Path.home()
+    roots = (
+        pathlib.Path(os.environ.get("CLAUDE_HOME", home / ".claude")) / "projects",
+        pathlib.Path(os.environ.get("CODEX_HOME", home / ".codex")) / "sessions",
+    )
+    files = 0
+    total_bytes = 0
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            candidates = root.rglob("*.jsonl")
+            for path in candidates:
+                try:
+                    if path.is_file():
+                        files += 1
+                        total_bytes += path.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return {"jsonl_files": files, "bytes": total_bytes}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -274,12 +373,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     payload = {
         "schema_version": 1,
-        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
+        "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "provenance": {
+            "codeunlimited_version": _codeunlimited_version(binary),
+            "git_sha": _git_sha(root),
+        },
         "platform": {
             "system": platform.system(),
             "machine": platform.machine(),
             "python": platform.python_version(),
+            "total_memory_bytes": _total_memory_bytes(),
         },
+        "corpus": _corpus_metadata(),
         "runs_per_scenario": args.runs,
         "days": args.days,
         "scenarios": scenarios,

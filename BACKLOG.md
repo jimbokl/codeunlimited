@@ -3,15 +3,17 @@
 Only unshipped work belongs here. Completed capabilities are summarized in
 [ROADMAP.md](ROADMAP.md), and the privacy red lines still apply.
 
-## P0 — after the 1.6 pull request
+## P0 — release the reviewed stack
 
 - [ ] Review and merge the 1.6 hardening pull request.
 - [ ] Create the `v1.6.0` tag from the reviewed merge commit and verify all
       three checksummed GitHub artifacts.
 - [ ] Publish crate 1.6.0 from that same commit, then install it from crates.io
       and compare its embedded VCS SHA with the tag.
-- [ ] Update the repository release notes with any migration caveats found in
-      the final smoke test.
+- [ ] Rebase or retarget the reviewed 1.7 performance pull request after 1.6,
+      merge it, and verify `v1.7.0` artifacts before publishing the crate.
+- [ ] Update both release notes with any migration caveats found in the final
+      smoke tests.
 
 ## P1 — measurement depth
 
@@ -36,7 +38,8 @@ Only unshipped work belongs here. Completed capabilities are summarized in
 
 ## P2 — scale and distribution
 
-- [ ] Incremental cache keyed by path, size, and modification time.
+- [ ] Harden the metadata index for coarse-timestamp filesystems and network
+      volumes without storing log content.
 - [ ] gzip/zstd log support and benchmark fixtures for multi-gigabyte scans.
 - [ ] Homebrew tap, Scoop bucket, and winget manifest generated from verified
       GitHub checksums.

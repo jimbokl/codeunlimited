@@ -403,3 +403,64 @@ fn project_skip_takes_precedence_over_date_skip() {
     assert_eq!(unscoped["scan"]["files_skipped_by_index"], 0);
     assert_eq!(unscoped["scan"]["files_skipped_by_date"], 1);
 }
+
+#[test]
+fn claude_deduplicates_before_applying_the_time_cutoff() {
+    let state = TempDir::new().expect("fixture root");
+    let session = state.path().join("claude/projects/project/session.jsonl");
+    fs::create_dir_all(session.parent().expect("Claude session parent"))
+        .expect("Claude session directory");
+    fs::write(
+        session,
+        concat!(
+            r#"{"type":"assistant","sessionId":"s1","timestamp":"2000-01-01T00:00:00Z","message":{"id":"same","model":"claude-test","usage":{"input_tokens":10,"output_tokens":1}}}"#,
+            "\n",
+            r#"{"type":"assistant","sessionId":"s1","timestamp":"2099-01-01T00:00:00Z","message":{"id":"same","model":"claude-test","usage":{"input_tokens":20,"output_tokens":2}}}"#,
+            "\n",
+        ),
+    )
+    .expect("Claude duplicate fixture");
+
+    let value = run(
+        state.path(),
+        &[
+            "audit",
+            "--source",
+            "claude",
+            "--days",
+            "1",
+            "--json",
+            "--scan-stats",
+            "--no-index",
+        ],
+    );
+
+    assert!(value["sources"].get("claude").is_none());
+}
+
+#[test]
+fn malformed_known_codex_fields_do_not_hide_other_usage_metadata() {
+    let state = TempDir::new().expect("fixture root");
+    let session = state.path().join("codex/sessions/2099/01/session.jsonl");
+    fs::create_dir_all(session.parent().expect("Codex session parent"))
+        .expect("Codex session directory");
+    fs::write(
+        session,
+        concat!(
+            r#"{"type":"turn_context","payload":{"model":42,"cwd":"/work/target"}}"#,
+            "\n",
+            r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":"bad","window_minutes":60}},"info":{"last_token_usage":{"input_tokens":"bad","cached_input_tokens":5,"output_tokens":2}}}}"#,
+            "\n",
+        ),
+    )
+    .expect("Codex malformed-field fixture");
+    let args = scoped_args();
+
+    let first = run(state.path(), &args);
+    let warm = run(state.path(), &args);
+
+    assert_eq!(first["sources"]["codex"]["requests"], 1);
+    assert_eq!(first["sources"]["codex"]["prompt_tokens"], 5);
+    assert_eq!(warm["sources"], first["sources"]);
+    assert_eq!(warm["scan"]["files_opened"], 1);
+}

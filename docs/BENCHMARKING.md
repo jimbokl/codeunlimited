@@ -33,11 +33,13 @@ The scenarios are:
 - `scoped_warm_index`: one project after an unmeasured index warm-up.
 
 Each sample records only the child exit code, wall-clock seconds, maximum RSS,
-Claude/Codex request counts, and scan counters. It does not retain token totals,
-projects, paths, models, findings, prompts, responses, child stdout, or child
-stderr. The platform block contains OS, architecture, and Python version but no
-host name. A failed scenario is still written in this redacted form and makes
-the harness exit non-zero.
+Claude/Codex request counts, and scan counters. Top-level provenance records the
+binary version and Git commit; corpus metadata contains only aggregate JSONL
+file count and bytes. The platform block contains OS, architecture, Python
+version, and total physical memory but no host name. The artifact does not
+retain token totals, projects, paths, models, findings, prompts, responses,
+child stdout, or child stderr. A failed scenario is still written in this
+redacted form and makes the harness exit non-zero.
 
 `wall_seconds.median` is the median measured with `time.perf_counter`;
 `wall_seconds.p95` is the observed nearest-rank 95th percentile. RSS comes from

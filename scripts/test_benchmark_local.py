@@ -1,8 +1,10 @@
 import json
+import os
 import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts import benchmark_local
 
@@ -97,6 +99,98 @@ class BenchmarkScenarioTests(unittest.TestCase):
             self.assertNotEqual(status, 0)
             result = json.loads(output.read_text(encoding="utf-8"))
             self.assertTrue(any(item["status"] == "failed" for item in result["scenarios"]))
+
+    def test_main_runs_when_datetime_has_no_utc_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = pathlib.Path(directory) / "python-310.json"
+            had_utc = hasattr(benchmark_local.dt, "UTC")
+            utc = getattr(benchmark_local.dt, "UTC", None)
+            if had_utc:
+                del benchmark_local.dt.UTC
+            try:
+                status = benchmark_local.main(
+                    [
+                        "--binary",
+                        sys.executable,
+                        "--runs",
+                        "1",
+                        "--output",
+                        str(output),
+                    ]
+                )
+            finally:
+                if had_utc:
+                    benchmark_local.dt.UTC = utc
+
+            self.assertNotEqual(status, 0)
+            self.assertTrue(output.is_file())
+
+    @unittest.skipUnless(os.name == "posix", "executable bits are POSIX-only")
+    def test_non_executable_binary_is_recorded_as_a_failed_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = pathlib.Path(directory) / "not-executable"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o644)
+
+            with mock.patch.object(benchmark_local.platform, "system", return_value="Other"):
+                result = benchmark_local.run_scenario(
+                    "spawn-error", [str(binary)], env={}, runs=1
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertIsNone(result["samples"][0]["exit_code"])
+            self.assertFalse(result["samples"][0]["json_valid"])
+
+
+class BenchmarkProvenanceTests(unittest.TestCase):
+    def test_corpus_metadata_contains_only_aggregate_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            claude = root / "claude"
+            codex = root / "codex"
+            (claude / "projects").mkdir(parents=True)
+            (codex / "sessions").mkdir(parents=True)
+            (claude / "projects" / "one.jsonl").write_bytes(b"1234")
+            (codex / "sessions" / "two.jsonl").write_bytes(b"123456")
+            (codex / "sessions" / "ignore.txt").write_text("secret", encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"CLAUDE_HOME": str(claude), "CODEX_HOME": str(codex)},
+            ):
+                metadata = benchmark_local._corpus_metadata()
+
+            self.assertEqual(metadata, {"jsonl_files": 2, "bytes": 10})
+            self.assertNotIn(str(root), json.dumps(metadata))
+
+    def test_payload_provenance_is_self_identifying(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = root / "result.json"
+            empty_claude = root / "claude"
+            empty_codex = root / "codex"
+            empty_claude.mkdir()
+            empty_codex.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"CLAUDE_HOME": str(empty_claude), "CODEX_HOME": str(empty_codex)},
+            ):
+                benchmark_local.main(
+                    [
+                        "--binary",
+                        sys.executable,
+                        "--runs",
+                        "1",
+                        "--output",
+                        str(output),
+                    ]
+                )
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("codeunlimited_version", payload["provenance"])
+            self.assertIn("git_sha", payload["provenance"])
+            self.assertIn("total_memory_bytes", payload["platform"])
+            self.assertEqual(payload["corpus"], {"jsonl_files": 0, "bytes": 0})
 
 
 if __name__ == "__main__":
