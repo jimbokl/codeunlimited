@@ -162,11 +162,48 @@ pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
     out
 }
 
-fn str_field<'a>(line: &'a str, pat: &str) -> Option<&'a str> {
-    let i = line.find(pat)? + pat.len();
-    let rest = &line[i..];
-    let j = rest.find('"')?;
-    Some(&rest[..j])
+fn normalize_path_text(raw: &str) -> String {
+    let windows = raw.starts_with(r"\\?\")
+        || raw.contains('\\')
+        || raw.as_bytes().get(1).is_some_and(|b| *b == b':');
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw);
+    let slash = stripped.replace('\\', "/");
+    let absolute = slash.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in slash.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            ".." if !absolute => parts.push(part),
+            ".." => {}
+            _ => parts.push(part),
+        }
+    }
+    let mut key = if absolute {
+        "/".to_string()
+    } else {
+        String::new()
+    };
+    key.push_str(&parts.join("/"));
+    if windows {
+        key.make_ascii_lowercase();
+    }
+    key
+}
+
+fn path_key(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    normalize_path_text(&canonical.to_string_lossy())
+}
+
+fn project_label(cwd: &str) -> String {
+    normalize_path_text(cwd)
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or("?")
+        .to_string()
 }
 
 /// Peak observed rate-limit usage: (used_percent, window_minutes).
@@ -187,36 +224,33 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
     };
     let mut model = String::from("?");
     let mut project = String::from("?");
+    let mut cwd_key = String::new();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
-        if model == "?" {
-            if let Some(m) = str_field(&line, "\"model\":\"") {
-                model = m.to_string();
-            }
-        }
-        if project == "?" {
-            if let Some(c) = str_field(&line, "\"cwd\":\"") {
-                let cwd = c.replace("\\\\", "\\");
-                project = cwd
-                    .split(['\\', '/'])
-                    .rfind(|p| !p.is_empty())
-                    .unwrap_or("?")
-                    .to_string();
-            }
-        }
-        if !line.contains("\"token_count\"") {
+        if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
             continue;
-        }
-        if let Some(w) = want {
-            if !project.eq_ignore_ascii_case(w) {
-                continue;
-            }
         }
         let Ok(d) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if d.get("type").and_then(Value::as_str) == Some("turn_context") {
+            let payload = d.get("payload").unwrap_or(&Value::Null);
+            if let Some(value) = payload.get("model").and_then(Value::as_str) {
+                model = value.to_string();
+            }
+            if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
+                cwd_key = path_key(Path::new(value));
+                project = project_label(value);
+            }
+            continue;
+        }
+        if let Some(w) = want {
+            if cwd_key != w {
+                continue;
+            }
+        }
         let p = d.get("payload").cloned().unwrap_or(Value::Null);
         if p.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
@@ -275,13 +309,7 @@ pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
     if !root.is_dir() {
         return (vec![], vec![]);
     }
-    let want = project.map(|p| {
-        p.canonicalize()
-            .unwrap_or_else(|_| p.to_path_buf())
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    });
+    let want = project.map(path_key);
     let files = jsonl_files(&root);
     let parts: Vec<(Vec<Request>, LimitSeries)> = files
         .par_iter()

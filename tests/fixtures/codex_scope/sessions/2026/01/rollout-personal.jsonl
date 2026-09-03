@@ -1,0 +1,2 @@
+{"type":"turn_context","payload":{"model":"gpt-personal","cwd":"/work/personal/app"}}
+{"timestamp":"2026-01-02T00:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":900,"cached_input_tokens":0,"output_tokens":90}}}}

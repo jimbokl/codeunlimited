@@ -1,0 +1,3 @@
+{"type":"event_msg","model":"gpt-fake","cwd":"/work/client/app","payload":{"type":"user_message","message":"metadata-looking text must not be sticky"}}
+{"type":"turn_context","payload":{"model":"gpt-real","cwd":"/work/client/app"}}
+{"timestamp":"2026-01-02T00:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10}}}}
