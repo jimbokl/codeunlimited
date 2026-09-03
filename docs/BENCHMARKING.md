@@ -69,6 +69,30 @@ The fixed 1.7 targets, chosen before measuring the implementation, are:
 The dated JSON under `docs/benchmarks/` records hits and misses without moving
 these targets after the result is known.
 
+### Measured 1.7 result
+
+The final three-sample run on the same machine completed successfully. The
+history was still active during measurement, so retained request counts changed
+slightly between samples; timings and RSS are therefore reported as observed,
+not as laboratory constants.
+
+| Scenario | Median | p95 | Maximum RSS | Target result |
+|---|---:|---:|---:|---|
+| Synthetic fixture | 0.0065 s | 0.0078 s | 7,340,032 B | smoke pass |
+| Full, no index | 19.6015 s | 19.7042 s | 1,054,916,608 B | time hit; RSS miss |
+| 30 days, warm index | 6.8883 s | 6.8888 s | 423,116,800 B | time miss; RSS miss |
+| Project scope, no index | 18.5268 s | 18.8338 s | 275,562,496 B | diagnostic only |
+| Project scope, warm index | 0.0260 s | 0.0276 s | 8,323,072 B | time and RSS hit |
+
+Against the 1.6 observations, the full median improved by about 8% and maximum
+RSS by about 37%; the 30-day median improved by about 64% and RSS by about 69%.
+The fixed 5-second/350-MiB bounded targets and 800-MiB full-memory target remain
+recorded as misses. The selected worktree had no matching retained sessions in
+the scoped run, so its warm-index result is specifically the all-files-skipped
+case (660 indexed files skipped). See
+[`docs/benchmarks/2026-09-03-m4-16gb.json`](benchmarks/2026-09-03-m4-16gb.json)
+for the redacted samples and scan counters.
+
 ## Measure whether the utility helps
 
 The product outcome must be measured over real work, separately from scanner

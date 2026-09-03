@@ -1,0 +1,314 @@
+{
+  "days": 30,
+  "generated_at_utc": "2026-09-03T20:22:53.313684+00:00",
+  "platform": {
+    "machine": "arm64",
+    "python": "3.14.4",
+    "system": "Darwin"
+  },
+  "runs_per_scenario": 3,
+  "scenarios": [
+    {
+      "name": "fixture",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7340032,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 0.007831
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7290880,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 0.006543
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 7274496,
+          "scan": {
+            "files_discovered": 2,
+            "files_opened": 2,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 5
+          },
+          "source_requests": {
+            "claude": 2,
+            "codex": 2
+          },
+          "wall_seconds": 0.005606
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 7340032,
+        "wall_seconds": {
+          "median": 0.006543,
+          "p95": 0.007831
+        }
+      }
+    },
+    {
+      "name": "full_no_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 1054916608,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748097
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2747992
+          },
+          "wall_seconds": 19.464983
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 973946880,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748097
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2747992
+          },
+          "wall_seconds": 19.704237
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 954466304,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 668,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 2748098
+          },
+          "source_requests": {
+            "claude": 43,
+            "codex": 2747993
+          },
+          "wall_seconds": 19.601495
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 1054916608,
+        "wall_seconds": {
+          "median": 19.601495,
+          "p95": 19.704237
+        }
+      }
+    },
+    {
+      "name": "bounded_time_warm_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 411779072,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728024
+          },
+          "source_requests": {
+            "codex": 728024
+          },
+          "wall_seconds": 6.832919
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 423116800,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728024
+          },
+          "source_requests": {
+            "codex": 728024
+          },
+          "wall_seconds": 6.88879
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 341540864,
+          "scan": {
+            "files_discovered": 668,
+            "files_opened": 391,
+            "files_skipped_by_date": 277,
+            "files_skipped_by_index": 0,
+            "usage_records": 728024
+          },
+          "source_requests": {
+            "codex": 728024
+          },
+          "wall_seconds": 6.888335
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 423116800,
+        "wall_seconds": {
+          "median": 6.888335,
+          "p95": 6.88879
+        }
+      },
+      "warmup_exit_code": 0
+    },
+    {
+      "name": "scoped_no_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 242057216,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.492369
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 275562496,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.833819
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 217071616,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 660,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 0,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 18.526807
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 275562496,
+        "wall_seconds": {
+          "median": 18.526807,
+          "p95": 18.833819
+        }
+      }
+    },
+    {
+      "name": "scoped_warm_index",
+      "samples": [
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8290304,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.02758
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8323072,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.026046
+        },
+        {
+          "exit_code": 0,
+          "json_valid": true,
+          "max_rss_bytes": 8290304,
+          "scan": {
+            "files_discovered": 660,
+            "files_opened": 0,
+            "files_skipped_by_date": 0,
+            "files_skipped_by_index": 660,
+            "usage_records": 0
+          },
+          "source_requests": {},
+          "wall_seconds": 0.02454
+        }
+      ],
+      "status": "ok",
+      "summary": {
+        "max_rss_bytes": 8323072,
+        "wall_seconds": {
+          "median": 0.026046,
+          "p95": 0.02758
+        }
+      },
+      "warmup_exit_code": 0
+    }
+  ],
+  "schema_version": 1
+}

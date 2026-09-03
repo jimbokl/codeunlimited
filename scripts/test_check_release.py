@@ -18,7 +18,7 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("1.6.0")
+        result = self.run_checker("1.7.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_mismatching_expected_version_fails(self) -> None:

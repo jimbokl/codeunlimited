@@ -22,8 +22,8 @@ fn parse_days(value: &str) -> Result<u64, String> {
 #[command(
     name = "codeunlimited",
     version,
-    about = "Set up once - up to 50% more work from the same Claude Code / Codex \
-             limits. Offline token-leak audit, one-command fixes, verified savings."
+    about = "Offline estimates of token-leak opportunities, one-command fixes, and \
+             before/after tracking for Claude Code and Codex CLI."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -65,7 +65,7 @@ enum Cmd {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Verified before/after for a project since `init` captured its baseline
+    /// Before/after tracking since `init` captured a project baseline
     Delta {
         #[arg(default_value = ".")]
         path: PathBuf,

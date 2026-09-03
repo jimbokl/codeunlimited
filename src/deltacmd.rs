@@ -1,4 +1,4 @@
-//! `codeunlimited delta`: verified before/after for a project - proves how much
+//! `codeunlimited delta`: observational before/after tracking for a project.
 //! work the efficiency rules reclaimed since `init` captured the baseline.
 
 use std::path::Path;

@@ -1,4 +1,4 @@
-//! Per-project efficiency metrics - the basis for verified before/after deltas.
+//! Per-project efficiency metrics - the basis for before/after observations.
 
 use std::collections::HashMap;
 
