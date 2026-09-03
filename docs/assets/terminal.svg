@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="470" font-family="ui-monospace,Consolas,Menlo,monospace" font-size="13">
+  <rect width="760" height="470" rx="10" fill="#0d1117"/>
+  <rect width="760" height="34" rx="10" fill="#161b22"/>
+  <rect y="24" width="760" height="10" fill="#161b22"/>
+  <circle cx="22" cy="17" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="17" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="17" r="6" fill="#28c840"/>
+  <text x="380" y="21" fill="#8b949e" text-anchor="middle" font-size="12">codeunlimited — audit</text>
+  <g fill="#e6edf3">
+    <text x="20" y="60"><tspan fill="#7ee787">$</tspan> codeunlimited audit</text>
+    <text x="20" y="84" fill="#3fd158">================================================================</text>
+    <text x="20" y="102"><tspan fill="#3fd158" font-weight="bold"> CODEUNLIMITED</tspan> - more code out of the limits you already pay for</text>
+    <text x="20" y="120" fill="#3fd158">================================================================</text>
+    <text x="20" y="142" fill="#8b949e"> Period: 2026-05-12 ... 2026-09-03  (113 days)</text>
+    <text x="20" y="160"> claude:  12,953 requests | context 3,686M tok.</text>
+    <text x="20" y="178"> codex:   58,664 requests | context 7,923M tok.</text>
+    <text x="20" y="196"> Weekly volume (limit proxy): <tspan fill="#e3b341">~721M tokens</tspan></text>
+    <text x="20" y="226"><tspan fill="#e3b341" font-weight="bold"> 1. Context tax of long sessions</tspan></text>
+    <text x="20" y="244" fill="#8b949e">    64 sessions past 30 turns; tail turns cost x3.9 of an early turn</text>
+    <text x="20" y="262">    Reclaim: <tspan fill="#7ee787">~5,473M tok.</tspan> (~47% of weekly volume)</text>
+    <text x="20" y="288"><tspan fill="#e3b341" font-weight="bold"> 2. Top-tier model burned on mechanical replies</tspan></text>
+    <text x="20" y="306">    Reclaim: <tspan fill="#7ee787">~591M tok.</tspan> (~5% of weekly volume)</text>
+    <text x="20" y="334" fill="#3fd158">================================================================</text>
+    <text x="20" y="354"><tspan fill="#3fd158" font-weight="bold"> TOTAL reclaimable: ~52% of weekly volume</tspan> - that much more</text>
+    <text x="20" y="372"> work fits into the same limit.</text>
+    <text x="20" y="398" fill="#8b949e"> Forecast: codex: ~78% of the 7-day window used; ~34h of work left</text>
+    <text x="20" y="416" fill="#8b949e"> Next: codeunlimited init | fix --apply | report --all</text>
+    <text x="20" y="446"><tspan fill="#7ee787">$</tspan> <tspan fill="#e6edf3">█</tspan></text>
+  </g>
+</svg>

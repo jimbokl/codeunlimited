@@ -171,15 +171,24 @@ fn str_field<'a>(line: &'a str, pat: &str) -> Option<&'a str> {
 
 /// Peak observed rate-limit usage: (used_percent, window_minutes).
 pub type LimitPeak = Option<(f64, u64)>;
+/// Observed rate-limit usage over time: (unix_ts, used_percent, window_minutes).
+pub type LimitSeries = Vec<(i64, f64, u64)>;
 
-fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitPeak) {
+pub fn peak(series: &LimitSeries) -> LimitPeak {
+    series
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|&(_, u, w)| (u, w))
+}
+
+fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeries) {
     let Ok(f) = File::open(path) else {
-        return (vec![], None);
+        return (vec![], vec![]);
     };
     let mut model = String::from("?");
     let mut project = String::from("?");
     let mut out = Vec::new();
-    let mut peak: LimitPeak = None;
+    let mut series: LimitSeries = Vec::new();
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
         if model == "?" {
@@ -221,9 +230,12 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitPeak
                 .get("window_minutes")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            if peak.is_none_or(|(u, _)| used > u) {
-                peak = Some((used, win));
-            }
+            let ts = d
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_ts)
+                .unwrap_or(0);
+            series.push((ts, used, win));
         }
         let Some(u) = p
             .get("info")
@@ -254,14 +266,14 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitPeak
             out: u64_of(u, "output_tokens"),
         });
     }
-    (out, peak)
+    (out, series)
 }
 
-/// Full Codex scan: requests plus the peak observed rate-limit usage.
-pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitPeak) {
+/// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
+pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
     let root = codex_root();
     if !root.is_dir() {
-        return (vec![], None);
+        return (vec![], vec![]);
     }
     let want = project.map(|p| {
         p.canonicalize()
@@ -271,21 +283,18 @@ pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitPeak) {
             .unwrap_or_default()
     });
     let files = jsonl_files(&root);
-    let parts: Vec<(Vec<Request>, LimitPeak)> = files
+    let parts: Vec<(Vec<Request>, LimitSeries)> = files
         .par_iter()
         .map(|f| parse_codex_file(f, want.as_deref()))
         .collect();
     let mut out = Vec::new();
-    let mut peak: LimitPeak = None;
-    for (reqs, p) in parts {
+    let mut series: LimitSeries = Vec::new();
+    for (reqs, s) in parts {
         out.extend(reqs);
-        if let Some((u, w)) = p {
-            if peak.is_none_or(|(pu, _)| u > pu) {
-                peak = Some((u, w));
-            }
-        }
+        series.extend(s);
     }
-    (out, peak)
+    series.sort_unstable_by_key(|&(t, _, _)| t);
+    (out, series)
 }
 
 pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {

@@ -37,6 +37,32 @@ request, compared against a 25k-token baseline (system prompt + typical tool
 schemas). Half of the excess is counted; the fix (pruning unused MCP servers)
 is always a manual, reviewable step.
 
+**5. Retry storms.** Three or more consecutive requests with *identical*
+prompt size, each within 90 seconds of the previous one - the signature of
+auto-retries or double-submits. Because size equality is a heuristic (two
+different prompts can weigh the same), only **half** of the duplicated
+context is counted; the honest range is 25-75%.
+
+## Ranges
+
+Every estimate that rests on an assumption is reported as a range:
+context tax 40-80% of the measured excess (mid 60%), delegable heavy-model
+context 25-75% (mid 50%), fat-start excess 25-75% (mid 50%), retry storms
+25-75% (mid 50%). Mid-session cache re-writes are directly measured waste,
+so no range is shown.
+
+## Limit forecast
+
+- **Codex**: the logs record `used_percent` of the rate-limit window, which
+  lets the window's token capacity be calibrated from your own data:
+  `capacity ~ tokens_processed_in_window / used_percent` at the
+  highest-signal observation (>=20% used). "Hours to the wall" divides the
+  remaining budget by your last-24h pace. Both are estimates: the provider
+  weighs models and cache tiers in ways the logs don't expose.
+- **Claude Code**: logs carry no limit telemetry, so the busiest observed
+  week serves as a proxy ceiling - useful for direction, not for the exact
+  hour. The report says which of the two methods produced each line.
+
 ## Delta and trend
 
 `init` freezes a per-project baseline; `delta`/`report` recompute the same

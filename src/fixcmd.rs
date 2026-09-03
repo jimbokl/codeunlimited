@@ -54,6 +54,21 @@ fn mcp_servers(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `fix --all`: run the fix pass over every registered project.
+pub fn run_all(apply: bool) -> i32 {
+    let projects = crate::registry::projects();
+    if projects.is_empty() {
+        eprintln!("No registered projects yet - run `init`, `fix` or `report` on one first.");
+        return 1;
+    }
+    let mut worst = 0;
+    for p in projects {
+        worst = worst.max(run(&p, apply));
+        println!();
+    }
+    worst
+}
+
 pub fn run(path: &Path, apply: bool) -> i32 {
     let root = match path.canonicalize() {
         Ok(p) if p.is_dir() => p,

@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0 - 2026-09-03
+
+- **Limit forecast**: Codex `used_percent` telemetry calibrates your
+  window's token capacity from your own logs - the audit and `report --all`
+  now answer "how many hours of work are left before the wall". Claude gets
+  a busiest-week proxy ceiling until its logs expose limit telemetry.
+- **Retry-storm detector**: 3+ identical-size requests within 90s bursts -
+  silent auto-retries that re-pay the full context every attempt.
+- **Honest ranges**: every assumption-based estimate now reports lo-hi
+  bounds (documented in docs/ACCURACY.md); measured waste stays exact.
+- **Rate-limit timeline**: daily `used_percent` peaks charted in the HTML
+  summary and tabled in Markdown.
+- **`doctor`**: log-format drift check - % of unrecognized lines per source,
+  warns above 5%.
+- **`fix --all`** across every registered project; `init`/`fix` now keep a
+  `*.codeunlimited.bak` backup before modifying CLAUDE.md/AGENTS.md.
+- **`report --badge`** (SVG badge with reclaimable %) and
+  **`report --anonymize`** (hashed project names for public sharing).
+- Colored terminal output (TTY only); detector unit tests; CONTRIBUTING.md
+  and issue templates.
+
 ## 1.3.0 - 2026-09-03
 
 - **Styled HTML reports**: `report` now writes a self-contained

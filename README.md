@@ -2,6 +2,8 @@
 
 **Set up once — up to 50% more work from the same subscription limits.**
 
+![codeunlimited audit](docs/assets/terminal.svg)
+
 Measured on the author's own logs (71k requests, 113 days): ~52% of weekly
 Claude Code volume was reclaimable; every estimate is conservative and
 documented in [docs/ACCURACY.md](docs/ACCURACY.md).
@@ -25,6 +27,12 @@ your projects up so the same subscription produces more code.
   that re-pay for context instead of reading it back.
 - **Fat session starts** — unused MCP servers whose schemas are paid on every
   new session.
+- **Retry storms** — the same request re-sent in bursts (flaky tools, silent
+  auto-retries), each attempt dragging the full context.
+
+Plus a **limit forecast**: Codex logs expose `used_percent`, so the tool
+calibrates your window's capacity from your own data and answers "how many
+hours of work are left before the wall - and how much a fix moves it".
 
 Each finding is reported in **limit currency**: tokens reclaimed, % of your
 weekly volume, extra agent answers that fit into the same limit.
@@ -44,7 +52,12 @@ codeunlimited delta myproject/    # verified before/after since init's baseline
 codeunlimited report myproject/   # saved report (MD + styled HTML): findings + delta + trend
 codeunlimited report --all        # one summary across every project you've touched
 codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --apply)
+codeunlimited fix --all --apply   # same, across every project you've touched
+codeunlimited doctor              # parsers still understand your log formats?
 ```
+
+`report` extras: `--badge` writes an SVG "reclaimable %" badge for your
+README; `--anonymize` hashes project names so reports can be shared publicly.
 
 A Python reference implementation lives in `codeunlimited/` (same detectors;
 used as the prototyping sandbox): `pip install -e . && python -m codeunlimited audit`.

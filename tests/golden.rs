@@ -49,12 +49,16 @@ fn golden_end_to_end() {
     let c2 = &codex[1];
     assert_eq!((c2.unc_in, c2.cached_in, c2.out), (100, 1900, 100));
 
+    // --- Rate-limit series survives parsing; peak is picked correctly ---
+    let (_, series) = parsers::iter_codex_full(None);
+    assert_eq!(parsers::peak(&series), Some((42.0, 0)));
+
     // --- Detectors + reports run clean on the combined set ---
     let mut all = claude.clone();
     all.extend(codex.iter().cloned());
     let findings = detectors::run_all(&all);
-    assert_eq!(findings.len(), 4);
-    let text = report::render(&all, &findings);
+    assert_eq!(findings.len(), 5);
+    let text = report::render(&all, &findings, false);
     assert!(text.contains("CODEUNLIMITED"));
     assert!(text.contains("claude"));
     assert!(text.contains("codex"));

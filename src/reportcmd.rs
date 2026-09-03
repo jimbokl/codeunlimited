@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::detectors::{self, Finding};
 use crate::types::Request;
-use crate::{deltacmd, html, metrics, parsers, registry};
+use crate::{deltacmd, forecast, html, metrics, parsers, registry};
 
 pub const HISTORY_FILE: &str = ".codeunlimited.history.jsonl";
 pub const REPORT_FILE: &str = "CODEUNLIMITED_REPORT.md";
@@ -40,6 +40,8 @@ pub struct FindingView {
     pub detail: String,
     pub fix: String,
     pub tokens: u64,
+    pub lo: u64,
+    pub hi: u64,
     pub pct: f64,
     pub answers: f64,
 }
@@ -64,6 +66,10 @@ pub struct ReportData {
     pub project_deltas: Vec<ProjectDelta>,
     pub top_projects: Vec<(String, u64)>,
     pub history: Vec<Value>,
+    /// Limit-forecast lines (codex calibration + claude proxy ceiling).
+    pub forecast: Vec<String>,
+    /// Daily rate-limit peaks for the timeline: (date, used_percent).
+    pub limit_days: Vec<(String, f64)>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -115,6 +121,8 @@ pub fn collect(
             detail: f.detail.clone(),
             fix: f.fix.clone(),
             tokens: f.impact_tokens,
+            lo: f.impact_lo,
+            hi: f.impact_hi,
             pct: 100.0 * (f.impact_tokens as f64 / days * 7.0) / weekly.max(1.0),
             answers: f.impact_tokens as f64
                 * (out_total as f64 / (total - out_total).max(1) as f64)
@@ -143,6 +151,8 @@ pub fn collect(
         project_deltas,
         top_projects,
         history,
+        forecast: vec![],
+        limit_days: vec![],
     }
 }
 
@@ -212,8 +222,17 @@ pub fn build_markdown(d: &ReportData) -> String {
         l.push(String::new());
         l.push(f.detail.clone());
         l.push(String::new());
+        let range = if f.lo != f.hi {
+            format!(
+                " (range {:.0}-{:.0}M)",
+                f.lo as f64 / 1e6,
+                f.hi as f64 / 1e6
+            )
+        } else {
+            String::new()
+        };
         l.push(format!(
-            "**Reclaim:** ~{:.0}M tokens (~{:.0} extra agent replies).",
+            "**Reclaim:** ~{:.0}M tokens{range} (~{:.0} extra agent replies).",
             f.tokens as f64 / 1e6,
             f.answers
         ));
@@ -231,6 +250,26 @@ pub fn build_markdown(d: &ReportData) -> String {
             d.reclaim as f64 / 1e6,
             d.reclaim_pct
         ));
+        l.push(String::new());
+    }
+
+    if !d.forecast.is_empty() {
+        l.push("## Limit forecast".into());
+        l.push(String::new());
+        for f in &d.forecast {
+            l.push(format!("- {f}"));
+        }
+        l.push(String::new());
+    }
+
+    if !d.limit_days.is_empty() {
+        l.push("## Rate-limit peaks (codex, daily max)".into());
+        l.push(String::new());
+        l.push("| date | window used |".into());
+        l.push("|---|---:|".into());
+        for (date, pct) in &d.limit_days {
+            l.push(format!("| {date} | {pct:.0}% |"));
+        }
         l.push(String::new());
     }
 
@@ -348,6 +387,55 @@ fn strip_verbatim(s: &str) -> &str {
     s.strip_prefix(r"\\?\").unwrap_or(s)
 }
 
+/// FNV-1a hash of a project name - lets reports be shared publicly.
+fn anon(name: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("proj-{:08x}", (h >> 32) as u32)
+}
+
+fn anonymize(data: &mut ReportData) {
+    if data.name != "all projects" {
+        data.name = anon(&data.name);
+    }
+    for (p, _) in &mut data.top_projects {
+        *p = match p.split_once(':') {
+            Some((src, rest)) => format!("{src}:{}", anon(rest)),
+            None => anon(p),
+        };
+    }
+    for pd in &mut data.project_deltas {
+        pd.project = anon(&pd.project);
+    }
+}
+
+fn write_badge(md_path: &Path, pct: f64) {
+    let value = format!("~{pct:.0}% of weekly limit");
+    let vw = 10 + value.len() * 7;
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="20" role="img" aria-label="codeunlimited: {value}">
+<rect width="102" height="20" rx="3" fill="#555"/>
+<rect x="102" width="{vw}" height="20" rx="3" fill="#2ea44f"/>
+<rect x="99" width="6" height="20" fill="#2ea44f"/>
+<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+<text x="51" y="14">codeunlimited</text>
+<text x="{vx}" y="14">{value}</text>
+</g>
+</svg>
+"##,
+        w = 102 + vw,
+        vx = 102 + vw / 2,
+    );
+    let path = md_path.with_file_name("CODEUNLIMITED_BADGE.svg");
+    if std::fs::write(&path, svg).is_ok() {
+        let p = path.to_string_lossy();
+        println!("          Badge: {}", strip_verbatim(&p));
+    }
+}
+
 fn deltas_for(root: &Path, reqs: &[Request]) -> Vec<DeltaInfo> {
     let Some((created, baselines)) = deltacmd::load_baseline(root) else {
         return vec![];
@@ -407,7 +495,7 @@ fn append_history(
         .collect()
 }
 
-fn write_pair(md_path: &Path, data: &ReportData) -> i32 {
+fn write_pair(md_path: &Path, data: &ReportData, badge: bool) -> i32 {
     if let Err(e) = std::fs::write(md_path, build_markdown(data)) {
         eprintln!("Cannot write {}: {e}", md_path.display());
         return 1;
@@ -424,10 +512,13 @@ fn write_pair(md_path: &Path, data: &ReportData) -> i32 {
         "           HTML: {}  (open in a browser)",
         strip_verbatim(&ht)
     );
+    if badge {
+        write_badge(md_path, data.reclaim_pct);
+    }
     0
 }
 
-pub fn run(path: &Path, out: Option<&Path>) -> i32 {
+pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     let root = match path.canonicalize() {
         Ok(p) if p.is_dir() => p,
         _ => {
@@ -463,7 +554,7 @@ pub fn run(path: &Path, out: Option<&Path>) -> i32 {
         HISTORY_FILE
     );
 
-    let data = collect(
+    let mut data = collect(
         &name,
         &reqs,
         &findings,
@@ -473,15 +564,19 @@ pub fn run(path: &Path, out: Option<&Path>) -> i32 {
         history,
         &now.date_naive().to_string(),
     );
+    if anon_flag {
+        anonymize(&mut data);
+    }
     let md_path = out
         .map(Path::to_path_buf)
         .unwrap_or_else(|| root.join(REPORT_FILE));
-    write_pair(&md_path, &data)
+    write_pair(&md_path, &data, badge)
 }
 
-pub fn run_all(out: Option<&Path>) -> i32 {
+pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     let mut reqs = parsers::iter_claude(None);
-    reqs.extend(parsers::iter_codex(None));
+    let (codex, series) = parsers::iter_codex_full(None);
+    reqs.extend(codex);
     if reqs.is_empty() {
         eprintln!("No local Claude Code / Codex logs found.");
         return 1;
@@ -530,7 +625,7 @@ pub fn run_all(out: Option<&Path>) -> i32 {
         registry::home_dir().join("history.jsonl").display()
     );
 
-    let data = collect(
+    let mut data = collect(
         "all projects",
         &reqs,
         &findings,
@@ -540,8 +635,24 @@ pub fn run_all(out: Option<&Path>) -> i32 {
         history,
         &now.date_naive().to_string(),
     );
+    data.forecast = forecast::forecast(&reqs, &series);
+    data.limit_days = forecast::daily_peaks(&series)
+        .into_iter()
+        .rev()
+        .take(21)
+        .rev()
+        .map(|(day, pct)| {
+            let date = chrono::DateTime::from_timestamp(day, 0)
+                .map(|d| d.date_naive().to_string())
+                .unwrap_or_else(|| "?".into());
+            (date, pct)
+        })
+        .collect();
+    if anon_flag {
+        anonymize(&mut data);
+    }
     let md_path = out
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(SUMMARY_FILE));
-    write_pair(&md_path, &data)
+    write_pair(&md_path, &data, badge)
 }

@@ -130,7 +130,7 @@ pub fn build_html(d: &ReportData) -> String {
             "<div class=\"finding\"><h3>{}. {}</h3>\
              <div class=\"meter\"><i style=\"width:{:.0}%\"></i></div>\
              <p>{}</p>\
-             <p class=\"reclaim\">Reclaim: ~{:.0}M tokens · {:.0}% of weekly volume · \
+             <p class=\"reclaim\">Reclaim: ~{:.0}M tokens{} · {:.0}% of weekly volume · \
              ~{:.0} extra agent replies</p>\
              <p class=\"fix\"><b>Fix:</b> {}</p></div>\n",
             i + 1,
@@ -138,6 +138,15 @@ pub fn build_html(d: &ReportData) -> String {
             f.pct.min(100.0),
             esc(&f.detail),
             f.tokens as f64 / 1e6,
+            if f.lo != f.hi {
+                format!(
+                    " (range {:.0}–{:.0}M)",
+                    f.lo as f64 / 1e6,
+                    f.hi as f64 / 1e6
+                )
+            } else {
+                String::new()
+            },
             f.pct,
             f.answers,
             esc(&f.fix)
@@ -152,6 +161,34 @@ pub fn build_html(d: &ReportData) -> String {
             d.reclaim as f64 / 1e6,
             d.reclaim_pct
         ));
+    }
+
+    // Limit forecast
+    if !d.forecast.is_empty() {
+        b.push_str("<h2>Limit forecast</h2>\n");
+        for f in &d.forecast {
+            b.push_str(&format!("<div class=\"finding\"><p>{}</p></div>\n", esc(f)));
+        }
+    }
+
+    // Rate-limit timeline (codex daily peaks)
+    if !d.limit_days.is_empty() {
+        b.push_str("<h2>Rate limit - daily peak of the codex window</h2>\n");
+        for (date, pct) in &d.limit_days {
+            let danger = if *pct >= 90.0 {
+                ";background:var(--bad)"
+            } else {
+                ""
+            };
+            b.push_str(&format!(
+                "<div class=\"trend-row\"><span class=\"date\">{}</span>\
+                 <div class=\"tbar\" style=\"width:{:.1}%{danger}\"></div>\
+                 <span class=\"val\">{:.0}%</span></div>\n",
+                esc(date),
+                pct.min(100.0),
+                pct
+            ));
+        }
     }
 
     // Top projects (summary mode)

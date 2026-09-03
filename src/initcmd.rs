@@ -50,8 +50,14 @@ fn append_block(path: &Path, block: &str) -> &'static str {
         if text.contains(MARKER) {
             return "already set up";
         }
+        // Backup before the first modification - cheap insurance.
+        let bak = path.with_file_name(format!(
+            "{}.codeunlimited.bak",
+            path.file_name().and_then(|s| s.to_str()).unwrap_or("file")
+        ));
+        let _ = std::fs::write(&bak, &text);
         let _ = std::fs::write(path, format!("{}\n\n{}", text.trim_end(), block));
-        "updated"
+        "updated (backup kept as *.codeunlimited.bak)"
     } else {
         let _ = std::fs::write(path, block);
         "created"

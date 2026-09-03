@@ -2,7 +2,9 @@
 
 pub mod deltacmd;
 pub mod detectors;
+pub mod doctor;
 pub mod fixcmd;
+pub mod forecast;
 pub mod html;
 pub mod initcmd;
 pub mod metrics;

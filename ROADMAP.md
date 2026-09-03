@@ -61,6 +61,17 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 - [ ] Launch day (owner decisions: cargo token, date): public flip +
       crates.io publish + posts, all at once.
 
+## Sprint v1.4 (2026-09) — measurement depth [SHIPPED]
+
+- [x] Limit forecast (Codex capacity calibration + Claude proxy ceiling).
+- [x] Retry-storm detector (token-count heuristics only).
+- [x] Honest lo-hi ranges on every assumption-based estimate.
+- [x] Rate-limit timeline (daily peaks) in HTML/MD summaries.
+- [x] `doctor` - log-format drift early warning.
+- [x] `fix --all`, backups before writes, `report --badge`, `--anonymize`.
+- [x] Colored TTY output, detector unit tests, CONTRIBUTING + templates,
+      README terminal mockup.
+
 ## v0.4 — the fix engine
 
 - [ ] `codeunlimited fix`: generated diffs, applied only on user approval —

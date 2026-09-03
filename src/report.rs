@@ -50,6 +50,8 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
         "findings": findings.iter().filter(|f| f.impact_tokens > 0).map(|f| serde_json::json!({
             "title": f.title,
             "impact_tokens": f.impact_tokens,
+            "impact_lo": f.impact_lo,
+            "impact_hi": f.impact_hi,
             "detail": f.detail,
             "fix": f.fix,
         })).collect::<Vec<_>>(),
@@ -60,7 +62,12 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
     serde_json::to_string_pretty(&obj).unwrap_or_default()
 }
 
-pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
+pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
+    let (bold, green, yellow, dim, off) = if color {
+        ("\x1b[1m", "\x1b[32m", "\x1b[33m", "\x1b[2m", "\x1b[0m")
+    } else {
+        ("", "", "", "", "")
+    };
     if reqs.is_empty() {
         return "No data: no Claude Code logs (~/.claude/projects) or Codex logs \
                 (~/.codex/sessions) found."
@@ -94,9 +101,11 @@ pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
     let avg_out = out_total as f64 / reqs.len() as f64;
 
     let mut l: Vec<String> = Vec::new();
-    l.push(BAR.into());
-    l.push(" CODEUNLIMITED - more code out of the limits you already pay for".into());
-    l.push(BAR.into());
+    l.push(format!("{green}{BAR}{off}"));
+    l.push(format!(
+        "{green}{bold} CODEUNLIMITED{off} - more code out of the limits you already pay for"
+    ));
+    l.push(format!("{green}{BAR}{off}"));
     if tmin < tmax {
         let d0 = chrono::DateTime::from_timestamp(tmin, 0)
             .unwrap()
@@ -132,27 +141,36 @@ pub fn render(reqs: &[Request], findings: &[Finding]) -> String {
             * (out_total as f64 / (total_tokens - out_total).max(1) as f64)
             / avg_out.max(1.0);
         reclaimed += f.impact_tokens;
-        l.push(format!(" {}. {}", i, f.title));
+        l.push(format!(" {yellow}{bold}{}. {}{off}", i, f.title));
         l.push(format!("    {}", f.detail));
+        let range = if f.impact_lo != f.impact_hi {
+            format!(
+                " [range {:.0}-{:.0}M]",
+                f.impact_lo as f64 / 1e6,
+                f.impact_hi as f64 / 1e6
+            )
+        } else {
+            String::new()
+        };
         l.push(format!(
-            "    Reclaim: ~{:.0}M tok. (~{:.0}% of weekly volume, ~{:.0} extra agent replies)",
+            "    Reclaim: ~{:.0}M tok.{range} (~{:.0}% of weekly volume, ~{:.0} extra agent replies)",
             f.impact_tokens as f64 / 1e6,
             pct,
             answers
         ));
-        l.push(format!("    Fix: {}", f.fix));
+        l.push(format!("    {dim}Fix: {}{off}", f.fix));
         l.push(String::new());
     }
 
     let pct_all = 100.0 * (reclaimed as f64 / days * 7.0) / weekly.max(1.0);
-    l.push(BAR.into());
+    l.push(format!("{green}{BAR}{off}"));
     l.push(format!(
-        " TOTAL reclaimable: ~{:.0}M tokens ~ {:.0}% of weekly volume - that much more \
-         work fits into the same limit.",
+        " {green}{bold}TOTAL reclaimable: ~{:.0}M tokens ~ {:.0}% of weekly volume{off} - \
+         that much more work fits into the same limit.",
         reclaimed as f64 / 1e6,
         pct_all
     ));
-    l.push(BAR.into());
+    l.push(format!("{green}{BAR}{off}"));
     l.push(" Top projects by volume:".into());
     let mut projects: Vec<_> = per_proj.into_iter().collect();
     projects.sort_by_key(|(_, t)| std::cmp::Reverse(*t));

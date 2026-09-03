@@ -1,5 +1,8 @@
-use codeunlimited::{deltacmd, detectors, fixcmd, initcmd, parsers, report, reportcmd};
+use codeunlimited::{
+    deltacmd, detectors, doctor, fixcmd, forecast, initcmd, parsers, report, reportcmd,
+};
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -61,6 +64,12 @@ enum Cmd {
         /// Summary across every project seen by init/fix/report, plus global trend
         #[arg(long)]
         all: bool,
+        /// Also write CODEUNLIMITED_BADGE.svg (reclaimable % as a README badge)
+        #[arg(long)]
+        badge: bool,
+        /// Hash project names so the report can be shared publicly
+        #[arg(long)]
+        anonymize: bool,
     },
     /// Turn audit findings into concrete project changes (dry-run by default)
     Fix {
@@ -69,7 +78,12 @@ enum Cmd {
         /// Actually write the changes (default is a dry run)
         #[arg(long)]
         apply: bool,
+        /// Run over every registered project instead of one path
+        #[arg(long)]
+        all: bool,
     },
+    /// Check that the parsers still understand your local log formats
+    Doctor,
 }
 
 fn main() {
@@ -83,18 +97,19 @@ fn main() {
         } => {
             let p = project.as_deref();
             let mut reqs = Vec::new();
-            let mut peak: parsers::LimitPeak = None;
+            let mut series: parsers::LimitSeries = Vec::new();
             if matches!(source, Source::All | Source::Claude) {
                 reqs.extend(parsers::iter_claude(p));
             }
             if matches!(source, Source::All | Source::Codex) {
-                let (cx, pk) = parsers::iter_codex_full(p);
+                let (cx, s) = parsers::iter_codex_full(p);
                 reqs.extend(cx);
-                peak = pk;
+                series = s;
             }
             if let Some(n) = days {
                 let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
                 reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
+                series.retain(|&(t, _, _)| t >= cutoff);
             }
             let findings = detectors::run_all(&reqs);
             if json {
@@ -103,14 +118,18 @@ fn main() {
                 if let Some(p) = p {
                     println!("[scope: {}]", p.display());
                 }
-                println!("{}", report::render(&reqs, &findings));
-                if let Some((used, win)) = peak {
+                let color = std::io::stdout().is_terminal();
+                println!("{}", report::render(&reqs, &findings, color));
+                if let Some((used, win)) = parsers::peak(&series) {
                     println!(
                         " Codex rate limit: peak {:.0}% of the {:.0}-day window observed - \
                          every token below funds more work.",
                         used,
                         win as f64 / 1440.0
                     );
+                }
+                for line in forecast::forecast(&reqs, &series) {
+                    println!(" Forecast: {line}");
                 }
             }
         }
@@ -120,15 +139,28 @@ fn main() {
         Cmd::Delta { path } => {
             std::process::exit(deltacmd::run(&path));
         }
-        Cmd::Report { path, out, all } => {
+        Cmd::Report {
+            path,
+            out,
+            all,
+            badge,
+            anonymize,
+        } => {
             std::process::exit(if all {
-                reportcmd::run_all(out.as_deref())
+                reportcmd::run_all(out.as_deref(), badge, anonymize)
             } else {
-                reportcmd::run(&path, out.as_deref())
+                reportcmd::run(&path, out.as_deref(), badge, anonymize)
             });
         }
-        Cmd::Fix { path, apply } => {
-            std::process::exit(fixcmd::run(&path, apply));
+        Cmd::Fix { path, apply, all } => {
+            std::process::exit(if all {
+                fixcmd::run_all(apply)
+            } else {
+                fixcmd::run(&path, apply)
+            });
+        }
+        Cmd::Doctor => {
+            std::process::exit(doctor::run());
         }
     }
 }
