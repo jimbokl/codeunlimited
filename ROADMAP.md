@@ -1,5 +1,7 @@
 # Roadmap to production
 
+Committed work only; the full idea pool lives in [BACKLOG.md](BACKLOG.md).
+
 Mission: **more code out of the subscription limits you already pay for.**
 v0.1 (Python) is the validated reference implementation — the detector logic
 was proven on 71k real requests before a line of product code was written.
