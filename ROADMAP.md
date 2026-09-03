@@ -72,6 +72,13 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 - [x] Colored TTY output, detector unit tests, CONTRIBUTING + templates,
       README terminal mockup.
 
+## Sprint v1.5 (2026-09) — rituals & reach [SHIPPED]
+
+- [x] Claude Code skill (`codeunlimited skill` -> `/codeunlimited`).
+- [x] `schedule` - weekly report --all (Task Scheduler / cron line).
+- [x] `compare` - period vs previous, leak-share verdict.
+- [x] `.codeunlimited.toml` - thresholds + ignore_projects.
+
 ## v0.4 — the fix engine
 
 - [ ] `codeunlimited fix`: generated diffs, applied only on user approval —

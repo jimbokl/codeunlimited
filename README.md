@@ -54,7 +54,14 @@ codeunlimited report --all        # one summary across every project you've touc
 codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --apply)
 codeunlimited fix --all --apply   # same, across every project you've touched
 codeunlimited doctor              # parsers still understand your log formats?
+codeunlimited compare             # last 7 days vs the 7 before
+codeunlimited schedule            # weekly summary, hands-free
+codeunlimited skill               # /codeunlimited inside Claude Code sessions
 ```
+
+Thresholds and ignored projects are tunable via `.codeunlimited.toml`
+(project root or `~/.codeunlimited/config.toml`) — see the header of
+[src/config.rs](src/config.rs) for the format.
 
 `report` extras: `--badge` writes an SVG "reclaimable %" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.

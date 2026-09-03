@@ -9,16 +9,15 @@ use std::path::Path;
 use crate::types::Request;
 use crate::{initcmd, parsers};
 
-const LONG_SESSION: usize = 30;
-const FAT_START: u64 = 25_000;
 pub const STATE_SCAFFOLD: &str = "state/state.json";
 
 fn long_sessions(reqs: &[Request]) -> usize {
+    let long = crate::config::get().long_session_turns;
     let mut by: HashMap<(&str, &str), usize> = HashMap::new();
     for r in reqs {
         *by.entry((r.source, r.session.as_str())).or_default() += 1;
     }
-    by.values().filter(|&&n| n > LONG_SESSION).count()
+    by.values().filter(|&&n| n > long).count()
 }
 
 /// Median cache-write size of the first request of each claude session -
@@ -116,8 +115,9 @@ pub fn run(path: &Path, apply: bool) -> i32 {
     if long > 0 && !state.exists() {
         n += 1;
         println!(
-            " {n}. [state] {long} session(s) ran past {LONG_SESSION} turns and no \
-             {STATE_SCAFFOLD} scaffold exists"
+            " {n}. [state] {long} session(s) ran past {} turns and no \
+             {STATE_SCAFFOLD} scaffold exists",
+            crate::config::get().long_session_turns
         );
         if apply {
             let ok = std::fs::create_dir_all(state.parent().unwrap()).and_then(|_| {
@@ -140,7 +140,7 @@ pub fn run(path: &Path, apply: bool) -> i32 {
 
     // 3. Fat session starts: suggested only - MCP config is never auto-edited.
     let start = median_session_start(&reqs);
-    if start > FAT_START {
+    if start > crate::config::get().fat_start_tokens {
         n += 1;
         println!(
             " {n}. [mcp]   median session start writes {}k tokens of context before any work",

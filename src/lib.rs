@@ -1,5 +1,7 @@
 //! codeunlimited - more code out of the subscription limits you already pay for.
 
+pub mod comparecmd;
+pub mod config;
 pub mod deltacmd;
 pub mod detectors;
 pub mod doctor;
@@ -12,4 +14,6 @@ pub mod parsers;
 pub mod registry;
 pub mod report;
 pub mod reportcmd;
+pub mod schedule;
+pub mod skillcmd;
 pub mod types;

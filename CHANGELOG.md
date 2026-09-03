@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.0 - 2026-09-03
+
+- **Claude Code skill**: `codeunlimited skill` installs `/codeunlimited` -
+  the audit -> fix -> report flow from inside a session.
+- **`schedule`**: weekly `report --all` without thinking about it
+  (Windows Task Scheduler entry; cron line printed elsewhere).
+- **`compare`**: last N days vs the N before, anchored at your last
+  activity - verdict based on leak share of volume.
+- **`.codeunlimited.toml`**: detector thresholds (long_session_turns,
+  trivial_output_tokens, fat_start_tokens) and ignore_projects; project
+  file first, then `~/.codeunlimited/config.toml`.
+
 ## 1.4.0 - 2026-09-03
 
 - **Limit forecast**: Codex `used_percent` telemetry calibrates your

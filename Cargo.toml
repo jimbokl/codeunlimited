@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
 description = "Set up once - up to 50% more work from the same Claude Code & Codex CLI limits. Offline token-leak audit, one-command fixes, verified savings."
 license = "MIT"
@@ -16,6 +16,7 @@ rayon = "1"
 walkdir = "2"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+toml = "0.8"
 
 [profile.release]
 lto = true

@@ -1,5 +1,6 @@
 use codeunlimited::{
-    deltacmd, detectors, doctor, fixcmd, forecast, initcmd, parsers, report, reportcmd,
+    comparecmd, config, deltacmd, detectors, doctor, fixcmd, forecast, initcmd, parsers, report,
+    reportcmd, schedule, skillcmd,
 };
 
 use std::io::IsTerminal;
@@ -84,6 +85,20 @@ enum Cmd {
     },
     /// Check that the parsers still understand your local log formats
     Doctor,
+    /// This period vs the previous one: is the limit spent better or worse?
+    Compare {
+        /// Window size in days (compares last N days vs the N before)
+        #[arg(long, default_value = "7")]
+        days: u64,
+    },
+    /// Install a weekly `report --all` task (Windows Task Scheduler / cron line)
+    Schedule {
+        /// Remove the scheduled task instead of creating it
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Install the Claude Code skill (/codeunlimited inside a session)
+    Skill,
 }
 
 fn main() {
@@ -106,6 +121,7 @@ fn main() {
                 reqs.extend(cx);
                 series = s;
             }
+            reqs.retain(|r| !config::ignored(&r.project));
             if let Some(n) = days {
                 let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
                 reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
@@ -161,6 +177,15 @@ fn main() {
         }
         Cmd::Doctor => {
             std::process::exit(doctor::run());
+        }
+        Cmd::Compare { days } => {
+            std::process::exit(comparecmd::run(days.max(1)));
+        }
+        Cmd::Schedule { remove } => {
+            std::process::exit(schedule::run(remove));
+        }
+        Cmd::Skill => {
+            std::process::exit(skillcmd::run());
         }
     }
 }

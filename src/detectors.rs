@@ -5,9 +5,14 @@ use std::collections::HashMap;
 use crate::types::Request;
 
 const HEAVY: [&str; 3] = ["fable", "mythos", "opus"];
-const TRIVIAL_OUT: u64 = 300;
-const LONG_SESSION: usize = 30;
 const EARLY_N: usize = 5;
+
+fn trivial_out() -> u64 {
+    crate::config::get().trivial_output_tokens
+}
+fn long_session() -> usize {
+    crate::config::get().long_session_turns
+}
 
 pub struct Finding {
     pub title: String,
@@ -39,7 +44,7 @@ fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
     let mut n = 0u64;
     let mut toks = 0u64;
     for r in reqs {
-        if r.out > 0 && r.out < TRIVIAL_OUT && HEAVY.iter().any(|h| r.model.contains(h)) {
+        if r.out > 0 && r.out < trivial_out() && HEAVY.iter().any(|h| r.model.contains(h)) {
             n += 1;
             toks += r.prompt_total();
         }
@@ -53,7 +58,7 @@ fn heavy_model_on_trivial(reqs: &[Request]) -> Finding {
             "{} requests to top-tier models ended in a reply shorter than {} tokens \
              while dragging {:.0}M tokens of context.",
             n,
-            TRIVIAL_OUT,
+            trivial_out(),
             toks as f64 / 1e6
         ),
         fix: "Delegate mechanical work (renames, repetitive edits, status checks) to \
@@ -67,14 +72,15 @@ fn context_tax(reqs: &[Request]) -> Finding {
     let mut excess = 0f64;
     let mut hit = 0u64;
     let mut growth = Vec::new();
+    let long = long_session();
     for rows in sessions(reqs) {
-        if rows.len() < LONG_SESSION {
+        if rows.len() < long {
             continue;
         }
         let early = &rows[..EARLY_N.min(rows.len())];
         let early_avg =
             early.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / early.len() as f64;
-        let late = &rows[LONG_SESSION..];
+        let late = &rows[long..];
         let e: f64 = late
             .iter()
             .map(|r| (r.prompt_total() as f64 - early_avg).max(0.0))
@@ -102,7 +108,9 @@ fn context_tax(reqs: &[Request]) -> Finding {
         detail: format!(
             "{} sessions ran past {} turns; by the tail of a session each turn costs \
              on average x{:.1} of an early turn.",
-            hit, LONG_SESSION, g
+            hit,
+            long_session(),
+            g
         ),
         fix: "New task = new session (/clear). For long repetitive loops keep a compact \
               state file instead of conversation history (SKILL.state pattern, \
@@ -165,8 +173,9 @@ fn heavy_session_start(reqs: &[Request]) -> Finding {
         .filter(|w| *w > 0)
         .collect();
     firsts.sort_unstable();
+    let fat = crate::config::get().fat_start_tokens;
     let med = firsts.get(firsts.len() / 2).copied().unwrap_or(0);
-    let over: u64 = firsts.iter().map(|w| w.saturating_sub(25_000)).sum();
+    let over: u64 = firsts.iter().map(|w| w.saturating_sub(fat)).sum();
     Finding {
         title: "Fat session starts (tool/MCP schemas in the system prompt)".into(),
         impact_tokens: over / 2,
@@ -174,8 +183,9 @@ fn heavy_session_start(reqs: &[Request]) -> Finding {
         impact_hi: over * 3 / 4,
         detail: format!(
             "The median first request of a session writes {:.0}k tokens of context; \
-             anything above ~25k is usually schemas of unused MCP servers and tools.",
-            med as f64 / 1000.0
+             anything above ~{}k is usually schemas of unused MCP servers and tools.",
+            med as f64 / 1000.0,
+            fat / 1000
         ),
         fix: "Disable unused MCP servers per project (.mcp.json / `claude mcp remove`) \
               - their schemas are paid out of your limit on every new session."

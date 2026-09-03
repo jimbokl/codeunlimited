@@ -577,6 +577,7 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     let mut reqs = parsers::iter_claude(None);
     let (codex, series) = parsers::iter_codex_full(None);
     reqs.extend(codex);
+    reqs.retain(|r| !crate::config::ignored(&r.project));
     if reqs.is_empty() {
         eprintln!("No local Claude Code / Codex logs found.");
         return 1;
