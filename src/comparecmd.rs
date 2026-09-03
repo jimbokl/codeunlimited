@@ -21,16 +21,15 @@ struct Side {
 }
 
 fn side(reqs: &[Request], cfg: &config::Config) -> Side {
-    let m = metrics::compute(reqs);
+    let m = metrics::compute(reqs, cfg.long_session_turns);
     Side {
-        volume: reqs.iter().map(|r| r.total()).sum(),
+        volume: reqs
+            .iter()
+            .fold(0u64, |total, request| total.saturating_add(request.total())),
         requests: m.requests,
         avg_prompt: m.avg_prompt_per_turn,
         growth: m.context_growth,
-        reclaim: detectors::run_all(reqs, cfg)
-            .iter()
-            .map(|f| f.impact_tokens)
-            .sum(),
+        reclaim: detectors::reclaim_total(&detectors::run_all(reqs, cfg)),
     }
 }
 

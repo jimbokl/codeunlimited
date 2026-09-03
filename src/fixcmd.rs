@@ -33,7 +33,10 @@ fn median_session_start(reqs: &[Request]) -> u64 {
             })
             .or_insert(r);
     }
-    let mut starts: Vec<u64> = by.values().map(|r| r.w5 + r.w1h).collect();
+    let mut starts: Vec<u64> = by
+        .values()
+        .map(|request| request.w5.saturating_add(request.w1h))
+        .collect();
     if starts.is_empty() {
         return 0;
     }

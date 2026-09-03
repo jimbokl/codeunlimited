@@ -103,6 +103,7 @@ pub fn run(path: &Path) -> i32 {
             return 1;
         }
     };
+    let cfg = crate::config::Config::load_for(Some(&root));
     let Some((created, baselines)) = load_baseline(&root) else {
         eprintln!(
             "No baseline found ({}). Run `codeunlimited init` first - it captures \
@@ -123,7 +124,7 @@ pub fn run(path: &Path) -> i32 {
             continue;
         }
         any = true;
-        print_source(b, &metrics::compute(&reqs));
+        print_source(b, &metrics::compute(&reqs, cfg.long_session_turns));
     }
     if !any {
         println!(

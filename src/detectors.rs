@@ -8,7 +8,17 @@ use crate::types::Request;
 const HEAVY: [&str; 3] = ["fable", "mythos", "opus"];
 const EARLY_N: usize = 5;
 
+#[derive(Debug, Clone, Copy)]
+pub struct ImpactClaim {
+    pub request_index: usize,
+    pub mid: u64,
+    pub lo: u64,
+    pub hi: u64,
+}
+
 pub struct Finding {
+    /// Stable machine-readable identifier.
+    pub key: &'static str,
     pub title: String,
     /// Mid estimate - what the reports headline.
     pub impact_tokens: u64,
@@ -18,230 +28,331 @@ pub struct Finding {
     pub impact_hi: u64,
     pub detail: String,
     pub fix: String,
+    /// Per-request estimates allow report totals to form a conservative union
+    /// instead of counting the same token under multiple detectors.
+    pub claims: Vec<ImpactClaim>,
 }
 
-fn sessions(reqs: &[Request]) -> Vec<Vec<&Request>> {
-    let mut by: HashMap<(&str, &str, &str), Vec<&Request>> = HashMap::new();
-    for r in reqs {
-        by.entry((r.source, &r.project, &r.session))
-            .or_default()
-            .push(r);
+fn sum_claims(claims: &[ImpactClaim], pick: impl Fn(&ImpactClaim) -> u64) -> u64 {
+    claims
+        .iter()
+        .fold(0, |total, claim| total.saturating_add(pick(claim)))
+}
+
+fn finding(
+    key: &'static str,
+    title: &str,
+    claims: Vec<ImpactClaim>,
+    detail: String,
+    fix: &str,
+) -> Finding {
+    Finding {
+        key,
+        title: title.into(),
+        impact_tokens: sum_claims(&claims, |claim| claim.mid),
+        impact_lo: sum_claims(&claims, |claim| claim.lo),
+        impact_hi: sum_claims(&claims, |claim| claim.hi),
+        detail,
+        fix: fix.into(),
+        claims,
     }
-    let mut out: Vec<Vec<&Request>> = by.into_values().collect();
+}
+
+fn portion(amount: u64, percent: u64) -> u64 {
+    ((amount as u128 * percent as u128) / 100).min(u64::MAX as u128) as u64
+}
+
+fn estimated_claim(
+    request_index: usize,
+    amount: u64,
+    mid_percent: u64,
+    lo_percent: u64,
+    hi_percent: u64,
+) -> ImpactClaim {
+    ImpactClaim {
+        request_index,
+        mid: portion(amount, mid_percent),
+        lo: portion(amount, lo_percent),
+        hi: portion(amount, hi_percent),
+    }
+}
+
+fn sessions(reqs: &[Request]) -> Vec<Vec<usize>> {
+    let mut by: HashMap<(&str, &str, &str), Vec<usize>> = HashMap::new();
+    for (index, request) in reqs.iter().enumerate() {
+        by.entry((
+            request.source,
+            request.project.as_str(),
+            request.session.as_str(),
+        ))
+        .or_default()
+        .push(index);
+    }
+    let mut out: Vec<Vec<usize>> = by.into_values().collect();
     for rows in &mut out {
-        rows.sort_by_key(|r| (r.ts.is_none(), r.ts));
+        rows.sort_by_key(|index| {
+            let request = &reqs[*index];
+            (request.ts.is_none(), request.ts)
+        });
     }
     out
 }
 
 fn heavy_model_on_trivial(reqs: &[Request], cfg: &Config) -> Finding {
-    let mut n = 0u64;
-    let mut toks = 0u64;
-    for r in reqs {
-        if r.out > 0
-            && r.out < cfg.trivial_output_tokens
-            && HEAVY.iter().any(|h| r.model.contains(h))
+    let mut claims = Vec::new();
+    let mut count = 0u64;
+    let mut tokens = 0u64;
+    for (index, request) in reqs.iter().enumerate() {
+        if request.out > 0
+            && request.out < cfg.trivial_output_tokens
+            && HEAVY.iter().any(|heavy| request.model.contains(heavy))
         {
-            n += 1;
-            toks += r.prompt_total();
+            let amount = request.prompt_total();
+            count = count.saturating_add(1);
+            tokens = tokens.saturating_add(amount);
+            claims.push(estimated_claim(index, amount, 50, 25, 75));
         }
     }
-    Finding {
-        title: "Top-tier model burned on mechanical replies".into(),
-        impact_tokens: toks / 2, // conservative: half realistically delegable
-        impact_lo: toks / 4,
-        impact_hi: toks * 3 / 4,
-        detail: format!(
+    finding(
+        "heavy_model_trivial_output",
+        "Top-tier model burned on mechanical replies",
+        claims,
+        format!(
             "{} requests to top-tier models ended in a reply shorter than {} tokens \
              while dragging {:.0}M tokens of context.",
-            n,
+            count,
             cfg.trivial_output_tokens,
-            toks as f64 / 1e6
+            tokens as f64 / 1e6
         ),
-        fix: "Delegate mechanical work (renames, repetitive edits, status checks) to \
-              subagents on a light model / low effort: add a delegation rule to \
-              CLAUDE.md; in Claude Code use Task with model: haiku."
-            .into(),
-    }
+        "Delegate mechanical work (renames, repetitive edits, status checks) to \
+         subagents on a light model / low effort: add a delegation rule to \
+         CLAUDE.md; in Claude Code use Task with model: haiku.",
+    )
 }
 
 fn context_tax(reqs: &[Request], cfg: &Config) -> Finding {
-    let mut excess = 0f64;
+    let mut claims = Vec::new();
     let mut hit = 0u64;
     let mut growth = Vec::new();
     let long = cfg.long_session_turns;
     for rows in sessions(reqs) {
-        if rows.len() < long {
+        if rows.len() <= long {
             continue;
         }
         let early = &rows[..EARLY_N.min(rows.len())];
-        let early_avg =
-            early.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / early.len() as f64;
-        let late = &rows[long..];
-        let e: f64 = late
+        let early_avg = early
             .iter()
-            .map(|r| (r.prompt_total() as f64 - early_avg).max(0.0))
-            .sum();
-        if e > 0.0 {
-            hit += 1;
-            excess += e;
-            let late_avg =
-                late.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / late.len() as f64;
+            .map(|index| reqs[*index].prompt_total() as f64)
+            .sum::<f64>()
+            / early.len() as f64;
+        let late = &rows[long..];
+        let mut session_excess = 0u64;
+        for index in late {
+            let excess = (reqs[*index].prompt_total() as f64 - early_avg).max(0.0) as u64;
+            session_excess = session_excess.saturating_add(excess);
+            if excess > 0 {
+                claims.push(estimated_claim(*index, excess, 60, 40, 80));
+            }
+        }
+        if session_excess > 0 {
+            hit = hit.saturating_add(1);
+            let late_avg = late
+                .iter()
+                .map(|index| reqs[*index].prompt_total() as f64)
+                .sum::<f64>()
+                / late.len() as f64;
             if early_avg > 0.0 {
                 growth.push(late_avg / early_avg);
             }
         }
     }
-    let g = if growth.is_empty() {
+    let average_growth = if growth.is_empty() {
         0.0
     } else {
         growth.iter().sum::<f64>() / growth.len() as f64
     };
-    Finding {
-        title: "Context tax of long sessions".into(),
-        impact_tokens: (excess * 0.6) as u64, // conservative: part of context is needed
-        impact_lo: (excess * 0.4) as u64,
-        impact_hi: (excess * 0.8) as u64,
-        detail: format!(
+    finding(
+        "long_session_context_tax",
+        "Context tax of long sessions",
+        claims,
+        format!(
             "{} sessions ran past {} turns; by the tail of a session each turn costs \
              on average x{:.1} of an early turn.",
-            hit, cfg.long_session_turns, g
+            hit, cfg.long_session_turns, average_growth
         ),
-        fix: "New task = new session (/clear). For long repetitive loops keep a compact \
-              state file instead of conversation history (SKILL.state pattern, \
-              arXiv 2608.26263) - `codeunlimited init` adds the rule to CLAUDE.md."
-            .into(),
-    }
+        "New task = new session (/clear). For long repetitive loops keep a compact \
+         state file instead of conversation history (SKILL.state pattern, \
+         arXiv 2608.26263) - `codeunlimited init` adds the rule to CLAUDE.md.",
+    )
 }
 
 fn cache_rewrites(reqs: &[Request]) -> Finding {
-    let (mut brk, mut ttl, mut brk_ev, mut ttl_ev) = (0u64, 0u64, 0u64, 0u64);
+    let (mut breaks, mut ttl, mut break_events, mut ttl_events) = (0u64, 0u64, 0u64, 0u64);
+    let mut claims = Vec::new();
     for rows in sessions(reqs) {
-        for i in 1..rows.len() {
-            let r = rows[i];
-            if r.source != "claude" || r.cached_in > 0 {
+        for position in 1..rows.len() {
+            let index = rows[position];
+            let request = &reqs[index];
+            if request.source != "claude" || request.cached_in > 0 {
                 continue;
             }
-            let w = r.w5 + r.w1h;
-            if w < 2000 {
+            let written = request.w5.saturating_add(request.w1h);
+            if written < 2_000 {
                 continue;
             }
-            let prev = rows[i - 1];
-            if let (Some(a), Some(b)) = (r.ts, prev.ts) {
-                let gap = a - b;
-                let limit = if r.w1h > 0 || prev.w1h > 0 { 3600 } else { 300 };
+            let previous = &reqs[rows[position - 1]];
+            if let (Some(a), Some(b)) = (request.ts, previous.ts) {
+                let gap = a.saturating_sub(b);
+                let limit = if request.w1h > 0 || previous.w1h > 0 {
+                    3_600
+                } else {
+                    300
+                };
                 if gap > limit {
-                    ttl += w;
-                    ttl_ev += 1;
+                    ttl = ttl.saturating_add(written);
+                    ttl_events = ttl_events.saturating_add(1);
                     continue;
                 }
             }
-            brk += w;
-            brk_ev += 1;
+            breaks = breaks.saturating_add(written);
+            break_events = break_events.saturating_add(1);
+            claims.push(ImpactClaim {
+                request_index: index,
+                mid: written,
+                lo: written,
+                hi: written,
+            });
         }
     }
-    Finding {
-        title: "Mid-session cache re-writes".into(),
-        impact_tokens: brk + ttl, // directly measured waste - no range needed
-        impact_lo: brk + ttl,
-        impact_hi: brk + ttl,
-        detail: format!(
+    finding(
+        "mid_session_cache_rewrites",
+        "Mid-session cache re-writes",
+        claims,
+        format!(
             "{} prefix breaks ({:.1}M tok.) and {} TTL expirations ({:.1}M tok.) \
-             re-paid for context instead of reading it back from cache.",
-            brk_ev,
-            brk as f64 / 1e6,
-            ttl_ev,
+             re-paid for context instead of reading it back from cache. TTL expirations \
+             are diagnostic only and excluded from reclaimable totals.",
+            break_events,
+            breaks as f64 / 1e6,
+            ttl_events,
             ttl as f64 / 1e6
         ),
-        fix: "Breaks: move mutating blocks (timestamps, dynamic state) out of the \
-              prompt prefix. Expirations: avoid 5+ minute pauses mid-task."
-            .into(),
-    }
+        "Breaks: move mutating blocks (timestamps, dynamic state) out of the \
+         prompt prefix. Expirations: avoid 5+ minute pauses mid-task.",
+    )
 }
 
 fn heavy_session_start(reqs: &[Request], cfg: &Config) -> Finding {
-    let mut firsts: Vec<u64> = sessions(reqs)
+    let firsts: Vec<(usize, u64)> = sessions(reqs)
         .into_iter()
-        .filter_map(|rows| rows.first().copied().cloned())
-        .filter(|r| r.source == "claude")
-        .map(|r| r.w5 + r.w1h + r.unc_in)
-        .filter(|w| *w > 0)
+        .filter_map(|rows| rows.first().copied())
+        .filter(|index| reqs[*index].source == "claude")
+        .map(|index| {
+            let request = &reqs[index];
+            (
+                index,
+                request
+                    .w5
+                    .saturating_add(request.w1h)
+                    .saturating_add(request.unc_in),
+            )
+        })
+        .filter(|(_, written)| *written > 0)
         .collect();
-    firsts.sort_unstable();
-    let fat = cfg.fat_start_tokens;
-    let med = firsts.get(firsts.len() / 2).copied().unwrap_or(0);
-    let over: u64 = firsts.iter().map(|w| w.saturating_sub(fat)).sum();
-    Finding {
-        title: "Fat session starts (tool/MCP schemas in the system prompt)".into(),
-        impact_tokens: over / 2,
-        impact_lo: over / 4,
-        impact_hi: over * 3 / 4,
-        detail: format!(
+    let mut sizes: Vec<u64> = firsts.iter().map(|(_, written)| *written).collect();
+    sizes.sort_unstable();
+    let median = sizes.get(sizes.len() / 2).copied().unwrap_or(0);
+    let claims = firsts
+        .into_iter()
+        .filter_map(|(index, written)| {
+            let excess = written.saturating_sub(cfg.fat_start_tokens);
+            (excess > 0).then(|| estimated_claim(index, excess, 50, 25, 75))
+        })
+        .collect();
+    finding(
+        "fat_session_start",
+        "Fat session starts (tool/MCP schemas in the system prompt)",
+        claims,
+        format!(
             "The median first request of a session writes {:.0}k tokens of context; \
              anything above ~{}k is usually schemas of unused MCP servers and tools.",
-            med as f64 / 1000.0,
-            fat / 1000
+            median as f64 / 1_000.0,
+            cfg.fat_start_tokens / 1_000
         ),
-        fix: "Disable unused MCP servers per project (.mcp.json / `claude mcp remove`) \
-              - their schemas are paid out of your limit on every new session."
-            .into(),
-    }
+        "Disable unused MCP servers per project (.mcp.json / `claude mcp remove`) \
+         - their schemas are paid out of your limit on every new session.",
+    )
 }
 
 fn retry_storms(reqs: &[Request]) -> Finding {
     // Same prompt size, back to back, within seconds - a re-sent request.
     // Token-count heuristics only; prompts are never read, so we demand a
     // strong signal: >=3 identical prompt sizes with <=90s gaps.
-    let mut dup_toks = 0u64;
-    let mut dups = 0u64;
+    let mut claims = Vec::new();
+    let mut duplicates = 0u64;
     for rows in sessions(reqs) {
         let mut i = 0;
         while i < rows.len() {
             let mut j = i + 1;
             while j < rows.len()
-                && rows[j].prompt_total() == rows[i].prompt_total()
-                && rows[i].prompt_total() > 1000
-                && rows[j]
+                && reqs[rows[j]].prompt_total() == reqs[rows[i]].prompt_total()
+                && reqs[rows[i]].prompt_total() > 1_000
+                && reqs[rows[j]]
                     .ts
-                    .zip(rows[j - 1].ts)
-                    .is_some_and(|(a, b)| a - b <= 90)
+                    .zip(reqs[rows[j - 1]].ts)
+                    .is_some_and(|(a, b)| a.saturating_sub(b) <= 90)
             {
                 j += 1;
             }
             if j - i >= 3 {
-                dups += (j - i - 1) as u64;
-                dup_toks += rows[i + 1..j].iter().map(|r| r.prompt_total()).sum::<u64>();
+                duplicates = duplicates.saturating_add((j - i - 1) as u64);
+                claims.extend(
+                    rows[i + 1..j].iter().map(|index| {
+                        estimated_claim(*index, reqs[*index].prompt_total(), 50, 25, 75)
+                    }),
+                );
             }
             i = j.max(i + 1);
         }
     }
-    Finding {
-        title: "Retry storms - the same request re-sent in bursts".into(),
-        impact_tokens: dup_toks / 2, // size-equality is a heuristic, discount half
-        impact_lo: dup_toks / 4,
-        impact_hi: dup_toks * 3 / 4,
-        detail: format!(
-            "{dups} duplicate-sized requests fired in bursts (identical prompt size, \
+    finding(
+        "retry_storm",
+        "Retry storms - the same request re-sent in bursts",
+        claims,
+        format!(
+            "{duplicates} duplicate-sized requests fired in bursts (identical prompt size, \
              <=90s apart, 3+ in a row) - usually auto-retries after errors or \
              double-submits."
         ),
-        fix: "Check for flaky MCP servers / network errors that trigger silent \
-              retries; a failing tool that the agent retries in a loop burns the \
-              full context every attempt."
-            .into(),
-    }
+        "Check for flaky MCP servers / network errors that trigger silent \
+         retries; a failing tool that the agent retries in a loop burns the \
+         full context every attempt.",
+    )
 }
 
 pub fn run_all(reqs: &[Request], cfg: &Config) -> Vec<Finding> {
-    let mut f = vec![
+    let mut findings = vec![
         heavy_model_on_trivial(reqs, cfg),
         context_tax(reqs, cfg),
         cache_rewrites(reqs),
         heavy_session_start(reqs, cfg),
         retry_storms(reqs),
     ];
-    f.sort_by_key(|x| std::cmp::Reverse(x.impact_tokens));
-    f
+    findings.sort_by_key(|finding| std::cmp::Reverse(finding.impact_tokens));
+    findings
+}
+
+/// Conservative union of all findings. If multiple detectors claim the same
+/// request, only the largest mid estimate is included in the headline total.
+pub fn reclaim_total(findings: &[Finding]) -> u64 {
+    let mut by_request: HashMap<usize, u64> = HashMap::new();
+    for claim in findings.iter().flat_map(|finding| &finding.claims) {
+        by_request
+            .entry(claim.request_index)
+            .and_modify(|current| *current = (*current).max(claim.mid))
+            .or_insert(claim.mid);
+    }
+    by_request.into_values().fold(0u64, u64::saturating_add)
 }
 
 #[cfg(test)]
@@ -265,18 +376,16 @@ mod tests {
 
     #[test]
     fn retry_storm_detects_bursts_only() {
-        // 4 identical-size requests 30s apart -> 3 duplicates counted.
         let storm: Vec<Request> = (0..4).map(|i| req("s1", i * 30, 50_000, 10)).collect();
-        let f = retry_storms(&storm);
-        assert!(f.detail.starts_with("3 duplicate"));
-        assert_eq!(f.impact_tokens, 3 * 50_000 / 2);
-        assert!(f.impact_lo <= f.impact_tokens && f.impact_tokens <= f.impact_hi);
+        let finding = retry_storms(&storm);
+        assert!(finding.detail.starts_with("3 duplicate"));
+        assert_eq!(finding.impact_tokens, 3 * 50_000 / 2);
+        assert!(finding.impact_lo <= finding.impact_tokens);
+        assert!(finding.impact_tokens <= finding.impact_hi);
 
-        // Same sizes but 10 minutes apart -> not a storm.
         let slow: Vec<Request> = (0..4).map(|i| req("s2", i * 600, 50_000, 10)).collect();
         assert_eq!(retry_storms(&slow).impact_tokens, 0);
 
-        // Only 2 in a row -> below the 3+ threshold.
         let pair: Vec<Request> = (0..2).map(|i| req("s3", i * 30, 50_000, 10)).collect();
         assert_eq!(retry_storms(&pair).impact_tokens, 0);
     }
@@ -286,9 +395,17 @@ mod tests {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
             .collect();
-        for f in run_all(&reqs, &Config::default()) {
-            assert!(f.impact_lo <= f.impact_tokens, "{}", f.title);
-            assert!(f.impact_tokens <= f.impact_hi, "{}", f.title);
+        for finding in run_all(&reqs, &Config::default()) {
+            assert!(
+                finding.impact_lo <= finding.impact_tokens,
+                "{}",
+                finding.title
+            );
+            assert!(
+                finding.impact_tokens <= finding.impact_hi,
+                "{}",
+                finding.title
+            );
         }
     }
 
@@ -297,8 +414,23 @@ mod tests {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
             .collect();
-        let f = context_tax(&reqs, &Config::default());
-        assert!(f.impact_tokens > 0);
-        assert!(f.detail.contains("1 sessions ran past 30 turns"));
+        let finding = context_tax(&reqs, &Config::default());
+        assert!(finding.impact_tokens > 0);
+        assert!(finding.detail.contains("1 sessions ran past 30 turns"));
+    }
+
+    #[test]
+    fn ttl_expiration_is_not_reclaimable() {
+        let rows = vec![req("s", 0, 50_000, 10), req("s", 301, 50_000, 10)];
+        let finding = cache_rewrites(&rows);
+        assert_eq!(finding.impact_tokens, 0);
+        assert!(finding.detail.contains("1 TTL expiration"));
+    }
+
+    #[test]
+    fn total_uses_union_for_overlapping_findings() {
+        let rows = vec![req("s", 0, 100_000, 10)];
+        let findings = run_all(&rows, &Config::default());
+        assert_eq!(reclaim_total(&findings), 50_000);
     }
 }

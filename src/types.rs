@@ -17,10 +17,13 @@ pub struct Request {
 
 impl Request {
     pub fn prompt_total(&self) -> u64 {
-        self.unc_in + self.cached_in + self.w5 + self.w1h
+        self.unc_in
+            .saturating_add(self.cached_in)
+            .saturating_add(self.w5)
+            .saturating_add(self.w1h)
     }
     pub fn total(&self) -> u64 {
-        self.prompt_total() + self.out
+        self.prompt_total().saturating_add(self.out)
     }
 }
 
@@ -28,4 +31,27 @@ pub fn parse_ts(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|d| d.timestamp())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_totals_saturate() {
+        let request = Request {
+            source: "codex",
+            project: "p".into(),
+            session: "s".into(),
+            ts: None,
+            model: "m".into(),
+            unc_in: u64::MAX,
+            cached_in: 1,
+            w5: 1,
+            w1h: 1,
+            out: 1,
+        };
+        assert_eq!(request.prompt_total(), u64::MAX);
+        assert_eq!(request.total(), u64::MAX);
+    }
 }

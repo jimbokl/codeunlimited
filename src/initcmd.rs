@@ -68,8 +68,8 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
     // Capture the baseline once; `codeunlimited delta` compares against it.
     let bl = root.join(crate::deltacmd::BASELINE_FILE);
     if !bl.exists() {
-        let m_claude = crate::metrics::compute(&reqs);
-        let m_codex = crate::metrics::compute(&codex);
+        let m_claude = crate::metrics::compute(&reqs, cfg.long_session_turns);
+        let m_codex = crate::metrics::compute(&codex, cfg.long_session_turns);
         crate::safeio::atomic_write(
             &bl,
             crate::metrics::to_json_multi(
@@ -89,7 +89,9 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
         return Ok(());
     }
     let sessions: HashSet<&str> = reqs.iter().map(|r| r.session.as_str()).collect();
-    let total: u64 = reqs.iter().map(|r| r.total()).sum();
+    let total = reqs
+        .iter()
+        .fold(0u64, |total, request| total.saturating_add(request.total()));
     println!(
         "  history: {} requests in {} sessions ({:.0}M tokens) - existing project, baseline captured",
         reqs.len(),

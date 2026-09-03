@@ -91,18 +91,20 @@ pub fn collect(
     let mut total = 0u64;
     for r in reqs {
         let s = per_src.entry(r.source).or_default();
-        s.0 += 1;
-        s.1 += r.prompt_total();
-        s.2 += r.out;
-        out_total += r.out;
-        total += r.total();
+        s.0 = s.0.saturating_add(1);
+        s.1 = s.1.saturating_add(r.prompt_total());
+        s.2 = s.2.saturating_add(r.out);
+        out_total = out_total.saturating_add(r.out);
+        total = total.saturating_add(r.total());
         if let Some(t) = r.ts {
             tmin = tmin.min(t);
             tmax = tmax.max(t);
         }
     }
     let days = if tmin < tmax {
-        (((tmax - tmin) as f64) / 86_400.0).floor().max(1.0)
+        ((tmax.saturating_sub(tmin) as f64) / 86_400.0)
+            .floor()
+            .max(1.0)
     } else {
         1.0
     };
@@ -126,11 +128,11 @@ pub fn collect(
             hi: f.impact_hi,
             pct: 100.0 * (f.impact_tokens as f64 / days * 7.0) / weekly.max(1.0),
             answers: f.impact_tokens as f64
-                * (out_total as f64 / (total - out_total).max(1) as f64)
+                * (out_total as f64 / total.saturating_sub(out_total).max(1) as f64)
                 / avg_out.max(1.0),
         })
         .collect();
-    let reclaim: u64 = views.iter().map(|v| v.tokens).sum();
+    let reclaim = detectors::reclaim_total(findings);
     ReportData {
         name: name.into(),
         generated: generated.into(),
@@ -437,7 +439,7 @@ fn write_badge(md_path: &Path, pct: f64) -> std::io::Result<()> {
     Ok(())
 }
 
-fn deltas_for(root: &Path, reqs: &[Request]) -> Vec<DeltaInfo> {
+fn deltas_for(root: &Path, reqs: &[Request], long_session_turns: usize) -> Vec<DeltaInfo> {
     let Some((created, baselines)) = deltacmd::load_baseline(root) else {
         return vec![];
     };
@@ -458,7 +460,7 @@ fn deltas_for(root: &Path, reqs: &[Request]) -> Vec<DeltaInfo> {
                 b_requests: b.requests,
                 b_prompt: b.prompt,
                 b_growth: b.growth,
-                now: metrics::compute(&now),
+                now: metrics::compute(&now, long_session_turns),
             })
         })
         .collect()
@@ -469,9 +471,12 @@ fn append_history(
     reqs: &[Request],
     reclaim: u64,
     now: &chrono::DateTime<chrono::Utc>,
+    long_session_turns: usize,
 ) -> std::io::Result<Vec<Value>> {
-    let m = metrics::compute(reqs);
-    let total: u64 = reqs.iter().map(|r| r.total()).sum();
+    let m = metrics::compute(reqs, long_session_turns);
+    let total = reqs
+        .iter()
+        .fold(0u64, |total, request| total.saturating_add(request.total()));
     let snap = serde_json::json!({
         "ts": now.timestamp(),
         "date": now.date_naive().to_string(),
@@ -562,10 +567,16 @@ pub fn run(path: &Path, out: Option<&Path>, badge: bool, anon_flag: bool) -> i32
     }
     let cfg = crate::config::Config::load_for(Some(&root));
     let findings = detectors::run_all(&reqs, &cfg);
-    let deltas = deltas_for(&root, &reqs);
-    let reclaim: u64 = findings.iter().map(|f| f.impact_tokens).sum();
+    let deltas = deltas_for(&root, &reqs, cfg.long_session_turns);
+    let reclaim = detectors::reclaim_total(&findings);
     let now = chrono::Utc::now();
-    let history = match append_history(&root.join(HISTORY_FILE), &reqs, reclaim, &now) {
+    let history = match append_history(
+        &root.join(HISTORY_FILE),
+        &reqs,
+        reclaim,
+        &now,
+        cfg.long_session_turns,
+    ) {
         Ok(history) => history,
         Err(e) => {
             eprintln!("Cannot write {}: {e}", root.join(HISTORY_FILE).display());
@@ -612,13 +623,14 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
     // Per-registered-project deltas.
     let mut project_deltas: Vec<ProjectDelta> = Vec::new();
     for p in registry::projects() {
+        let project_cfg = crate::config::Config::load_for(Some(&p));
         let mut pr = parsers::iter_claude(Some(&p));
         pr.extend(parsers::iter_codex(Some(&p)));
         let name = p
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        for delta in deltas_for(&p, &pr) {
+        for delta in deltas_for(&p, &pr, project_cfg.long_session_turns) {
             project_deltas.push(ProjectDelta {
                 project: name.clone(),
                 delta,
@@ -628,22 +640,24 @@ pub fn run_all(out: Option<&Path>, badge: bool, anon_flag: bool) -> i32 {
 
     let mut per_proj: BTreeMap<String, u64> = BTreeMap::new();
     for r in &reqs {
-        *per_proj
+        let total = per_proj
             .entry(format!("{}:{}", r.source, r.project))
-            .or_default() += r.total();
+            .or_default();
+        *total = total.saturating_add(r.total());
     }
     let mut top: Vec<(String, u64)> = per_proj.into_iter().collect();
     top.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
     top.truncate(8);
 
-    let reclaim: u64 = findings.iter().map(|f| f.impact_tokens).sum();
+    let reclaim = detectors::reclaim_total(&findings);
     let now = chrono::Utc::now();
     if let Err(e) = std::fs::create_dir_all(registry::home_dir()) {
         eprintln!("Cannot create {}: {e}", registry::home_dir().display());
         return 1;
     }
     let history_path = registry::home_dir().join("history.jsonl");
-    let history = match append_history(&history_path, &reqs, reclaim, &now) {
+    let history = match append_history(&history_path, &reqs, reclaim, &now, cfg.long_session_turns)
+    {
         Ok(history) => history,
         Err(e) => {
             eprintln!("Cannot write {}: {e}", history_path.display());

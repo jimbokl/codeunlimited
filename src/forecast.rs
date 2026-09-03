@@ -23,21 +23,23 @@ pub fn forecast(reqs: &[Request], series: &LimitSeries) -> Vec<String> {
         .filter(|s| s.1 >= MIN_CALIBRATION_PCT && s.2 > 0)
         .max_by(|a, b| a.1.total_cmp(&b.1));
     if let (Some(&(ts_pk, used_pk, win_pk)), Some(&(_, used_now, _))) = (calib, series.last()) {
-        let win_secs = win_pk as i64 * 60;
+        let win_secs = win_pk.min(i64::MAX as u64 / 60) as i64 * 60;
         let vol_in_win: u64 = codex
             .iter()
-            .filter(|r| r.ts.is_some_and(|t| t > ts_pk - win_secs && t <= ts_pk))
-            .map(|r| r.total())
-            .sum();
+            .filter(|r| {
+                r.ts.is_some_and(|t| t > ts_pk.saturating_sub(win_secs) && t <= ts_pk)
+            })
+            .fold(0u64, |total, request| total.saturating_add(request.total()));
         if vol_in_win > 0 {
             let capacity = vol_in_win as f64 / (used_pk / 100.0);
             let remaining = capacity * (1.0 - used_now / 100.0);
             let anchor = codex.iter().filter_map(|r| r.ts).max().unwrap_or(ts_pk);
             let day_vol: u64 = codex
                 .iter()
-                .filter(|r| r.ts.is_some_and(|t| t > anchor - 86_400 && t <= anchor))
-                .map(|r| r.total())
-                .sum();
+                .filter(|r| {
+                    r.ts.is_some_and(|t| t > anchor.saturating_sub(86_400) && t <= anchor)
+                })
+                .fold(0u64, |total, request| total.saturating_add(request.total()));
             if day_vol > 0 {
                 let hours = remaining / (day_vol as f64 / 24.0);
                 lines.push(format!(
@@ -60,15 +62,15 @@ pub fn forecast(reqs: &[Request], series: &LimitSeries) -> Vec<String> {
         let mut weeks: HashMap<i64, u64> = HashMap::new();
         for r in &claude {
             if let Some(t) = r.ts {
-                *weeks.entry(t / (7 * 86_400)).or_default() += r.total();
+                let total = weeks.entry(t / (7 * 86_400)).or_default();
+                *total = total.saturating_add(r.total());
             }
         }
         let busiest = weeks.values().copied().max().unwrap_or(0);
         let trailing: u64 = claude
             .iter()
-            .filter(|r| r.ts.is_some_and(|t| t > anchor - 7 * 86_400))
-            .map(|r| r.total())
-            .sum();
+            .filter(|r| r.ts.is_some_and(|t| t > anchor.saturating_sub(7 * 86_400)))
+            .fold(0u64, |total, request| total.saturating_add(request.total()));
         if busiest > 0 && trailing > 0 {
             lines.push(format!(
                 "claude: trailing 7 days = {:.0}M tokens, {:.0}% of your busiest \

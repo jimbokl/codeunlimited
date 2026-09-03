@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::detectors::Finding;
+use crate::detectors::{self, Finding};
 use crate::types::Request;
 
 const BAR: &str = "================================================================";
@@ -15,20 +15,25 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
     let mut tmax = i64::MIN;
     for r in reqs {
         let s = per_src.entry(r.source).or_default();
-        s.0 += 1;
-        s.1 += r.prompt_total();
-        s.2 += r.out;
-        *per_proj
+        s.0 = s.0.saturating_add(1);
+        s.1 = s.1.saturating_add(r.prompt_total());
+        s.2 = s.2.saturating_add(r.out);
+        let project_total = per_proj
             .entry(format!("{}:{}", r.source, r.project))
-            .or_default() += r.total();
+            .or_default();
+        *project_total = project_total.saturating_add(r.total());
         if let Some(t) = r.ts {
             tmin = tmin.min(t);
             tmax = tmax.max(t);
         }
     }
-    let total_tokens: u64 = per_src.values().map(|s| s.1 + s.2).sum();
+    let total_tokens = per_src.values().fold(0u64, |total, source| {
+        total.saturating_add(source.1.saturating_add(source.2))
+    });
     let days = if tmin < tmax {
-        (((tmax - tmin) as f64) / 86_400.0).floor().max(1.0)
+        ((tmax.saturating_sub(tmin) as f64) / 86_400.0)
+            .floor()
+            .max(1.0)
     } else {
         1.0
     };
@@ -36,8 +41,9 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
     let mut projects: Vec<_> = per_proj.into_iter().collect();
     projects.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
     projects.truncate(8);
-    let reclaimed: u64 = findings.iter().map(|f| f.impact_tokens).sum();
+    let reclaimed = detectors::reclaim_total(findings);
     let obj = serde_json::json!({
+        "schema_version": 1,
         "period_days": days as u64,
         "sources": per_src.iter().map(|(src, s)| (src.to_string(), serde_json::json!({
             "requests": s.0, "prompt_tokens": s.1, "output_tokens": s.2,
@@ -48,6 +54,7 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
             (100.0 * (reclaimed as f64 / days * 7.0) / weekly) as u64
         } else { 0 },
         "findings": findings.iter().filter(|f| f.impact_tokens > 0).map(|f| serde_json::json!({
+            "key": f.key,
             "title": f.title,
             "impact_tokens": f.impact_tokens,
             "impact_lo": f.impact_lo,
@@ -79,21 +86,28 @@ pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
     let mut tmax = i64::MIN;
     for r in reqs {
         let s = per_src.entry(r.source).or_default();
-        s.0 += 1;
-        s.1 += r.prompt_total();
-        s.2 += r.out;
-        *per_proj
+        s.0 = s.0.saturating_add(1);
+        s.1 = s.1.saturating_add(r.prompt_total());
+        s.2 = s.2.saturating_add(r.out);
+        let project_total = per_proj
             .entry(format!("{}:{}", r.source, r.project))
-            .or_default() += r.total();
+            .or_default();
+        *project_total = project_total.saturating_add(r.total());
         if let Some(t) = r.ts {
             tmin = tmin.min(t);
             tmax = tmax.max(t);
         }
     }
-    let total_tokens: u64 = per_src.values().map(|s| s.1 + s.2).sum();
-    let out_total: u64 = per_src.values().map(|s| s.2).sum();
+    let total_tokens = per_src.values().fold(0u64, |total, source| {
+        total.saturating_add(source.1.saturating_add(source.2))
+    });
+    let out_total = per_src
+        .values()
+        .fold(0u64, |total, source| total.saturating_add(source.2));
     let days = if tmin < tmax {
-        (((tmax - tmin) as f64) / 86_400.0).floor().max(1.0)
+        ((tmax.saturating_sub(tmin) as f64) / 86_400.0)
+            .floor()
+            .max(1.0)
     } else {
         1.0
     };
@@ -132,15 +146,14 @@ pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
     l.push(" FINDINGS - where your limit leaks (by impact):".into());
     l.push(String::new());
 
-    let mut reclaimed = 0u64;
+    let reclaimed = detectors::reclaim_total(findings);
     let mut i = 0;
     for f in findings.iter().filter(|f| f.impact_tokens > 0) {
         i += 1;
         let pct = 100.0 * (f.impact_tokens as f64 / days * 7.0) / weekly.max(1.0);
         let answers = f.impact_tokens as f64
-            * (out_total as f64 / (total_tokens - out_total).max(1) as f64)
+            * (out_total as f64 / total_tokens.saturating_sub(out_total).max(1) as f64)
             / avg_out.max(1.0);
-        reclaimed += f.impact_tokens;
         l.push(format!(" {yellow}{bold}{}. {}{off}", i, f.title));
         l.push(format!("    {}", f.detail));
         let range = if f.impact_lo != f.impact_hi {

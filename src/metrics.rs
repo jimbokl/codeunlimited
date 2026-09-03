@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use crate::types::Request;
 
-const LONG_SESSION: usize = 30;
 const EARLY_N: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
@@ -16,7 +15,7 @@ pub struct Metrics {
     pub context_growth: f64,
 }
 
-pub fn compute(reqs: &[Request]) -> Metrics {
+pub fn compute(reqs: &[Request], long_session_turns: usize) -> Metrics {
     let mut by: HashMap<&str, Vec<&Request>> = HashMap::new();
     for r in reqs {
         by.entry(r.session.as_str()).or_default().push(r);
@@ -24,20 +23,22 @@ pub fn compute(reqs: &[Request]) -> Metrics {
     let mut growth = Vec::new();
     for rows in by.values_mut() {
         rows.sort_by_key(|r| (r.ts.is_none(), r.ts));
-        if rows.len() < LONG_SESSION {
+        if rows.len() <= long_session_turns {
             continue;
         }
-        let early = &rows[..EARLY_N];
+        let early = &rows[..EARLY_N.min(long_session_turns).min(rows.len())];
         let early_avg =
             early.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / early.len() as f64;
-        let late = &rows[LONG_SESSION..];
+        let late = &rows[long_session_turns..];
         let late_avg =
-            late.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / late.len().max(1) as f64;
+            late.iter().map(|r| r.prompt_total() as f64).sum::<f64>() / late.len() as f64;
         if early_avg > 0.0 {
             growth.push(late_avg / early_avg);
         }
     }
-    let prompt_total: u64 = reqs.iter().map(|r| r.prompt_total()).sum();
+    let prompt_total = reqs.iter().fold(0u64, |total, request| {
+        total.saturating_add(request.prompt_total())
+    });
     Metrics {
         requests: reqs.len() as u64,
         sessions: by.len() as u64,
@@ -75,4 +76,30 @@ pub fn to_json_multi(sources: &[(&str, Metrics)], created_unix: i64) -> String {
         .map(|(src, m)| (src.to_string(), metrics_json(m)))
         .collect();
     serde_json::json!({ "created_unix": created_unix, "sources": map }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(turn: i64) -> Request {
+        Request {
+            source: "claude",
+            project: "p".into(),
+            session: "s".into(),
+            ts: Some(turn),
+            model: "m".into(),
+            unc_in: 100,
+            cached_in: 0,
+            w5: 0,
+            w1h: 0,
+            out: 1,
+        }
+    }
+
+    #[test]
+    fn threshold_without_a_tail_is_flat() {
+        let rows: Vec<_> = (0..30).map(request).collect();
+        assert_eq!(compute(&rows, 30).context_growth, 1.0);
+    }
 }

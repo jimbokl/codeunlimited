@@ -64,8 +64,14 @@ fn golden_end_to_end() {
     assert!(text.contains("codex"));
     let json = report::render_json(&all, &findings);
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["schema_version"], 1);
     assert_eq!(v["sources"]["claude"]["requests"], 2);
     assert_eq!(v["sources"]["codex"]["requests"], 2);
+    assert!(v["findings"]
+        .as_array()
+        .expect("findings array")
+        .iter()
+        .all(|finding| finding["key"].as_str().is_some()));
 
     // --- Baseline: both formats parse (v1 single-source and v2 multi) ---
     let (c1, v1) = deltacmd::parse_baseline(
@@ -88,7 +94,7 @@ fn golden_end_to_end() {
         b_requests: 2,
         b_prompt: 40_000.0,
         b_growth: 2.0,
-        now: metrics::compute(&claude),
+        now: metrics::compute(&claude, 30),
     };
     let history = vec![serde_json::json!({
         "date": "2026-01-02", "requests": 4, "avg_prompt_per_turn": 16000,
