@@ -1,4 +1,4 @@
-use codeunlimited::{detectors, initcmd, parsers, report};
+use codeunlimited::{deltacmd, detectors, initcmd, parsers, report};
 
 use std::path::PathBuf;
 
@@ -45,6 +45,11 @@ enum Cmd {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Verified before/after for a project since `init` captured its baseline
+    Delta {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 fn main() {
@@ -58,11 +63,14 @@ fn main() {
         } => {
             let p = project.as_deref();
             let mut reqs = Vec::new();
+            let mut peak: parsers::LimitPeak = None;
             if matches!(source, Source::All | Source::Claude) {
                 reqs.extend(parsers::iter_claude(p));
             }
             if matches!(source, Source::All | Source::Codex) {
-                reqs.extend(parsers::iter_codex(p));
+                let (cx, pk) = parsers::iter_codex_full(p);
+                reqs.extend(cx);
+                peak = pk;
             }
             if let Some(n) = days {
                 let cutoff = chrono::Utc::now().timestamp() - (n as i64) * 86_400;
@@ -76,10 +84,21 @@ fn main() {
                     println!("[scope: {}]", p.display());
                 }
                 println!("{}", report::render(&reqs, &findings));
+                if let Some((used, win)) = peak {
+                    println!(
+                        " Codex rate limit: peak {:.0}% of the {:.0}-day window observed - \
+                         every token below funds more work.",
+                        used,
+                        win as f64 / 1440.0
+                    );
+                }
             }
         }
         Cmd::Init { path } => {
             std::process::exit(initcmd::run(&path));
+        }
+        Cmd::Delta { path } => {
+            std::process::exit(deltacmd::run(&path));
         }
     }
 }

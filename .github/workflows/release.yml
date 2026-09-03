@@ -1,0 +1,40 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: codeunlimited
+            asset: codeunlimited-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: codeunlimited
+            asset: codeunlimited-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: codeunlimited.exe
+            asset: codeunlimited-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.asset }}
+        shell: bash
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
+          generate_release_notes: true

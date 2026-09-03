@@ -169,13 +169,17 @@ fn str_field<'a>(line: &'a str, pat: &str) -> Option<&'a str> {
     Some(&rest[..j])
 }
 
-fn parse_codex_file(path: &Path, want: Option<&str>) -> Vec<Request> {
+/// Peak observed rate-limit usage: (used_percent, window_minutes).
+pub type LimitPeak = Option<(f64, u64)>;
+
+fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitPeak) {
     let Ok(f) = File::open(path) else {
-        return vec![];
+        return (vec![], None);
     };
     let mut model = String::from("?");
     let mut project = String::from("?");
     let mut out = Vec::new();
+    let mut peak: LimitPeak = None;
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
         if model == "?" {
@@ -208,6 +212,19 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> Vec<Request> {
         if p.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
         }
+        if let Some(pr) = p.get("rate_limits").and_then(|rl| rl.get("primary")) {
+            let used = pr
+                .get("used_percent")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let win = pr
+                .get("window_minutes")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if peak.is_none_or(|(u, _)| used > u) {
+                peak = Some((used, win));
+            }
+        }
         let Some(u) = p
             .get("info")
             .and_then(|i| i.get("last_token_usage"))
@@ -237,13 +254,14 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> Vec<Request> {
             out: u64_of(u, "output_tokens"),
         });
     }
-    out
+    (out, peak)
 }
 
-pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
+/// Full Codex scan: requests plus the peak observed rate-limit usage.
+pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitPeak) {
     let root = codex_root();
     if !root.is_dir() {
-        return vec![];
+        return (vec![], None);
     }
     let want = project.map(|p| {
         p.canonicalize()
@@ -253,8 +271,23 @@ pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
             .unwrap_or_default()
     });
     let files = jsonl_files(&root);
-    files
+    let parts: Vec<(Vec<Request>, LimitPeak)> = files
         .par_iter()
-        .flat_map(|f| parse_codex_file(f, want.as_deref()))
-        .collect()
+        .map(|f| parse_codex_file(f, want.as_deref()))
+        .collect();
+    let mut out = Vec::new();
+    let mut peak: LimitPeak = None;
+    for (reqs, p) in parts {
+        out.extend(reqs);
+        if let Some((u, w)) = p {
+            if peak.is_none_or(|(pu, _)| u > pu) {
+                peak = Some((u, w));
+            }
+        }
+    }
+    (out, peak)
+}
+
+pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
+    iter_codex_full(project).0
 }

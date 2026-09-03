@@ -36,6 +36,7 @@ cargo install codeunlimited       # or grab a binary from GitHub Releases
 codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
+codeunlimited delta myproject/    # verified before/after since init's baseline
 ```
 
 A Python reference implementation lives in `codeunlimited/` (same detectors;

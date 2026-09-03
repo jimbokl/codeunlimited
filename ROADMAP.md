@@ -23,12 +23,12 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 
 ## v0.3 — trust & measurement (the moat)
 
-- [ ] **Verified delta**: `init` snapshots a baseline; `audit` reports
-      before/after per project — "you reclaimed N% of your weekly volume".
-- [ ] Per-model limit weights (top-tier requests consume limits faster);
-      rate-limit ingestion: Codex `used_percent`, Claude 5-hour blocks.
-- [ ] **Opt-in anonymous benchmarks**: percentile comparisons
-      ("your context tax is x3.9 vs community median x2.1").
+- [x] **Verified delta**: `init` captures `.codeunlimited.baseline.json`;
+      `delta` reports before/after per project (claude source; codex planned).
+- [x] Rate-limit ingestion: Codex `used_percent` peak surfaced in the report.
+- [ ] Per-model limit weights; Claude 5-hour block ingestion.
+- [ ] **Opt-in anonymous benchmarks** (post-1.0 — needs a backend):
+      percentile comparisons ("your context tax is x3.9 vs median x2.1").
       Accumulated data is the defensible asset; strict opt-in, counts only.
 - [ ] Conservative-estimate policy documented per detector (ranges, not hype).
 

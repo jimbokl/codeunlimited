@@ -1,10 +1,10 @@
 [package]
 name = "codeunlimited"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
 license = "MIT"
-repository = "https://github.com/codeunlimited/codeunlimited"
+repository = "https://github.com/jimbokl/codeunlimited"
 
 [dependencies]
 serde_json = "1"
