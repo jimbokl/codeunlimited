@@ -115,6 +115,7 @@ pub fn run(path: &Path) -> i32 {
     // strip windows verbatim prefix for display
     let disp = root.to_string_lossy();
     let disp = disp.strip_prefix(r"\\?\").unwrap_or(&disp).to_string();
+    crate::registry::register(&root);
     println!("codeunlimited init -> {disp}");
     println!(
         "  CLAUDE.md: {}",

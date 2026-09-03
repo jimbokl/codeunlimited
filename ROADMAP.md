@@ -32,7 +32,7 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
 - [ ] **Opt-in anonymous benchmarks** (post-1.0 — needs a backend):
       percentile comparisons ("your context tax is x3.9 vs median x2.1").
       Accumulated data is the defensible asset; strict opt-in, counts only.
-- [ ] Conservative-estimate policy documented per detector (ranges, not hype).
+- [x] Conservative-estimate policy documented per detector (docs/ACCURACY.md).
 
 ## Sprint v1.2 (2026-09) — fix engine + measured savings
 
@@ -45,6 +45,19 @@ From v0.2 the core moves to **Rust**: single static binary, sub-second scans.
       the `report` trend: ~10.4B tokens of history now under the rules;
       measured after day 1 on the author's project - context per turn
       down 46%, long-session growth 10x -> 0.2x.
+
+## Sprint v1.3 (2026-09) — launch prep
+
+- [x] Styled self-contained HTML reports (light/dark) next to Markdown.
+- [x] `report --all`: cross-project summary, per-project delta table,
+      global trend; project registry at `~/.codeunlimited/`.
+- [x] docs/ACCURACY.md — the conservative math behind every estimate.
+- [x] crates.io metadata; GitHub storefront (description, topics);
+      positioning: set up once - up to 50% more work from the same limits.
+- [x] Launch drafts: Show HN + "41x is really 5x" (docs/launch/).
+- [ ] Dogfood week: `report --all` every 1-2 days, fill [TREND] numbers.
+- [ ] Launch day (owner decisions: cargo token, date): public flip +
+      crates.io publish + posts, all at once.
 
 ## v0.4 — the fix engine
 

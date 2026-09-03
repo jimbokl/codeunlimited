@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 - 2026-09-03
+
+- **Styled HTML reports**: `report` now writes a self-contained
+  `CODEUNLIMITED_REPORT.html` next to the Markdown - light/dark themes,
+  impact meters, delta pills, trend bars; zero external requests.
+- **`report --all`**: one summary across every project `init`/`fix`/`report`
+  has touched - global usage, top projects, per-project delta table, global
+  trend (`~/.codeunlimited/history.jsonl`).
+- Project registry at `~/.codeunlimited/projects.json` (paths only).
+- Markdown polish: impact bars per finding, trend arrows.
+- `docs/ACCURACY.md`: the conservative math behind every estimate,
+  including the day-1 delta caveat.
+- crates.io metadata; sharper positioning: set up once - up to 50% more
+  work from the same limits.
+
 ## 1.2.0 - 2026-09-03
 
 - **`fix`**: turns audit findings into concrete project changes - efficiency

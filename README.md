@@ -1,6 +1,10 @@
 # codeunlimited
 
-**More code out of the subscription limits you already pay for.**
+**Set up once — up to 50% more work from the same subscription limits.**
+
+Measured on the author's own logs (71k requests, 113 days): ~52% of weekly
+Claude Code volume was reclaimable; every estimate is conservative and
+documented in [docs/ACCURACY.md](docs/ACCURACY.md).
 
 You hit the weekly limit of Claude Code or Codex CLI mid-task. The limit is
 fixed — but how much *work* fits inside it is not. `codeunlimited` reads the
@@ -37,7 +41,8 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # verified before/after since init's baseline
-codeunlimited report myproject/   # saved Markdown report: findings + delta + trend
+codeunlimited report myproject/   # saved report (MD + styled HTML): findings + delta + trend
+codeunlimited report --all        # one summary across every project you've touched
 codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --apply)
 ```
 
@@ -61,12 +66,21 @@ and re-running it later shows your delta.
 
 ## Reports you can keep and share
 
-`codeunlimited report <project>` writes `CODEUNLIMITED_REPORT.md` into the
-project: current leaks in limit currency, the verified delta since `init`
-captured the baseline, and a trend table with one row per run (snapshots
-accumulate in `.codeunlimited.history.jsonl`). Re-run it weekly — the trend
-table is the proof that the efficiency rules are paying off. Both files are
-plain text you can commit, ignore, or paste into a standup.
+`codeunlimited report <project>` writes two files into the project:
+`CODEUNLIMITED_REPORT.md` and a styled, self-contained
+`CODEUNLIMITED_REPORT.html` (light/dark, zero external requests — safe to
+open, mail, or screenshot). Both show current leaks in limit currency, the
+verified delta since `init` captured the baseline, and a trend with one row
+per run (snapshots accumulate in `.codeunlimited.history.jsonl`).
+
+`codeunlimited report --all` produces one summary pair across every project
+`init`/`fix`/`report` has touched: global usage, top projects, a per-project
+delta table, and a global trend. Re-run it weekly — the trend is the proof
+that the efficiency rules are paying off.
+
+Every estimate is deliberately conservative and documented in
+[docs/ACCURACY.md](docs/ACCURACY.md) — ranges from your own logs, not
+marketing multipliers.
 
 ## Privacy
 

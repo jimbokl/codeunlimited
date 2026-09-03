@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[command(
     name = "codeunlimited",
     version,
-    about = "More code out of the limits you already pay for: offline audit of \
-             Claude Code & Codex token usage + project efficiency setup."
+    about = "Set up once - up to 50% more work from the same Claude Code / Codex \
+             limits. Offline token-leak audit, one-command fixes, verified savings."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -50,14 +50,17 @@ enum Cmd {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Write a Markdown report for a project (findings + delta + trend);
-    /// each run appends a snapshot, so the trend table grows over time
+    /// Write a report (Markdown + styled HTML) for a project - findings, delta,
+    /// trend; each run appends a snapshot, so the trend grows over time
     Report {
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Where to write the report (default: CODEUNLIMITED_REPORT.md in the project)
         #[arg(long, value_name = "FILE")]
         out: Option<PathBuf>,
+        /// Summary across every project seen by init/fix/report, plus global trend
+        #[arg(long)]
+        all: bool,
     },
     /// Turn audit findings into concrete project changes (dry-run by default)
     Fix {
@@ -117,8 +120,12 @@ fn main() {
         Cmd::Delta { path } => {
             std::process::exit(deltacmd::run(&path));
         }
-        Cmd::Report { path, out } => {
-            std::process::exit(reportcmd::run(&path, out.as_deref()));
+        Cmd::Report { path, out, all } => {
+            std::process::exit(if all {
+                reportcmd::run_all(out.as_deref())
+            } else {
+                reportcmd::run(&path, out.as_deref())
+            });
         }
         Cmd::Fix { path, apply } => {
             std::process::exit(fixcmd::run(&path, apply));

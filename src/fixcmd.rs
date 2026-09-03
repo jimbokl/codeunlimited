@@ -64,6 +64,7 @@ pub fn run(path: &Path, apply: bool) -> i32 {
     };
     let disp = root.to_string_lossy();
     let disp = disp.strip_prefix(r"\\?\").unwrap_or(&disp).to_string();
+    crate::registry::register(&root);
     println!(
         "codeunlimited fix -> {disp}{}",
         if apply {

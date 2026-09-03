@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use codeunlimited::{deltacmd, detectors, metrics, parsers, report, reportcmd};
+use codeunlimited::{deltacmd, detectors, html, metrics, parsers, report, reportcmd};
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -77,7 +77,7 @@ fn golden_end_to_end() {
     assert_eq!((c2, v2.len()), (200, 2));
     assert!(v2.iter().any(|b| b.source == "codex" && b.prompt == 500.0));
 
-    // --- Markdown report builder (pure, no filesystem) ---
+    // --- Report builders: one data model, two renderers (MD + HTML) ---
     let delta = reportcmd::DeltaInfo {
         source: "claude".into(),
         since: "2026-01-01".into(),
@@ -90,20 +90,29 @@ fn golden_end_to_end() {
         "date": "2026-01-02", "requests": 4, "avg_prompt_per_turn": 16000,
         "context_growth": 1.0, "reclaimable_tokens": 30000u64,
     })];
-    let md = reportcmd::build_markdown(
+    let data = reportcmd::collect(
         "test-proj",
         &all,
         &findings,
-        std::slice::from_ref(&delta),
-        &history,
+        vec![delta],
+        vec![],
+        vec![],
+        history,
         "2026-01-02",
     );
+    let md = reportcmd::build_markdown(&data);
     assert!(md.starts_with("# codeunlimited report - test-proj"));
     assert!(md.contains("## Where the limit leaks"));
     assert!(md.contains("## Delta since baseline (2026-01-01)"));
     assert!(md.contains("| 2026-01-02 | 4 | 16k | 1.0x | 0 |"));
     assert!(md.contains("| claude | 2 |"));
     assert!(md.contains("| codex | 2 |"));
+    let page = html::build_html(&data);
+    assert!(page.starts_with("<!doctype html>"));
+    assert!(page.contains("<title>codeunlimited - test-proj</title>"));
+    assert!(page.contains("Delta since baseline"));
+    assert!(page.contains("prefers-color-scheme:dark"));
+    assert!(page.ends_with("</html>\n"));
 
     // --- Project key sanitizer (path -> claude log dir name) ---
     assert_eq!(

@@ -1,10 +1,14 @@
 [package]
 name = "codeunlimited"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2021"
-description = "More code out of the subscription limits you already pay for: offline audit of Claude Code & Codex CLI token usage + project efficiency setup."
+description = "Set up once - up to 50% more work from the same Claude Code & Codex CLI limits. Offline token-leak audit, one-command fixes, verified savings."
 license = "MIT"
 repository = "https://github.com/jimbokl/codeunlimited"
+readme = "README.md"
+keywords = ["claude-code", "codex", "tokens", "limits", "audit"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["codeunlimited/", "docs/launch/", ".github/"]
 
 [dependencies]
 serde_json = "1"
