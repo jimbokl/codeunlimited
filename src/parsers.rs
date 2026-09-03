@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -10,6 +11,50 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::types::{parse_ts, Request};
+
+#[derive(Debug, Clone, Default)]
+pub struct ScanOptions {
+    pub project: Option<PathBuf>,
+    pub since: Option<i64>,
+    pub use_index: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ScanStats {
+    pub files_discovered: u64,
+    pub files_opened: u64,
+    pub files_skipped_by_date: u64,
+    pub files_skipped_by_index: u64,
+    pub usage_records: u64,
+}
+
+impl AddAssign for ScanStats {
+    fn add_assign(&mut self, rhs: Self) {
+        self.files_discovered = self.files_discovered.saturating_add(rhs.files_discovered);
+        self.files_opened = self.files_opened.saturating_add(rhs.files_opened);
+        self.files_skipped_by_date = self
+            .files_skipped_by_date
+            .saturating_add(rhs.files_skipped_by_date);
+        self.files_skipped_by_index = self
+            .files_skipped_by_index
+            .saturating_add(rhs.files_skipped_by_index);
+        self.usage_records = self.usage_records.saturating_add(rhs.usage_records);
+    }
+}
+
+pub struct ClaudeScan {
+    pub requests: Vec<Request>,
+    pub stats: ScanStats,
+}
+
+pub struct CodexScan {
+    pub requests: Vec<Request>,
+    pub series: LimitSeries,
+    pub stats: ScanStats,
+}
+
+type ClaudeRecord = (Option<String>, Request);
+type ClaudeFileScan = Option<(Vec<ClaudeRecord>, ScanStats)>;
 
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -59,14 +104,19 @@ fn u64_of(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
+fn parse_claude_file(
+    path: &Path,
+    since: Option<i64>,
+) -> ClaudeFileScan {
     let project = path
         .parent()
         .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let Ok(f) = File::open(path) else {
-        return vec![];
+    let f = File::open(path).ok()?;
+    let mut stats = ScanStats {
+        files_opened: 1,
+        ..ScanStats::default()
     };
     let mut out = Vec::new();
     for line in BufReader::new(f).lines() {
@@ -92,6 +142,13 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
         if model.contains("<synthetic>") {
             continue;
         }
+        let ts = d
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_ts);
+        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
+            continue;
+        }
         let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
         let cw = u64_of(u, "cache_creation_input_tokens");
         let cc = u.get("cache_creation").cloned().unwrap_or(Value::Null);
@@ -110,10 +167,7 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
                     .and_then(Value::as_str)
                     .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or("?"))
                     .to_string(),
-                ts: d
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .and_then(parse_ts),
+                ts,
                 model,
                 unc_in: u64_of(u, "input_tokens"),
                 cached_in: u64_of(u, "cache_read_input_tokens"),
@@ -122,16 +176,20 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
                 out: u64_of(u, "output_tokens"),
             },
         ));
+        stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    out
+    Some((out, stats))
 }
 
-pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
+pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
     let root = claude_root();
     if !root.is_dir() {
-        return vec![];
+        return ClaudeScan {
+            requests: vec![],
+            stats: ScanStats::default(),
+        };
     }
-    let files: Vec<PathBuf> = match project {
+    let files: Vec<PathBuf> = match options.project.as_deref() {
         Some(p) => {
             let key = claude_project_key(p).to_lowercase();
             std::fs::read_dir(&root)
@@ -144,12 +202,19 @@ pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
         }
         None => jsonl_files(&root),
     };
-    let parsed: Vec<Vec<(Option<String>, Request)>> =
-        files.par_iter().map(|f| parse_claude_file(f)).collect();
+    let mut stats = ScanStats {
+        files_discovered: files.len() as u64,
+        ..ScanStats::default()
+    };
+    let parsed: Vec<ClaudeFileScan> = files
+        .par_iter()
+        .map(|f| parse_claude_file(f, options.since))
+        .collect();
     // Streamed chunks repeat the same message id - keep the first occurrence.
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
-    for chunk in parsed {
+    for (chunk, file_stats) in parsed.into_iter().flatten() {
+        stats += file_stats;
         for (mid, r) in chunk {
             if let Some(id) = mid {
                 if !seen.insert(id) {
@@ -159,7 +224,19 @@ pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
             out.push(r);
         }
     }
-    out
+    ClaudeScan {
+        requests: out,
+        stats,
+    }
+}
+
+pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
+    scan_claude(&ScanOptions {
+        project: project.map(Path::to_path_buf),
+        since: None,
+        use_index: false,
+    })
+    .requests
 }
 
 fn normalize_path_text(raw: &str) -> String {
@@ -224,9 +301,15 @@ pub fn peak(series: &LimitSeries) -> LimitPeak {
         .map(|&(_, u, w)| (u, w))
 }
 
-fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeries) {
-    let Ok(f) = File::open(path) else {
-        return (vec![], vec![]);
+fn parse_codex_file(
+    path: &Path,
+    want: Option<&str>,
+    since: Option<i64>,
+) -> Option<(Vec<Request>, LimitSeries, ScanStats)> {
+    let f = File::open(path).ok()?;
+    let mut stats = ScanStats {
+        files_opened: 1,
+        ..ScanStats::default()
     };
     let mut model = String::from("?");
     let mut project = String::from("?");
@@ -261,6 +344,13 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
         if p.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
         }
+        let ts = d
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_ts);
+        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
+            continue;
+        }
         if let Some(pr) = p.get("rate_limits").and_then(|rl| rl.get("primary")) {
             let used = pr
                 .get("used_percent")
@@ -270,12 +360,7 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
                 .get("window_minutes")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            let ts = d
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_ts)
-                .unwrap_or(0);
-            series.push((ts, used, win));
+            series.push((ts.unwrap_or(0), used, win));
         }
         let Some(u) = p
             .get("info")
@@ -294,10 +379,7 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
                 .and_then(|s| s.to_str())
                 .unwrap_or("?")
                 .to_string(),
-            ts: d
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_ts),
+            ts,
             model: model.clone(),
             unc_in: inp.saturating_sub(cch),
             cached_in: cch,
@@ -305,30 +387,53 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
             w1h: 0,
             out: u64_of(u, "output_tokens"),
         });
+        stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    (out, series)
+    Some((out, series, stats))
 }
 
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
-pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
+pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let root = codex_root();
     if !root.is_dir() {
-        return (vec![], vec![]);
+        return CodexScan {
+            requests: vec![],
+            series: vec![],
+            stats: ScanStats::default(),
+        };
     }
-    let want = project.map(path_key);
+    let want = options.project.as_deref().map(path_key);
     let files = jsonl_files(&root);
-    let parts: Vec<(Vec<Request>, LimitSeries)> = files
+    let mut stats = ScanStats {
+        files_discovered: files.len() as u64,
+        ..ScanStats::default()
+    };
+    let parts: Vec<Option<(Vec<Request>, LimitSeries, ScanStats)>> = files
         .par_iter()
-        .map(|f| parse_codex_file(f, want.as_deref()))
+        .map(|f| parse_codex_file(f, want.as_deref(), options.since))
         .collect();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
-    for (reqs, s) in parts {
+    for (reqs, s, file_stats) in parts.into_iter().flatten() {
+        stats += file_stats;
         out.extend(reqs);
         series.extend(s);
     }
     series.sort_unstable_by_key(|&(t, _, _)| t);
-    (out, series)
+    CodexScan {
+        requests: out,
+        series,
+        stats,
+    }
+}
+
+pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
+    let scan = scan_codex(&ScanOptions {
+        project: project.map(Path::to_path_buf),
+        since: None,
+        use_index: false,
+    });
+    (scan.requests, scan.series)
 }
 
 pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {

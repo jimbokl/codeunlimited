@@ -3,12 +3,17 @@
 use std::collections::BTreeMap;
 
 use crate::detectors::{self, Finding};
+use crate::parsers::ScanStats;
 use crate::types::Request;
 
 const BAR: &str = "================================================================";
 
 /// Machine-readable variant of the report for scripting (`audit --json`).
-pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
+pub fn render_json(
+    reqs: &[Request],
+    findings: &[Finding],
+    scan_stats: Option<&ScanStats>,
+) -> String {
     let mut per_src: BTreeMap<&str, (u64, u64, u64)> = BTreeMap::new();
     let mut per_proj: BTreeMap<String, u64> = BTreeMap::new();
     let mut tmin = i64::MAX;
@@ -42,7 +47,7 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
     projects.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
     projects.truncate(8);
     let reclaimed = detectors::reclaim_total(findings);
-    let obj = serde_json::json!({
+    let mut obj = serde_json::json!({
         "schema_version": 1,
         "period_days": days as u64,
         "sources": per_src.iter().map(|(src, s)| (src.to_string(), serde_json::json!({
@@ -66,6 +71,9 @@ pub fn render_json(reqs: &[Request], findings: &[Finding]) -> String {
             "project": p, "total_tokens": t,
         })).collect::<Vec<_>>(),
     });
+    if let Some(stats) = scan_stats {
+        obj["scan"] = serde_json::to_value(stats).unwrap_or_default();
+    }
     serde_json::to_string_pretty(&obj).unwrap_or_default()
 }
 

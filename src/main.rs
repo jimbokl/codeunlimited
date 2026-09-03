@@ -52,6 +52,12 @@ enum Cmd {
         /// Machine-readable output for scripting
         #[arg(long)]
         json: bool,
+        /// Disable the optional Codex metadata index
+        #[arg(long)]
+        no_index: bool,
+        /// Include local scan counters in JSON output
+        #[arg(long, requires = "json")]
+        scan_stats: bool,
     },
     /// Set a project up: works for a brand-new project and for attaching to an
     /// existing one (prints its baseline from history)
@@ -123,30 +129,42 @@ fn main() {
             project,
             days,
             json,
+            no_index,
+            scan_stats,
         } => {
             let p = project.as_deref();
+            let cutoff = days.map(|n| {
+                chrono::Utc::now()
+                    .timestamp()
+                    .saturating_sub((n as i64).saturating_mul(86_400))
+            });
+            let options = parsers::ScanOptions {
+                project: project.clone(),
+                since: cutoff,
+                use_index: !no_index,
+            };
             let mut reqs = Vec::new();
             let mut series: parsers::LimitSeries = Vec::new();
+            let mut stats = parsers::ScanStats::default();
             if matches!(source, Source::All | Source::Claude) {
-                reqs.extend(parsers::iter_claude(p));
+                let scan = parsers::scan_claude(&options);
+                reqs.extend(scan.requests);
+                stats += scan.stats;
             }
             if matches!(source, Source::All | Source::Codex) {
-                let (cx, s) = parsers::iter_codex_full(p);
-                reqs.extend(cx);
-                series = s;
+                let scan = parsers::scan_codex(&options);
+                reqs.extend(scan.requests);
+                series = scan.series;
+                stats += scan.stats;
             }
             let cfg = config::Config::load_for(p);
             reqs.retain(|r| !cfg.is_ignored(&r.project));
-            if let Some(n) = days {
-                let cutoff = chrono::Utc::now()
-                    .timestamp()
-                    .saturating_sub((n as i64).saturating_mul(86_400));
-                reqs.retain(|r| r.ts.is_some_and(|t| t >= cutoff));
-                series.retain(|&(t, _, _)| t >= cutoff);
-            }
             let findings = detectors::run_all(&reqs, &cfg);
             if json {
-                println!("{}", report::render_json(&reqs, &findings));
+                println!(
+                    "{}",
+                    report::render_json(&reqs, &findings, scan_stats.then_some(&stats))
+                );
             } else {
                 if let Some(p) = p {
                     println!("[scope: {}]", p.display());

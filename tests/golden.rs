@@ -62,7 +62,7 @@ fn golden_end_to_end() {
     assert!(text.contains("CODEUNLIMITED"));
     assert!(text.contains("claude"));
     assert!(text.contains("codex"));
-    let json = report::render_json(&all, &findings);
+    let json = report::render_json(&all, &findings, None);
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
     assert_eq!(v["schema_version"], 1);
     assert_eq!(v["sources"]["claude"]["requests"], 2);
