@@ -273,14 +273,14 @@
 - Produces: `ProviderResult { envelope, usage, exit_code, response_bytes, duration_ms }`
 - Guarantees: no shell, bounded output, timeout termination, no continuation flags
 
-- [ ] **Step 1: Create a deterministic fixture driver and failing adapter tests**
+- [x] **Step 1: Create a deterministic fixture driver and failing adapter tests**
 
   The Python fixture reads stdin, optionally captures it, emits a supplied
   envelope, emits oversized output, sleeps, exits non-zero, or changes a
   fixture repository based only on argv. Tests must not reference installed
   Claude/Codex binaries.
 
-- [ ] **Step 2: Add exact command-construction tests**
+- [x] **Step 2: Add exact command-construction tests**
 
   Assert Claude contains `--print --no-session-persistence --output-format
   json --json-schema`; Codex contains `exec --ephemeral --output-schema` and an
@@ -288,27 +288,27 @@
   Assert resume/continue/session-ID, required-flag override, and secret-bearing
   arguments fail before process creation.
 
-- [ ] **Step 3: Witness RED**
+- [x] **Step 3: Witness RED**
 
   Run: `cargo test runtime::provider::tests -- --nocapture`
 
   Expected: compilation fails because the provider module is absent.
 
-- [ ] **Step 4: Implement bounded child-process execution**
+- [x] **Step 4: Implement bounded child-process execution**
 
   Spawn with piped stdin/stdout/stderr, write prompt bytes, drain both output
   pipes concurrently while retaining at most 1 MiB, and use `wait_timeout`.
   On timeout kill and wait for the child. Never include retained body bytes in
   a `Display` diagnostic.
 
-- [ ] **Step 5: Implement provider parsing**
+- [x] **Step 5: Implement provider parsing**
 
   Command accepts a direct `StepEnvelope`. Claude accepts `structured_output`
   as an object or a JSON `result` string and reads optional usage fields. Codex
   reads the schema-constrained last-message file and optional JSONL token events.
   Missing usage fields map to `None`, not zero.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
   Run: `cargo test runtime::provider::tests -- --nocapture`
 

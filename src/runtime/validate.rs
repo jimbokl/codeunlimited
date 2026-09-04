@@ -42,7 +42,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), RuntimeError> {
         ));
     }
     validate_digest("workflow_sha256", &manifest.workflow_sha256)?;
-    validate_provider(&manifest.provider)?;
+    validate_provider_config(&manifest.provider)?;
     if manifest.max_steps == 0 || manifest.max_steps > MAX_TOTAL_ATTEMPTS {
         return Err(RuntimeError::InvalidManifest(format!(
             "max_steps must be between 1 and {MAX_TOTAL_ATTEMPTS}"
@@ -358,7 +358,7 @@ fn validate_artifact_resolution(
     Ok(())
 }
 
-fn validate_provider(provider: &ProviderConfig) -> Result<(), RuntimeError> {
+pub fn validate_provider_config(provider: &ProviderConfig) -> Result<(), RuntimeError> {
     validate_executable(provider.executable(), "provider executable")?;
     let provider_name = match provider {
         ProviderConfig::Claude { .. } => Some("claude"),
