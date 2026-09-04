@@ -49,7 +49,7 @@ try {
     if ((Invoke-Installer) -ne 0) { throw 'Valid installer run failed' }
     if ((Invoke-Installer) -ne 0) { throw 'Idempotent installer rerun failed' }
     $version = & (Join-Path $dest 'codeunlimited.exe') --version
-    if ($version -ne 'codeunlimited 1.9.0') { throw "Unexpected installed version: $version" }
+    if ($version -ne 'codeunlimited 2.0.0') { throw "Unexpected installed version: $version" }
     $pathEntries = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
     if (($pathEntries | Where-Object { $_ -eq $dest }).Count -ne 1) {
         throw 'Installer did not add exactly one user PATH entry'

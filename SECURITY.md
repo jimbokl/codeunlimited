@@ -1,11 +1,12 @@
 # Security and privacy
 
-## Runtime boundary
+## Observation plane
 
-`codeunlimited` has no network client and makes no runtime network requests.
-It reads Claude Code logs from `~/.claude/projects/**/*.jsonl` and Codex logs
-from `~/.codex/sessions/**/*.jsonl`. JSON records are decoded locally, but the
-tool extracts only:
+The audit, delta, report, forecast, doctor, and experiment-accounting commands
+have no network client and make no network requests. This observation plane
+reads Claude Code logs from `~/.claude/projects/**/*.jsonl` and Codex logs from
+`~/.codex/sessions/**/*.jsonl`. JSON records are decoded locally, but the tool
+extracts only:
 
 - token counts and cache counters;
 - model, timestamp, session, and project identifiers;
@@ -14,6 +15,26 @@ tool extracts only:
 Prompt text, response text, and tool arguments are not extracted, retained,
 printed, or transmitted. Reports can contain project names unless
 `report --anonymize` is used.
+
+## Execution plane and provider process
+
+`run init`, `run status`, and `run prompt` operate on local runtime control
+files without invoking a model. `run step` and `run auto` form a separate
+execution plane: they launch the explicitly configured provider process in the
+selected project directory.
+
+The provider process is not inside the observation plane's privacy boundary.
+It inherits the user's environment and provider configuration, can read or
+modify project files, can invoke tools, and may make network requests using its
+existing authentication. The built-in Claude and Codex adapters start a fresh
+non-resumable process for every orchestration step and require structured
+output; they do not make the provider itself offline or sandbox it.
+
+Provider arguments are stored in the run manifest. Common secret-flag values
+are redacted from `run status`, and known token/password arguments are rejected
+at initialization, but secrets should never be placed on a command line. The
+custom `command` adapter executes the exact program and argv supplied by the
+user without a shell; its behavior and network access belong to that program.
 
 ## Files and system state it can change
 
@@ -48,6 +69,13 @@ Commands write only when their documented behavior requires it:
   supplied. It contains timings, RSS, exit codes, source request counts, scan
   counters, and non-identifying platform fields; it excludes audit findings,
   token totals, models, projects, paths, prompts, and responses.
+- `run init` creates `.codeunlimited/runs/<name>/` with a manifest, immutable
+  workflow snapshot, bounded state and latest observation, exclusive lock,
+  immutable attempt records, compacted state archives, and an optional recovery
+  record. `run step`, `run auto`, and `run recover` update only that run's
+  control files, apart from changes made independently by the provider process
+  inside the selected project. The recommended ignore rule is
+  `.codeunlimited/runs/`.
 
 File replacements use a temporary sibling plus atomic persistence. The rename
 is the commit point; durability sync after that point is best effort so a

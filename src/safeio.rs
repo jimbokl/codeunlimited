@@ -50,6 +50,25 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })
 }
 
+/// Atomically create a regular file without replacing an existing path.
+pub fn atomic_create(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    reject_symlink(path)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut tmp = NamedTempFile::new_in(parent)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    let persisted = tmp.persist_noclobber(path).map_err(|error| error.error)?;
+    #[cfg(unix)]
+    {
+        let _ = File::open(parent).and_then(|directory| directory.sync_all());
+    }
+    drop(persisted);
+    Ok(())
+}
+
 fn atomic_write_with_post_commit(
     path: &Path,
     bytes: &[u8],
@@ -120,5 +139,18 @@ mod tests {
 
         assert!(result.is_ok(), "rename already committed the new state");
         assert_eq!(fs::read(path).expect("committed state"), b"new");
+    }
+
+    #[test]
+    fn atomic_create_never_replaces_an_existing_file() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("attempt.json");
+
+        atomic_create(&path, b"first").expect("first create");
+        assert_eq!(
+            atomic_create(&path, b"second").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(path).expect("original bytes"), b"first");
     }
 }

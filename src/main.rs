@@ -1,6 +1,6 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, schedule, skillcmd, techniques,
+    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques,
 };
 
 use std::io::IsTerminal;
@@ -22,8 +22,8 @@ fn parse_days(value: &str) -> Result<u64, String> {
 #[command(
     name = "codeunlimited",
     version,
-    about = "Offline estimates of token-leak opportunities, one-command fixes, and \
-             before/after tracking for Claude Code and Codex CLI."
+    about = "Local token-efficiency auditing and bounded stateful orchestration for \
+             Claude Code and Codex CLI."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -174,6 +174,11 @@ enum Cmd {
         #[command(subcommand)]
         command: ExperimentCmd,
     },
+    /// Run bounded stateful coding work in fresh provider processes
+    Run {
+        #[command(subcommand)]
+        command: runtimecmd::RunCmd,
+    },
     /// List every efficiency technique with on/off status and how to toggle it
     Techniques {
         /// Evaluate against this project's config (default: current directory)
@@ -307,6 +312,9 @@ fn main() {
                 } => experiment::compare(&control, &treatment, &path, json),
                 ExperimentCmd::List { path, json } => experiment::list(&path, json),
             });
+        }
+        Cmd::Run { command } => {
+            std::process::exit(runtimecmd::run(command));
         }
         Cmd::Techniques { path } => {
             let root = path.canonicalize().ok();

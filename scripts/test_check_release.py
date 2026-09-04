@@ -22,13 +22,18 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("1.9.0")
+        result = self.run_checker("2.0.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checker_does_not_require_python_311_tomllib(self) -> None:
         source = CHECKER.read_text(encoding="utf-8")
         self.assertNotIn("import tomllib", source)
         ast.parse(source, filename=str(CHECKER), feature_version=(3, 10))
+
+    def test_checker_enforces_the_runtime_release_surface(self) -> None:
+        source = CHECKER.read_text(encoding="utf-8")
+        self.assertIn('root / "docs" / "RUNTIME.md"', source)
+        self.assertIn("does not prove realized token savings", source)
 
     def test_mismatching_expected_version_fails(self) -> None:
         result = self.run_checker("9.9.9")
@@ -37,7 +42,7 @@ class ReleaseCheckerTests(unittest.TestCase):
 
     def test_shell_wrapper_accepts_minor_release(self) -> None:
         result = subprocess.run(
-            ["bash", str(CHECKER_SH), "1.9"],
+            ["bash", str(CHECKER_SH), "2.0"],
             cwd=ROOT,
             check=False,
             capture_output=True,

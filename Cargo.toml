@@ -1,9 +1,9 @@
 [package]
 name = "codeunlimited"
-version = "1.9.0"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Offline estimates of token-leak opportunities, one-command fixes, and before/after tracking for Claude Code and Codex CLI."
+description = "Local token-efficiency auditing and bounded stateful orchestration for Claude Code and Codex CLI."
 license = "MIT"
 repository = "https://github.com/jimbokl/codeunlimited"
 readme = "README.md"
@@ -28,6 +28,8 @@ clap = { version = "=4.5.48", features = ["derive"] }
 toml = "0.8"
 fs2 = "0.4"
 tempfile = "=3.14.0"
+sha2 = "0.10"
+wait-timeout = "0.2"
 # Keep fresh Cargo 1.82 resolution from selecting edition-2024 indexmap.
 indexmap = "=2.11.4"
 

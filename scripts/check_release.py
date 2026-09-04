@@ -102,6 +102,28 @@ def check(root: pathlib.Path, expected: str, tag: str | None = None) -> list[str
     if f"## {expected}" not in changelog:
         errors.append(f"CHANGELOG.md has no {expected} section")
 
+    runtime_path = root / "docs" / "RUNTIME.md"
+    if not runtime_path.is_file():
+        errors.append("docs/RUNTIME.md is missing")
+    else:
+        runtime = runtime_path.read_text(encoding="utf-8").lower()
+        for required in (
+            "observation plane",
+            "execution plane",
+            "does not prove realized token savings",
+        ):
+            if required not in runtime:
+                errors.append(f"docs/RUNTIME.md is missing required disclosure: {required}")
+
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    if "docs/RUNTIME.md" not in readme:
+        errors.append("README.md does not link docs/RUNTIME.md")
+
+    security = (root / "SECURITY.md").read_text(encoding="utf-8").lower()
+    for required in ("observation plane", "execution plane", "provider process"):
+        if required not in security:
+            errors.append(f"SECURITY.md is missing runtime boundary: {required}")
+
     if not (root / "LICENSE").is_file():
         errors.append("LICENSE is missing")
 
