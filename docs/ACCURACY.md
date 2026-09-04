@@ -80,11 +80,50 @@ metrics on activity after it. **Caveat:** right after the baseline, sessions
 are young by definition, so "context per turn" dips mechanically. Trust the
 **trend across a week or more** (one snapshot per `report` run), not a
 single day-1 delta. The tool never extrapolates a day into a week for you.
+`delta` still prints the exact retained metrics below 100 post-baseline
+requests per source, but labels the sample insufficient and emits no improving,
+worsening, savings, or capacity verdict until that fixed threshold is reached.
 
 These are observational comparisons. A change after `init` may also reflect a
 different task mix, model, operator, or provider behavior. Use the outcome
 protocol in [BENCHMARKING.md](BENCHMARKING.md) when evaluating whether the
 utility helped real work.
+
+## Exact bounded experiment counters
+
+`experiment start`/`finish` and historical `experiment record` sum recognized
+integer counters whose request timestamps fall in the explicit half-open
+interval `started_unix <= timestamp < finished_unix`. The persisted numerator
+keeps uncached input, cache reads, 5-minute and 1-hour cache writes, output,
+request count, and composite `(source, project, session)` session count.
+Arithmetic saturates at the integer limit rather than wrapping.
+
+Historical RFC 3339 boundaries must use whole-second precision; fractional
+seconds are rejected rather than truncated. A missing Claude or Codex source
+root contributes zero records. Once a source root exists, traversal, open, or
+read failures abort the measurement before experiment state is changed, so an
+I/O failure cannot be mistaken for complete zero usage.
+
+A recognized project request without a usable timestamp cannot be assigned to
+either side of a boundary. Its count is retained, the record is marked
+incomplete, and comparison is refused. Active, empty, zero-token, overlapping,
+and zero-task records are also not comparable. Exact here describes the sum of
+the counters present in recognized local records, not provider billing weights
+or a causal estimate.
+
+Comparison embeds both exact records and their task denominators. Per-task
+decimals and percentages are rounded presentation views; the integer totals
+remain the reproducible source. Results always say `causality: observational`
+and are low confidence when either arm declares fewer than three completed
+tasks. Differences in task mix, difficulty, models, tools, operator behavior,
+and provider accounting can explain an observed movement.
+
+The dated 1.7/1.8 sprint artifact records 39,110,299 control input tokens and
+50,720,723 treatment input tokens for one completed task in each arm. The exact
+observed difference is +11,610,424 input tokens per task (+29.7%), with a
+-22.9% observed capacity view. Because each arm contains one historical
+sprint with uncontrolled differences in scope and difficulty, this is low
+confidence and does not show attributable savings.
 
 ## Query filtering and the Codex metadata index
 

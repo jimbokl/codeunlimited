@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,88 @@ fn binary() -> Command {
 
 fn fixture(path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+}
+
+fn write_delta_fixture(project: &Path, home: &Path, requests: u64) {
+    let key = codeunlimited::parsers::claude_project_key(project);
+    let log = home.join("claude/projects").join(key).join("delta.jsonl");
+    fs::create_dir_all(log.parent().expect("delta fixture parent"))
+        .expect("delta fixture directory");
+    let mut rows = String::new();
+    for index in 0..requests {
+        writeln!(
+            rows,
+            "{{\"type\":\"assistant\",\"sessionId\":\"s\",\"timestamp\":\"2099-01-01T00:00:00Z\",\"message\":{{\"id\":\"m{index}\",\"model\":\"private-model\",\"usage\":{{\"input_tokens\":500,\"output_tokens\":1}}}}}}"
+        )
+        .expect("delta fixture row");
+    }
+    fs::write(log, rows).expect("delta fixture");
+    fs::write(
+        project.join(codeunlimited::deltacmd::BASELINE_FILE),
+        r#"{"created_unix":0,"source":"claude","metrics":{"requests":100,"avg_prompt_per_turn":1000,"context_growth":1.0}}"#,
+    )
+    .expect("delta baseline");
+}
+
+#[test]
+fn delta_with_zero_requests_reports_exact_insufficient_sample() {
+    let project = TempDir::new().expect("project");
+    let home = TempDir::new().expect("isolated homes");
+    write_delta_fixture(project.path(), home.path(), 0);
+
+    let output = binary()
+        .env("CLAUDE_HOME", home.path().join("claude"))
+        .env("CODEX_HOME", home.path().join("codex"))
+        .arg("delta")
+        .arg(project.path())
+        .output()
+        .expect("delta process");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("delta UTF-8");
+    assert!(stdout.contains("insufficient sample (0/100 requests)"));
+    assert!(!stdout.contains("VERDICT"));
+}
+
+#[test]
+fn delta_with_nine_requests_reports_insufficient_sample_without_direction() {
+    let project = TempDir::new().expect("project");
+    let home = TempDir::new().expect("isolated homes");
+    write_delta_fixture(project.path(), home.path(), 9);
+
+    let output = binary()
+        .env("CLAUDE_HOME", home.path().join("claude"))
+        .env("CODEX_HOME", home.path().join("codex"))
+        .arg("delta")
+        .arg(project.path())
+        .output()
+        .expect("delta process");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("delta UTF-8");
+    assert!(stdout.contains("insufficient sample (9/100 requests)"));
+    assert!(!stdout.contains("VERDICT"));
+    assert!(!stdout.contains("more work"));
+    assert!(!stdout.contains("leaks are growing"));
+}
+
+#[test]
+fn delta_with_one_hundred_requests_retains_directional_verdict() {
+    let project = TempDir::new().expect("project");
+    let home = TempDir::new().expect("isolated homes");
+    write_delta_fixture(project.path(), home.path(), 100);
+
+    let output = binary()
+        .env("CLAUDE_HOME", home.path().join("claude"))
+        .env("CODEX_HOME", home.path().join("codex"))
+        .arg("delta")
+        .arg(project.path())
+        .output()
+        .expect("delta process");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("delta UTF-8");
+    assert!(stdout.contains("VERDICT: context per turn is down 50%"));
 }
 
 #[test]

@@ -33,6 +33,12 @@ Commands write only when their documented behavior requires it:
   the index contains no prompts, responses, models, token events, or counts.
   `audit --no-index` neither reads nor writes it;
 - `report --all` maintains `~/.codeunlimited/history.jsonl`;
+- `experiment start`, `finish`, and `record` serialize mutations with
+  `.codeunlimited.experiments.lock` and atomically maintain
+  `.codeunlimited.experiments.json` in the selected project. The JSON contains only
+  validated experiment names, Unix boundaries, task counts, completeness
+  counts, and aggregate token/request/session counters; it contains no models,
+  paths, prompts, responses, findings, hostnames, or raw log records;
 - `skill` writes `~/.claude/skills/codeunlimited/SKILL.md`; replacing different
   content requires `--force` and keeps a backup;
 - on Windows, `schedule` creates or removes the named Task Scheduler entry.
@@ -43,7 +49,9 @@ Commands write only when their documented behavior requires it:
   counters, and non-identifying platform fields; it excludes audit findings,
   token totals, models, projects, paths, prompts, and responses.
 
-File replacements use a temporary sibling plus atomic persistence. Existing
+File replacements use a temporary sibling plus atomic persistence. The rename
+is the commit point; durability sync after that point is best effort so a
+committed mutation is never reported as though no state changed. Existing
 instruction-file and skill permissions are preserved where the platform
 supports them. Symlinked instruction or skill targets are rejected rather than
 followed. A failed mutation returns a non-zero exit status.
