@@ -6,7 +6,7 @@
   "provenance": {
     "control_start_git_sha": "78dd522adffa4fa63836897456e647c39d094d59",
     "control_end_git_sha": "a8036035126221a1903e3a9845f325e9621e8434",
-    "treatment_end_git_sha": "c0b11c5931e2f420eff97ffec43dfebe7fe205ee"
+    "treatment_end_git_sha": "4bcd40471f7dfa8664c904c31562e31b06e31603"
   },
   "windows": {
     "control": {
@@ -18,9 +18,9 @@
     },
     "treatment": {
       "started_unix": 1788517678,
-      "finished_unix": 1788522031,
+      "finished_unix": 1788522259,
       "from_rfc3339": "2026-09-04T10:27:58Z",
-      "to_rfc3339": "2026-09-04T11:40:31Z",
+      "to_rfc3339": "2026-09-04T11:44:19Z",
       "completed_tasks": 1
     }
   },
@@ -48,21 +48,21 @@
     "treatment": {
       "name": "v1.8-treatment",
       "started_unix": 1788517678,
-      "finished_unix": 1788522031,
+      "finished_unix": 1788522259,
       "completed_tasks": 1,
       "status": "complete",
       "complete_accounting": true,
       "records_without_timestamp": 0,
       "totals": {
-        "requests": 446,
+        "requests": 467,
         "sessions": 3,
-        "uncached_input_tokens": 653847,
-        "cache_read_input_tokens": 46715136,
+        "uncached_input_tokens": 670547,
+        "cache_read_input_tokens": 50050176,
         "cache_write_5m_input_tokens": 0,
         "cache_write_1h_input_tokens": 0,
-        "input_tokens": 47368983,
-        "output_tokens": 165718,
-        "total_tokens": 47534701
+        "input_tokens": 50720723,
+        "output_tokens": 171745,
+        "total_tokens": 50892468
       }
     }
   },
@@ -90,34 +90,34 @@
     "treatment": {
       "name": "v1.8-treatment",
       "started_unix": 1788517678,
-      "finished_unix": 1788522031,
+      "finished_unix": 1788522259,
       "completed_tasks": 1,
       "status": "complete",
       "complete_accounting": true,
       "records_without_timestamp": 0,
       "totals": {
-        "requests": 446,
+        "requests": 467,
         "sessions": 3,
-        "uncached_input_tokens": 653847,
-        "cache_read_input_tokens": 46715136,
+        "uncached_input_tokens": 670547,
+        "cache_read_input_tokens": 50050176,
         "cache_write_5m_input_tokens": 0,
         "cache_write_1h_input_tokens": 0,
-        "input_tokens": 47368983,
-        "output_tokens": 165718,
-        "total_tokens": 47534701
+        "input_tokens": 50720723,
+        "output_tokens": 171745,
+        "total_tokens": 50892468
       }
     },
     "control_input_tokens_per_task": 39110299.0,
-    "treatment_input_tokens_per_task": 47368983.0,
-    "observed_input_delta_per_task": 8258684.0,
-    "observed_input_change_percent": 21.116391874171047,
-    "observed_capacity_change_percent": -17.43479272079791,
+    "treatment_input_tokens_per_task": 50720723.0,
+    "observed_input_delta_per_task": 11610424.0,
+    "observed_input_change_percent": 29.68635959546103,
+    "observed_capacity_change_percent": -22.89088820756755,
     "confidence": "low",
     "causality": "observational"
   },
   "comparison_text_lines": [
-    "exact observed counters: control=39110299 input tokens/tasks=1; treatment=47368983 input tokens/tasks=1",
-    "treatment has 8258684 higher observed input tokens per task (+21.1% change); observed capacity change -17.4%",
+    "exact observed counters: control=39110299 input tokens/tasks=1; treatment=50720723 input tokens/tasks=1",
+    "treatment has 11610424 higher observed input tokens per task (+29.7% change); observed capacity change -22.9%",
     "low confidence: either arm has fewer than three completed tasks",
     "observational comparison: this observed difference does not establish causality"
   ],
@@ -127,22 +127,22 @@
     "treatment_category_sum_matches_input": true,
     "treatment_input_plus_output_matches_total": true,
     "observed_delta_per_task": {
-      "uncached_input_tokens": -716036,
-      "cache_read_input_tokens": 8974720,
+      "uncached_input_tokens": -699336,
+      "cache_read_input_tokens": 12309760,
       "cache_write_5m_input_tokens": 0,
       "cache_write_1h_input_tokens": 0,
-      "input_tokens": 8258684,
-      "output_tokens": -8363,
-      "total_tokens": 8250321
+      "input_tokens": 11610424,
+      "output_tokens": -2336,
+      "total_tokens": 11608088
     },
-    "observed_input_change_percent_high_precision": "21.116391874171046352777819468984371610148007306209",
-    "observed_capacity_change_percent_high_precision": "-17.434792720797911156336204220386154374477493004230",
+    "observed_input_change_percent_high_precision": "29.686359595461031888301339757080353694048721028699",
+    "observed_capacity_change_percent_high_precision": "-22.890888207567545912151133965499663717333051423577",
     "matches_cli_json": true
   },
   "commands": [
     "cargo build --release --locked",
     "codeunlimited experiment record v1.7-control --from 2026-09-03T19:14:02Z --to 2026-09-03T20:52:49Z --tasks 1 . --json",
-    "codeunlimited experiment record v1.8-treatment --from 2026-09-04T10:27:58Z --to 2026-09-04T11:40:31Z --tasks 1 . --json",
+    "codeunlimited experiment record v1.8-treatment --from 2026-09-04T10:27:58Z --to 2026-09-04T11:44:19Z --tasks 1 . --json",
     "codeunlimited experiment compare v1.7-control v1.8-treatment . --json",
     "codeunlimited experiment compare v1.7-control v1.8-treatment ."
   ],

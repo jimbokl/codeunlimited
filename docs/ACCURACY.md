@@ -119,9 +119,9 @@ tasks. Differences in task mix, difficulty, models, tools, operator behavior,
 and provider accounting can explain an observed movement.
 
 The dated 1.7/1.8 sprint artifact records 39,110,299 control input tokens and
-47,368,983 treatment input tokens for one completed task in each arm. The exact
-observed difference is +8,258,684 input tokens per task (+21.1%), with a
--17.4% observed capacity view. Because each arm contains one historical
+50,720,723 treatment input tokens for one completed task in each arm. The exact
+observed difference is +11,610,424 input tokens per task (+29.7%), with a
+-22.9% observed capacity view. Because each arm contains one historical
 sprint with uncontrolled differences in scope and difficulty, this is low
 confidence and does not show attributable savings.
 
