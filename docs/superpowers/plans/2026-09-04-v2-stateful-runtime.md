@@ -216,7 +216,7 @@
 - Produces: `compile_prompt(manifest: &Manifest, workflow: &[u8], state: &CodingState, observation: &[u8]) -> Result<CompiledPrompt, RuntimeError>`
 - Produces: `STEP_ENVELOPE_SCHEMA_JSON: &str`
 
-- [ ] **Step 1: Add failing prompt golden tests**
+- [x] **Step 1: Add failing prompt golden tests**
 
   Assert exact bytes for a small fixture, CRLF normalization, minified state,
   stable-prefix hash equality across revisions, whole-prompt hash inequality
@@ -232,26 +232,26 @@
   }
   ```
 
-- [ ] **Step 2: Witness RED**
+- [x] **Step 2: Witness RED**
 
   Run: `cargo test runtime::prompt::tests -- --nocapture`
 
   Expected: compilation fails because `compile_prompt` is missing.
 
-- [ ] **Step 3: Implement canonical prompt sections**
+- [x] **Step 3: Implement canonical prompt sections**
 
   Emit fixed headings in this order: runtime contract/schema, workflow,
   objective/constraints, current state, latest observation, one-step command.
   Normalize workflow/observation line endings and serialize state with compact
   struct-order JSON. Hash the exact stable prefix and whole prompt with SHA-256.
 
-- [ ] **Step 4: Enforce every admission budget before returning bytes**
+- [x] **Step 4: Enforce every admission budget before returning bytes**
 
   Reject invalid UTF-8 workflow/observation, workflow/state/observation cap
   failures, and total prompt overflow with variants that include actual and
   allowed byte counts but never include content.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
   Run: `cargo test runtime::prompt::tests -- --nocapture`
 
