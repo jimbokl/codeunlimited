@@ -333,26 +333,26 @@
 - Produces: `recover(&RunRef, &[u8]) -> Result<RunStatusView, RuntimeError>`
 - Produces: `git_snapshot(project_root: &Path) -> GitSnapshot`
 
-- [ ] **Step 1: Add failing engine lifecycle tests**
+- [x] **Step 1: Add failing engine lifecycle tests**
 
   Cover init without provider call, one successful step, terminal complete,
   blocked, finite auto loop, max attempts, total-attempt limit, verification
   success/failure, state byte preservation after invalid delta, and status
   aggregation with unknown provider counters.
 
-- [ ] **Step 2: Add recovery tests**
+- [x] **Step 2: Add recovery tests**
 
   Simulate invalid JSON with no repository change (retry permitted), invalid
   JSON after a repository change (`needs_recovery`), refusal of another step,
   bounded manual recovery, and repository-byte preservation throughout.
 
-- [ ] **Step 3: Witness RED**
+- [x] **Step 3: Witness RED**
 
   Run: `cargo test runtime::engine::tests -- --nocapture`
 
   Expected: compilation fails because engine entry points are absent.
 
-- [ ] **Step 4: Implement Git snapshots and the one-step transaction**
+- [x] **Step 4: Implement Git snapshots and the one-step transaction**
 
   Invoke Git without a shell, tolerate non-Git projects as an explicit
   unavailable snapshot, hold the run lock from load through final persistence,
@@ -360,14 +360,14 @@
   compute artifact digests, optionally execute verification, and commit exactly
   one revision.
 
-- [ ] **Step 5: Implement verification and observations**
+- [x] **Step 5: Implement verification and observations**
 
   Execute only the manifest's program-plus-argv command. Capture a bounded
   combined output tail. Runtime-generated `CheckResult` receives the post-step
   workspace hash. A failed completion check commits the useful state delta as
   `running` and sets the bounded failure tail as the next observation.
 
-- [ ] **Step 6: Implement attempts and recovery state**
+- [x] **Step 6: Implement attempts and recovery state**
 
   Record hashes, byte counts, duration, status, optional usage, and Git
   snapshots without prompt/response bodies. When a failed/invalid provider
@@ -375,13 +375,13 @@
   `RecoveryRequired`. `recover` advances one revision using only bounded user
   observation and never modifies project content.
 
-- [ ] **Step 7: Implement bounded auto execution**
+- [x] **Step 7: Implement bounded auto execution**
 
   Reuse `step` without a second state path. Stop on complete, blocked, first
   failure, recovery, manifest attempt limit, or requested count. Never retry a
   failed revision inside `auto`.
 
-- [ ] **Step 8: Run GREEN and commit**
+- [x] **Step 8: Run GREEN and commit**
 
   Run: `cargo test runtime::engine::tests -- --nocapture`
 

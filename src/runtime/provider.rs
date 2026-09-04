@@ -269,13 +269,27 @@ fn reject_overrides(args: &[String], protected: &[&str]) -> Result<(), RuntimeEr
 }
 
 #[derive(Debug)]
-struct RawOutput {
-    stdout: Vec<u8>,
-    exit_code: i32,
-    duration_ms: u64,
+pub(crate) struct RawOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit_code: i32,
+    pub duration_ms: u64,
 }
 
 fn run_process(
+    spec: &CommandSpec,
+    prompt: &[u8],
+    project_root: &Path,
+    timeout: Duration,
+) -> Result<RawOutput, ProviderFailure> {
+    let output = capture_process(spec, prompt, project_root, timeout)?;
+    if output.exit_code != 0 {
+        return Err(ProviderFailure::Exit(output.exit_code));
+    }
+    Ok(output)
+}
+
+pub(crate) fn capture_process(
     spec: &CommandSpec,
     prompt: &[u8],
     project_root: &Path,
@@ -327,11 +341,9 @@ fn run_process(
         return Err(ProviderFailure::OutputTooLarge);
     }
     let exit_code = status.code().unwrap_or(-1);
-    if !status.success() {
-        return Err(ProviderFailure::Exit(exit_code));
-    }
     Ok(RawOutput {
         stdout: stdout.bytes,
+        stderr: stderr.bytes,
         exit_code,
         duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
     })

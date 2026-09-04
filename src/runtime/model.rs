@@ -345,6 +345,10 @@ pub enum RuntimeError {
     InvalidStoredData(&'static str),
     WorkflowHashMismatch,
     Io(String),
+    ProviderFailed(String),
+    RecoveryRequired,
+    AttemptLimit,
+    TerminalRun,
 }
 
 impl fmt::Display for RuntimeError {
@@ -404,6 +408,10 @@ impl fmt::Display for RuntimeError {
             Self::InvalidStoredData(name) => write!(f, "invalid stored runtime data: {name}"),
             Self::WorkflowHashMismatch => write!(f, "workflow snapshot hash mismatch"),
             Self::Io(operation) => write!(f, "runtime I/O failed during {operation}"),
+            Self::ProviderFailed(category) => write!(f, "provider failed: {category}"),
+            Self::RecoveryRequired => write!(f, "run requires explicit recovery"),
+            Self::AttemptLimit => write!(f, "run attempt limit reached"),
+            Self::TerminalRun => write!(f, "run is already in a terminal state"),
         }
     }
 }

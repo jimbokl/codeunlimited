@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sys
 import time
 
@@ -24,26 +25,34 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", required=True)
     parser.add_argument("--revision", type=int, default=0)
+    parser.add_argument("--revision-from-prompt", action="store_true")
+    parser.add_argument("--outcome", default="continue")
     parser.add_argument("--capture")
     parser.add_argument("--change")
     parser.add_argument("--sleep", type=float, default=2.0)
     args = parser.parse_args()
 
     prompt = sys.stdin.buffer.read()
+    revision = args.revision
+    if args.revision_from_prompt:
+        match = re.search(rb'"revision":([0-9]+)', prompt)
+        if match is None:
+            return 65
+        revision = int(match.group(1))
     if args.capture:
         pathlib.Path(args.capture).write_bytes(prompt)
     if args.change:
         pathlib.Path(args.change).write_text("changed\n", encoding="utf-8")
 
     if args.mode == "success":
-        json.dump(envelope(args.revision), sys.stdout, separators=(",", ":"))
+        json.dump(envelope(revision, args.outcome), sys.stdout, separators=(",", ":"))
         return 0
     if args.mode == "claude":
         json.dump(
             {
                 "type": "result",
                 "result": "unused",
-                "structured_output": envelope(args.revision),
+                "structured_output": envelope(revision, args.outcome),
                 "usage": {
                     "input_tokens": 101,
                     "cache_read_input_tokens": 70,
@@ -62,7 +71,7 @@ def main() -> int:
         return 0
     if args.mode == "sleep":
         time.sleep(args.sleep)
-        json.dump(envelope(args.revision), sys.stdout)
+        json.dump(envelope(revision, args.outcome), sys.stdout)
         return 0
     if args.mode == "failure":
         sys.stderr.write("PRIVATE PROVIDER ERROR BODY")

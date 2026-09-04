@@ -215,6 +215,35 @@ impl RunStore {
         }
     }
 
+    pub fn read_attempts<T: DeserializeOwned>(&self) -> Result<Vec<T>, RuntimeError> {
+        ensure_existing_directory(&self.paths.attempts)?;
+        let mut paths = fs::read_dir(&self.paths.attempts)
+            .map_err(|_| io_error("list attempts"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| io_error("list attempts"))?;
+        paths.sort();
+        paths
+            .into_iter()
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+            .map(|path| read_json(&path, "attempt"))
+            .collect()
+    }
+
+    pub fn control_hash(&self) -> Result<String, RuntimeError> {
+        let mut hasher = Sha256::new();
+        for (name, path) in [
+            ("manifest", &self.paths.manifest),
+            ("workflow", &self.paths.workflow),
+            ("state", &self.paths.state),
+            ("observation", &self.paths.observation),
+        ] {
+            hasher.update(name.as_bytes());
+            hasher.update(read_bytes(path)?);
+        }
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
     pub fn write_recovery(&self, recovery: &RecoveryRecord) -> Result<(), RuntimeError> {
         write_json(&self.paths.recovery, recovery, "recovery.json")
     }
