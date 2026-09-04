@@ -196,7 +196,7 @@ class PythonMatrixTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("bash scripts/audit-package.sh 2.0", ci)
+        self.assertIn("bash scripts/audit-package.sh 2.1", ci)
         self.assertIn('bash scripts/audit-package.sh "$version"', release)
 
 

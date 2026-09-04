@@ -1,8 +1,9 @@
 # Stateful orchestration runtime
 
-Version 2.0 adds a bounded, stateful orchestration runtime alongside the
-existing local auditor. It is intended for long coding jobs where repeatedly
-transporting the full conversation is expensive.
+Version 2.1 builds on the bounded stateful runtime introduced in 2.0. Its
+primary execution layer uses existing Claude Code and Codex subscription
+logins. An optional, separately configured OpenAI/Anthropic API layer uses
+metered API credentials. The local auditor remains offline.
 
 The runtime uses the SKILL.state boundary `P + state + observation`:
 
@@ -26,12 +27,13 @@ codeunlimited run init sprint-2 \
   --skill workflow.md \
   --objective "Implement and verify the next planned increment" \
   --provider claude \
+  --subscription-profile lean \
   --verify-program cargo \
   --verify-arg test \
   --verify-every-step
 ```
 
-Inspect the exact next prompt without invoking a model, execute one increment,
+Inspect the self-contained next prompt without invoking a model, execute one increment,
 or run a finite batch:
 
 ```bash
@@ -55,7 +57,16 @@ codeunlimited run init fixture \
 
 Arguments are passed as exact argv values with repeated `--provider-arg` or
 `--verify-arg`; no shell is involved. Provider arguments that would disable the
-required ephemeral or structured-output controls are rejected.
+required ephemeral, instruction, profile, or structured-output controls are
+rejected at initialization. Codex `-c`/`--config` and profile overrides are not
+accepted through this adapter; configure the supported runtime options instead.
+
+`standard` is the default for both existing and new subscription runs. `lean`
+is opt-in: Claude disables MCP servers, Chrome, and slash commands and retains
+Bash/Edit/Read/Write/Glob/Grep; Codex ignores user configuration while retaining
+authentication. Use standard when a workflow depends on those integrations.
+Lean does not change the model or reasoning effort and does not use Claude
+`--bare` (which would bypass subscription OAuth).
 
 ## Durable state and transition contract
 
@@ -107,6 +118,7 @@ Each run lives under `.codeunlimited/runs/<name>/`:
 ```text
 manifest.json       immutable configuration and budgets
 workflow.md         immutable workflow snapshot
+provider-instructions.md  verified stable instructions for built-in/API providers
 state.json          current validated hot state
 observation.txt     latest bounded observation
 lock                exclusive run lock
@@ -127,6 +139,13 @@ another state-sharing policy:
 The workflow is snapshotted and hashed at initialization. Editing the original
 workflow file does not silently change an existing run.
 
+The state/envelope/manifest format stays at schema version 1. New provider
+profile fields default to standard when absent. A missing instruction file in
+a legacy run is reconstructed in memory during `status`/`prompt`, then created
+before execution. Inspection never rewrites the manifest. It remains available
+if the newer compiled prompt exceeds a legacy run's configured budget; actual
+execution still rejects the over-budget prompt before invoking a provider.
+
 ## Budgets and termination
 
 Defaults are 24 KiB for the immutable workflow, 16 KiB for serialized hot
@@ -141,24 +160,43 @@ limits. Terminal or exhausted runs do not invoke another provider.
 
 ## Provider isolation and prompt caching
 
-The stable prefix contains the runtime contract, JSON schema, immutable
-workflow, its SHA-256, and objective. The dynamic suffix contains only current
-state, latest observation, and revision. `run status --json` exposes
+The stable channel contains the runtime contract, immutable workflow, its
+SHA-256, and objective. The dynamic channel contains current state, latest
+observation, and revision. Built-in/API providers receive the response schema
+out of band. The generic command provider receives a combined self-contained
+prompt including that schema; `run prompt` prints this combined inspection
+form, not a capture of hidden provider context. `run status --json` exposes
 `prompt_bytes`, `stable_prompt_bytes`, `dynamic_prompt_bytes`, and cumulative
 provider counters when reported:
 
 ```text
 input_tokens
+input_token_semantics
+uncached_input_tokens
 cache_read_input_tokens
 cache_write_input_tokens
+cache_write_5m_input_tokens
+cache_write_1h_input_tokens
 output_tokens
 ```
 
-The Claude adapter uses print mode, disables session persistence, requests
-schema-constrained JSON, and excludes dynamic system-prompt sections. The Codex
-adapter uses `codex exec --ephemeral`, a JSON output schema, and a temporary
-last-message file. Neither adapter resumes a provider conversation or stores a
-provider session ID.
+Claude uses `--append-system-prompt-file` for stable instructions and receives
+only dynamic input on stdin. Codex uses `codex exec --ephemeral` and a constant
+bootstrap requesting three ordered reads: stable instructions first, then
+state and observation. It does not replace Codex's built-in instructions with
+`model_instructions_file`. Native project rules remain the CLI's responsibility;
+the stable artifact is not an AGENTS.md snapshot. Ordered reads are a worker
+instruction, not an enforced provider cache boundary. Neither adapter resumes
+a provider conversation or stores a provider session ID.
+
+OpenAI/Codex input totals include cached input. Anthropic `input_tokens` is the
+uncached remainder, so transported input is uncached + cache read + cache write.
+Status and step reports derive `transported_input_tokens` and
+`cache_read_ratio_basis_points` only from sufficient reported counters. Unknown
+values remain null; mixed legacy semantics make aggregate derivations unknown.
+A response with invalid structured output still contributes API usage when
+reported. Transport failures without a readable usage record remain unknown.
+Probe usage is excluded from step totals and reported separately.
 
 These choices make the visible prefix deterministic and improve the conditions
 for provider-side prompt-cache reuse. They do not force a cache hit. Cache
@@ -168,14 +206,62 @@ token counts, and OpenAI and Anthropic usage fields must not be combined with
 one generic cost formula. The runtime does not pad small prompts merely to
 cross a cache threshold.
 
-The CLI adapters also cannot expose every cache-control option available in
-the providers' direct APIs. API users can apply provider-specific cache
-controls around the same stable-prefix/dynamic-suffix boundary; that is a
-separate integration from this local process runtime. Consult the current
+Cache-read ratio describes reuse, not fewer transported tokens or recovered
+subscription quota. Provider-native prefixes may already be cached without
+codeunlimited. Public API discounts do not establish how subscription limits
+are charged. Consult the current
 [OpenAI prompt-caching guide](https://developers.openai.com/api/docs/guides/prompt-caching),
 [Anthropic prompt-caching guide](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
 and [Claude Code CLI reference](https://code.claude.com/docs/en/cli-usage)
 rather than treating API cache fields as CLI flags.
+
+### Optional API layer
+
+```bash
+# Supply OPENAI_API_KEY securely in the environment first.
+codeunlimited run init planner --skill workflow.md \
+  --objective "Produce one bounded planning increment" \
+  --provider openai-api --api-model YOUR_SUPPORTED_MODEL --cache-ttl 30m
+```
+
+For Anthropic use `--provider anthropic-api --api-model YOUR_SUPPORTED_MODEL`,
+with `ANTHROPIC_API_KEY` and `--cache-ttl 5m` (default) or `1h`. OpenAI uses the
+Responses API, a stable developer block, explicit cache breakpoint, stable key,
+and `30m` TTL. Anthropic caches the stable system block. Both require a model
+supporting the selected cache and JSON-schema features; model compatibility is
+not inferred from its name or validated by a paid request at init.
+
+The API capability is `single_turn_no_local_tools`: these adapters can return
+state transitions but cannot inspect or edit a repository. A workflow must
+arrange any external work independently. They are not subscription transports
+and are not drop-in replacements for the coding CLIs. Prompts may contain the
+workflow, objective, retained state, and observation; the API sends these to the
+configured endpoint. Keys are read only from the environment. Remote endpoints
+require HTTPS, loopback HTTP is permitted for tests, and redirects are disabled.
+Responses are limited to 1 MiB and model output to 4096 tokens. HTTP failures
+are content-free and are not automatically retried.
+
+### Opt-in cache probe
+
+```bash
+codeunlimited run cache-probe sprint-2 --project . --json
+```
+
+This command consumes two provider calls and never runs automatically. It uses
+two distinct no-op samples with a maximum 60 seconds per call. Subscription
+probes force the reduced integration profile: Claude has no built-in tools,
+MCP, Chrome, slash commands, or hooks; Codex ignores user configuration and
+uses a read-only filesystem sandbox. Only model/effort provider arguments are
+accepted for probing. A user-supplied executable is still trusted code; the
+runtime cannot make an arbitrary binary harmless.
+
+The report contains both raw usage records, duration, stable hash, and
+`cache_hit_reported`: true for a positive second cache-read count, false for
+reported zero, null when unavailable. Cached tokens can belong to the provider's
+own system prompt. The probe does not establish that our workflow was cached,
+does not reproduce a standard-profile coding workload, and does not establish
+incremental savings. It commits no work transition and runs no verification
+command. Save its report separately when accounting for all experiment costs.
 
 ## Verification and recovery
 
@@ -207,9 +293,9 @@ attempt is conservatively treated as ambiguous.
 There are two distinct planes:
 
 - The **observation plane** (`audit`, `delta`, `report`, and experiment
-  accounting) parses local metadata and has no network client.
-- The **execution plane** (`run step` and `run auto`) launches the configured
-  provider process in the project directory. That process inherits the user's
+  accounting) parses local metadata and makes no network requests.
+- The **execution plane** (`run step`, `run auto`, and `run cache-probe`) invokes
+  the selected subscription process or optional API. A provider process inherits the user's
   environment and can read or modify project files, use its existing
   authentication, invoke tools, and make network requests according to the
   provider's own configuration.

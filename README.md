@@ -7,7 +7,7 @@ an ever-growing orchestration transcript.**
 
 `codeunlimited` has two product surfaces. Its local auditor separates what was
 **observed** from what is **modeled**, sums local log counters exactly, and
-measures input tokens per comparable completed task. Its 2.0 stateful runtime
+measures input tokens per comparable completed task. Its 2.1 stateful runtime
 executes long work as fresh provider processes connected by a bounded,
 validated state. Neither surface promises a fixed savings percentage. A
 historical selected-session snapshot reported an x6.8 observed/model ratio;
@@ -94,7 +94,7 @@ could trade output quality for tokens are marked, phrased with explicit
 limits, and the aggressive ones default to off — built for smart,
 token-hungry next-gen models.
 
-## Stateful runtime (2.0)
+## Stateful runtime (2.1): subscription CLIs first
 
 For work that spans many agent increments, `codeunlimited run` holds only an
 immutable workflow, the current structured state, and the latest observation
@@ -102,10 +102,17 @@ at each orchestration boundary. It never inserts earlier orchestration prompts,
 reasoning, responses, or tool transcripts into the next prompt, and it starts a
 fresh Claude Code, Codex, or explicit command process for every step.
 
+The primary path uses your existing Claude Code or Codex subscription login.
+Stable instructions and changing state have separate transport channels.
+`standard` preserves integrations; opt into `lean` to reduce the integration
+surface when the task does not need it. External OpenAI and Anthropic APIs are
+a separate, optional metered layer, with no local coding tools in 2.1.
+
 ```bash
 codeunlimited run init sprint-2 --skill workflow.md \
   --objective "Implement and verify the next planned increment" \
-  --provider codex --verify-program cargo --verify-arg test
+  --provider codex --subscription-profile lean \
+  --verify-program cargo --verify-arg test
 codeunlimited run status sprint-2 --json
 codeunlimited run prompt sprint-2
 codeunlimited run step sprint-2 --json
@@ -122,6 +129,7 @@ This proves bounded context transport at orchestration-step boundaries, not at
 every tool action inside the provider and not yet as realized token savings.
 The next evidence milestone is a matched-quality, increasing-horizon comparison
 against a full-history agent.
+See [2.1 changes and evidence limits](docs/VERSION-2.1.md).
 
 ## Install (one command)
 
@@ -146,7 +154,8 @@ or a binary straight from GitHub Releases.
 ## Quick start
 
 The core is a single **Rust** binary designed for multi-gigabyte local histories,
-with no runtime dependencies. Benchmark it on your own logs:
+with no additional runtime for local auditing. Subscription execution requires
+the selected provider CLI. Benchmark the auditor on your own logs:
 
 ```bash
 
@@ -230,13 +239,15 @@ protocol, see [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 
 ## Privacy
 
-The **observation plane** has no network client. It extracts token counts,
+The **observation plane** makes no network requests. It extracts token counts,
 model names, timestamps and project identifiers from local logs; prompt and
 response text is not extracted, retained, printed, or transmitted.
 
 The **execution plane** is explicitly different: `run step` and `run auto`
-launch the configured provider process in the project. That provider may read
-or change files and may use the network and existing authentication. The exact
+launch the configured provider process in the project, or send a request through
+an explicitly selected API adapter. A provider process may read or change files
+and use the network and existing authentication. `run cache-probe` also invokes
+the selected provider and consumes usage. The exact
 boundary and all files written under `.codeunlimited/runs/` are documented in
 [SECURITY.md](SECURITY.md) and [docs/RUNTIME.md](docs/RUNTIME.md).
 

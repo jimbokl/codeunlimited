@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.1.0 - 2026-09-04
+
+- Made subscription CLIs the primary runtime path, with immutable instruction
+  files, dynamic state channels, an additive Claude system-prompt file, and an
+  ordered-read Codex bootstrap that preserves its built-in instructions.
+- Added explicit `standard` (default) and `lean` subscription profiles. Lean
+  disables optional integrations; it does not disable subscription login.
+- Added a separate opt-in `openai-api` / `anthropic-api` layer, explicit cache
+  controls, strict structured output, environment-only credentials, bounded
+  HTTP responses, and disabled redirects. API adapters have no local tools.
+- Normalized provider-native input/cache counters without treating missing
+  usage as zero. Invalid API output retains reported usage in the failed
+  attempt. Cache-read ratio is not reported as saved tokens or quota.
+- Added `run cache-probe`: two opt-in no-op requests with isolated integrations,
+  distinct samples, separate usage, and an explicit evidence scope. It does
+  not run automatically or advance the work state.
+- Rejected required-flag, instruction, continuation, and config overrides at
+  initialization, including equals and attached short-option forms.
+- Kept legacy manifests readable without rewriting them during inspection,
+  including runs whose old prompt budget is too tight for the new compiler.
+  Execution still enforces the configured budget. Runtime state/envelope
+  schema remains version 1; new optional fields have compatible defaults.
+- Retained Rust 1.82 support, added local API lifecycle and probe regressions,
+  and corrected the API/subscription privacy boundary in the documentation.
+  Local tests establish behavior, not a realized savings percentage.
+
 ## 2.0.0 - 2026-09-04
 
 - Added `codeunlimited run init|status|prompt|step|auto|recover`, a durable

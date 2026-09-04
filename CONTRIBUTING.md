@@ -4,12 +4,14 @@ Thanks for helping make subscription limits go further.
 
 ## Ground rules
 
-- **Privacy is the product.** Detectors may only use token counts, models,
+- **Observation-plane privacy.** Detectors may only use token counts, models,
   timestamps and project names. PRs that read prompt or response content
   will be declined regardless of how useful the signal is.
-- **No network.** The CLI never makes requests. Anything that needs a
-  backend (benchmarks) ships as strict opt-in and lives in a separate
-  component.
+- **Offline auditing, opt-in execution.** Audit/report/experiment accounting
+  never makes network requests. The separate runtime execution plane may
+  invoke a subscription provider or an explicitly configured API adapter.
+  Tests must use local process fixtures or loopback HTTP servers, never live
+  models. API credentials must stay out of stored state, argv, and errors.
 - **Conservative numbers.** Every estimate needs a documented assumption in
   `docs/ACCURACY.md` - ranges, not hype.
 - **English only** in all product texts.

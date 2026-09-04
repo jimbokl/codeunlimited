@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Local token-efficiency auditing and bounded stateful orchestration for Claude Code and Codex CLI."
@@ -32,6 +32,12 @@ sha2 = "0.10"
 wait-timeout = "0.2"
 # Keep fresh Cargo 1.82 resolution from selecting edition-2024 indexmap.
 indexmap = "=2.11.4"
+url = "=2.5.4"
+ureq = { version = "=2.12.1", features = ["json"] }
+# url/rustls permit newer transitive releases requiring edition 2024.
+# Pin these for fresh Cargo 1.82 resolution, not only the checked-in lockfile.
+idna_adapter = "=1.2.0"
+zeroize = "=1.8.2"
 
 [dev-dependencies]
 assert_cmd = "=2.0.16"

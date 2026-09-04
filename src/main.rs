@@ -177,7 +177,7 @@ enum Cmd {
     /// Run bounded stateful coding work in fresh provider processes
     Run {
         #[command(subcommand)]
-        command: runtimecmd::RunCmd,
+        command: Box<runtimecmd::RunCmd>,
     },
     /// List every efficiency technique with on/off status and how to toggle it
     Techniques {
@@ -314,7 +314,7 @@ fn main() {
             });
         }
         Cmd::Run { command } => {
-            std::process::exit(runtimecmd::run(command));
+            std::process::exit(runtimecmd::run(*command));
         }
         Cmd::Techniques { path } => {
             let root = path.canonicalize().ok();

@@ -80,6 +80,26 @@ pub enum SubscriptionProfile {
     Lean,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiCacheTtl {
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "30m")]
+    ThirtyMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+impl ApiCacheTtl {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FiveMinutes => "5m",
+            Self::ThirtyMinutes => "30m",
+            Self::OneHour => "1h",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ProviderConfig {
@@ -99,14 +119,29 @@ pub enum ProviderConfig {
         executable: PathBuf,
         args: Vec<String>,
     },
+    #[serde(rename = "openai_api")]
+    OpenAiApi {
+        endpoint: String,
+        model: String,
+        api_key_env: String,
+        cache_ttl: ApiCacheTtl,
+    },
+    #[serde(rename = "anthropic_api")]
+    AnthropicApi {
+        endpoint: String,
+        model: String,
+        api_key_env: String,
+        cache_ttl: ApiCacheTtl,
+    },
 }
 
 impl ProviderConfig {
-    pub fn executable(&self) -> &PathBuf {
+    pub fn executable(&self) -> Option<&PathBuf> {
         match self {
             Self::Claude { executable, .. }
             | Self::Codex { executable, .. }
-            | Self::Command { executable, .. } => executable,
+            | Self::Command { executable, .. } => Some(executable),
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => None,
         }
     }
 
@@ -115,6 +150,7 @@ impl ProviderConfig {
             Self::Claude { args, .. } | Self::Codex { args, .. } | Self::Command { args, .. } => {
                 args
             }
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => &[],
         }
     }
 
@@ -129,6 +165,7 @@ impl ProviderConfig {
                 ..
             } => Some(*subscription_profile),
             Self::Command { .. } => None,
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => None,
         }
     }
 }

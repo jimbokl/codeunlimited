@@ -12,7 +12,7 @@ use crate::safeio::{atomic_create, atomic_write, reject_symlink};
 use super::model::{
     ArchiveBatch, CodingState, Manifest, RecoveryRecord, RuntimeError, RUNTIME_SCHEMA_VERSION,
 };
-use super::prompt::compile_prompt;
+use super::prompt::{compile_prompt, inspect_prompt};
 use super::validate::{validate_manifest, validate_run_name, validate_state};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,7 +158,7 @@ impl RunStore {
         let observation = read_bytes(&self.paths.observation)?;
         validate_observation(&manifest, &observation)?;
         let expected_instructions =
-            compile_prompt(&manifest, &workflow, &state, &observation)?.stable;
+            inspect_prompt(&manifest, &workflow, &state, &observation)?.stable;
         let provider_instructions = if self.paths.provider_instructions.exists() {
             let bytes = read_bytes(&self.paths.provider_instructions)?;
             if bytes != expected_instructions {
