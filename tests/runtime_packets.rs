@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
 use serde_json::{json, Value};
@@ -50,6 +53,23 @@ fn four_plan(cap: u64) -> Value {
             {"id":"unit-d","task":"Write delta to units/d.txt","group":"units","depends_on":["unit-c"],"scope":scope,"risk":"low"}
         ]
     })
+}
+
+fn checks(count: u64) -> Value {
+    Value::Array(
+        (1..=count)
+            .map(|revision| {
+                json!({
+                    "revision":revision,
+                    "program":"verify",
+                    "args":[],
+                    "passed":true,
+                    "summary":"passed",
+                    "workspace_sha256":null
+                })
+            })
+            .collect(),
+    )
 }
 
 fn initialize_git(project: &Path) {
@@ -467,6 +487,214 @@ fn skipped_rewritten_and_premature_completion_responses_are_rejected() {
         assert_eq!(state["revision"], 0);
         assert_eq!(state["completed"], json!([]));
     }
+}
+
+#[test]
+fn final_noncomplete_outcomes_are_rejected_before_verification_or_commit() {
+    for mode in ["final-continue", "final-blocked"] {
+        let project = TempDir::new().unwrap();
+        let capture = project.path().join("verification-called");
+        let mut command = init(project.path(), mode, &four_plan(4), mode);
+        command
+            .arg("--verify-arg=--capture")
+            .arg(format!("--verify-arg={}", capture.display()));
+        command.assert().success();
+        initialize_git(project.path());
+
+        let output = step(project.path(), mode);
+        assert_eq!(output.status.code(), Some(7));
+        assert!(!capture.exists(), "{mode} must fail before verification");
+        let state: Value = serde_json::from_slice(
+            &fs::read(
+                project
+                    .path()
+                    .join(format!(".codeunlimited/runs/{mode}/state.json")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["revision"], 0);
+        assert_eq!(state["queue"].as_array().unwrap().len(), 4);
+    }
+}
+
+#[test]
+fn blocked_outcome_can_accept_a_verified_partial_prefix() {
+    let project = TempDir::new().unwrap();
+    init(
+        project.path(),
+        "blocked-prefix",
+        &four_plan(4),
+        "blocked-partial",
+    )
+    .assert()
+    .success();
+    initialize_git(project.path());
+
+    let output = step(project.path(), "blocked-prefix");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "blocked");
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            project
+                .path()
+                .join(".codeunlimited/runs/blocked-prefix/state.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        state["completed"],
+        json!([
+            {"id":"unit-a","result":"fixture accepted"},
+            {"id":"unit-b","result":"fixture accepted"}
+        ])
+    );
+    assert_eq!(
+        state["queue"],
+        json!([
+            {"id":"unit-c","task":"Write charlie to units/c.txt"},
+            {"id":"unit-d","task":"Write delta to units/d.txt"}
+        ])
+    );
+}
+
+#[test]
+fn managed_runs_retain_32_checks_without_relaxing_legacy_limit() {
+    let legacy = TempDir::new().unwrap();
+    let workflow = legacy.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    binary()
+        .args(["run", "init", "legacy-checks", "--project"])
+        .arg(legacy.path())
+        .arg("--skill")
+        .arg(workflow)
+        .args([
+            "--objective",
+            "X",
+            "--provider",
+            "command",
+            "--provider-executable",
+            python(),
+            "--allow-unverified-completion",
+        ])
+        .assert()
+        .success();
+    let legacy_state = legacy
+        .path()
+        .join(".codeunlimited/runs/legacy-checks/state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&legacy_state).unwrap()).unwrap();
+    state["revision"] = json!(17);
+    state["checks"] = checks(17);
+    write_json(&legacy_state, &state);
+    binary()
+        .args(["run", "status", "legacy-checks", "--project"])
+        .arg(legacy.path())
+        .arg("--json")
+        .assert()
+        .failure();
+
+    let managed = TempDir::new().unwrap();
+    init(managed.path(), "managed-checks", &four_plan(4), "full")
+        .assert()
+        .success();
+    let managed_state = managed
+        .path()
+        .join(".codeunlimited/runs/managed-checks/state.json");
+    let mut state: Value = serde_json::from_slice(&fs::read(&managed_state).unwrap()).unwrap();
+    state["revision"] = json!(17);
+    state["checks"] = checks(17);
+    write_json(&managed_state, &state);
+    binary()
+        .args(["run", "status", "managed-checks", "--project"])
+        .arg(managed.path())
+        .arg("--json")
+        .assert()
+        .success();
+}
+
+#[cfg(unix)]
+#[test]
+fn fifo_work_plan_is_rejected_without_blocking_on_open() {
+    let project = TempDir::new().unwrap();
+    let workflow = project.path().join("workflow.md");
+    let fifo = project.path().join("plan.fifo");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    assert!(ProcessCommand::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_codeunlimited"))
+        .args(["run", "init", "fifo", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(workflow)
+        .args([
+            "--objective",
+            "X",
+            "--provider",
+            "command",
+            "--provider-executable",
+            python(),
+            "--work-plan",
+        ])
+        .arg(fifo)
+        .args(["--verify-program", python()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    if status.is_none() {
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+    assert!(status.is_some(), "FIFO plan open blocked the CLI");
+    assert!(!status.unwrap().success());
+}
+
+#[test]
+fn private_task_report_is_neither_tracked_nor_packaged() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let report = ".superpowers/sdd/2026-09-04-v2.2-delivery/task-2-report.md";
+    let tracked = ProcessCommand::new("git")
+        .args(["ls-files", "--error-unmatch", report])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        !tracked.status.success(),
+        "private report must remain untracked"
+    );
+
+    let package = ProcessCommand::new("cargo")
+        .args(["package", "--list", "--allow-dirty", "--locked"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        package.status.success(),
+        "{}",
+        String::from_utf8_lossy(&package.stderr)
+    );
+    let files = String::from_utf8(package.stdout).unwrap();
+    assert!(!files.lines().any(|path| path == report));
+    assert!(!files.lines().any(|path| path.starts_with(".superpowers/")));
 }
 
 #[test]

@@ -72,6 +72,14 @@ def worker(mode: str) -> int:
     elif mode == "premature-complete":
         accepted = ids[:1]
         outcome = "complete"
+    elif mode == "final-continue":
+        accepted = ids
+    elif mode == "final-blocked":
+        accepted = ids
+        outcome = "blocked"
+    elif mode == "blocked-partial":
+        accepted = ids[:2]
+        outcome = "blocked"
     elif mode == "blocked":
         accepted = []
         outcome = "blocked"
@@ -103,7 +111,9 @@ def worker(mode: str) -> int:
     return 0
 
 
-def verify() -> int:
+def verify(capture: str | None) -> int:
+    if capture is not None:
+        pathlib.Path(capture).write_text("verification invoked\n", encoding="utf-8")
     for task_id, (relative, contents) in EXPECTED.items():
         path = pathlib.Path(relative)
         if path.exists() and path.read_text(encoding="utf-8") != contents:
@@ -116,9 +126,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode")
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--capture")
     args = parser.parse_args()
     if args.verify:
-        return verify()
+        return verify(args.capture)
     if args.mode is None:
         return 64
     return worker(args.mode)

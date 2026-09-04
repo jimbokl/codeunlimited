@@ -213,33 +213,35 @@ pub fn validate_and_derive_delta(
     mut envelope: StepEnvelope,
     verification_passed: bool,
 ) -> Result<StepEnvelope, RuntimeError> {
-    let packet = select_tasks(plan, current)?;
+    let expected_queue = validate_response(plan, current, &envelope)?;
     if !verification_passed {
         return Err(RuntimeError::VerificationRequired);
     }
+    envelope.delta.queue_replace = Some(expected_queue);
+    Ok(envelope)
+}
+
+pub fn validate_response(
+    plan: &WorkPlan,
+    current: &CodingState,
+    envelope: &StepEnvelope,
+) -> Result<Vec<WorkItem>, RuntimeError> {
+    let packet = select_tasks(plan, current)?;
     let completed = &envelope.delta.completed_add;
-    if envelope.outcome == StepOutcome::Blocked {
-        if !completed.is_empty() {
-            return Err(RuntimeError::InvalidState(
-                "blocked packet cannot accept completed tasks".into(),
-            ));
-        }
-    } else {
-        if completed.is_empty() {
-            return Err(RuntimeError::InvalidState(
-                "managed packet must accept a nonempty prefix".into(),
-            ));
-        }
-        if completed.len() > packet.len()
-            || completed
-                .iter()
-                .zip(packet.iter())
-                .any(|(actual, expected)| actual.id != expected.id)
-        {
-            return Err(RuntimeError::InvalidState(
-                "completed tasks must be a prefix of the selected packet".into(),
-            ));
-        }
+    if completed.is_empty() && envelope.outcome != StepOutcome::Blocked {
+        return Err(RuntimeError::InvalidState(
+            "managed packet must accept a nonempty prefix".into(),
+        ));
+    }
+    if completed.len() > packet.len()
+        || completed
+            .iter()
+            .zip(packet.iter())
+            .any(|(actual, expected)| actual.id != expected.id)
+    {
+        return Err(RuntimeError::InvalidState(
+            "completed tasks must be a prefix of the selected packet".into(),
+        ));
     }
     let prior: HashSet<_> = current
         .completed
@@ -264,8 +266,12 @@ pub fn validate_and_derive_delta(
     if envelope.outcome == StepOutcome::Complete && !expected_queue.is_empty() {
         return Err(RuntimeError::IncompleteQueue);
     }
-    envelope.delta.queue_replace = Some(expected_queue);
-    Ok(envelope)
+    if expected_queue.is_empty() && envelope.outcome != StepOutcome::Complete {
+        return Err(RuntimeError::InvalidState(
+            "accepting all remaining tasks requires a complete outcome".into(),
+        ));
+    }
+    Ok(expected_queue)
 }
 
 pub fn accepted_ids(envelope: &StepEnvelope) -> Vec<String> {

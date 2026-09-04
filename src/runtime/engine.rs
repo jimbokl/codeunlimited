@@ -469,6 +469,26 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         );
     }
 
+    if let Some(plan) = &loaded.manifest.work_plan {
+        if let Err(error) = super::packet::validate_response(plan, &loaded.state, &result.envelope)
+        {
+            return fail_transition(
+                &store,
+                &intent,
+                intent_intact,
+                &loaded.manifest,
+                &loaded.state,
+                &prompt,
+                attempt,
+                started_unix,
+                &result,
+                before_git,
+                error.to_string(),
+                control_unchanged,
+            );
+        }
+    }
+
     let resolved_artifacts = match resolve_artifacts(
         &loaded.manifest.project_root,
         &result.envelope.delta.artifacts_add,

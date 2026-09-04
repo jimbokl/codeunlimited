@@ -21,7 +21,8 @@ pub const MAX_COMPLETED_ITEMS: usize = 32;
 pub const MAX_DECISIONS: usize = 32;
 pub const MAX_BLOCKERS: usize = 16;
 pub const MAX_ACTIVE_FILES: usize = 32;
-pub const MAX_CHECKS: usize = 32;
+pub const MAX_CHECKS: usize = 16;
+pub const MAX_MANAGED_CHECKS: usize = 32;
 pub const MAX_ARTIFACTS: usize = 32;
 pub const MAX_EPISTEMIC_ITEMS: usize = 32;
 pub const MAX_EVIDENCE_PER_ITEM: usize = 8;
@@ -126,7 +127,15 @@ pub fn validate_state(manifest: &Manifest, state: &CodingState) -> Result<(), Ru
     validate_count("decisions", state.decisions.len(), MAX_DECISIONS)?;
     validate_count("blockers", state.blockers.len(), MAX_BLOCKERS)?;
     validate_count("active_files", state.active_files.len(), MAX_ACTIVE_FILES)?;
-    validate_count("checks", state.checks.len(), MAX_CHECKS)?;
+    validate_count(
+        "checks",
+        state.checks.len(),
+        if manifest.work_plan.is_some() {
+            MAX_MANAGED_CHECKS
+        } else {
+            MAX_CHECKS
+        },
+    )?;
     validate_count("artifacts", state.artifacts.len(), MAX_ARTIFACTS)?;
     validate_count("epistemic", state.epistemic.len(), MAX_EPISTEMIC_ITEMS)?;
 

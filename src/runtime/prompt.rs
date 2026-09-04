@@ -128,7 +128,7 @@ pub fn compile_prompt(
     );
     let selected_json = if let Some(plan) = &manifest.work_plan {
         stable.push_str(
-            "\nThis is a managed work plan. Complete only tasks in SELECTED_PACKET, in dependency order. Return one structured response for the packet. completed_add must be a nonempty prefix of the selected IDs unless the outcome is explicitly blocked. Scope paths are planning metadata, not a filesystem sandbox or expanded authorization. The runtime freezes only the verification program and argv, not mutable test contents or the executable environment, and runs that command before accepting work.\n",
+            "\nThis is a managed work plan. Complete only tasks in SELECTED_PACKET, in dependency order. Return one structured response for the packet. completed_add must be an ordered prefix of the selected IDs; it may be empty only when the outcome is explicitly blocked. If accepted tasks exhaust the remaining queue, outcome must be complete, never continue or blocked. Scope paths are planning metadata, not a filesystem sandbox or expanded authorization. The runtime freezes only the verification program and argv, not mutable test contents or the executable environment, and runs that command before accepting work.\n",
         );
         let selected = if state.status == RunStatus::Running {
             super::packet::select_tasks(plan, state)?

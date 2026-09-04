@@ -533,19 +533,22 @@ fn read_observation(path: &Path) -> Result<Vec<u8>, RunCliError> {
 }
 
 fn read_work_plan(path: &Path) -> Result<WorkPlan, RunCliError> {
+    let link_metadata = fs::symlink_metadata(path)
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    if link_metadata.file_type().is_symlink()
+        || !link_metadata.is_file()
+        || link_metadata.len() > MAX_WORK_PLAN_BYTES as u64
+    {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
     let file = File::open(path)
         .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
     let metadata = file
         .metadata()
         .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
-    if metadata.len() > MAX_WORK_PLAN_BYTES as u64 {
-        return Err(RunCliError::Input(
-            "work plan must be a bounded regular JSON file",
-        ));
-    }
-    let link_metadata = fs::symlink_metadata(path)
-        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
-    if link_metadata.file_type().is_symlink() || !link_metadata.is_file() {
+    if !metadata.is_file() || metadata.len() > MAX_WORK_PLAN_BYTES as u64 {
         return Err(RunCliError::Input(
             "work plan must be a bounded regular JSON file",
         ));
