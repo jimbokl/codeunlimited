@@ -108,6 +108,19 @@ This experiment is still valuable: it falsifies the simplistic claim that
 fresh sessions automatically save tokens. It does not estimate a universal
 savings percentage.
 
+## Task-level paired data (checked in)
+
+The task-level counters the audit asked for are now committed:
+[experiments/paired-2026-09-04-session-boundary.json](experiments/paired-2026-09-04-session-boundary.json)
+(control segmented by its per-task completion markers; aggregate counters
+only). Running `scripts/analyze_paired_experiment.py` on it yields: exact
+input 918,904 control vs 1,077,493 treatment (+17.3%), treatment lower in
+2/8 tasks, **exact paired sign-flip p = 0.1875** - no task-level
+significance for the two-arm comparison at n=8, consistent with the audit's
+removal of the request-level claim. The three-arm ordering (0.65M batched <
+0.92M single session < 1.08M restart-per-task) is the substantive result;
+request-level rows remain on the author's machine.
+
 ## Reproduce correctly
 
 1. Pre-register comparable tasks and their acceptance tests.

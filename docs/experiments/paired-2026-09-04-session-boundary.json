@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "pairs": [
+    {
+      "task_id": "task-01",
+      "control": {
+        "requests": 5,
+        "input_tokens": 141504
+      },
+      "treatment": {
+        "requests": 4,
+        "input_tokens": 108582
+      }
+    },
+    {
+      "task_id": "task-02",
+      "control": {
+        "requests": 4,
+        "input_tokens": 133895
+      },
+      "treatment": {
+        "requests": 7,
+        "input_tokens": 199150
+      }
+    },
+    {
+      "task_id": "task-03",
+      "control": {
+        "requests": 2,
+        "input_tokens": 72137
+      },
+      "treatment": {
+        "requests": 4,
+        "input_tokens": 109657
+      }
+    },
+    {
+      "task_id": "task-04",
+      "control": {
+        "requests": 4,
+        "input_tokens": 157978
+      },
+      "treatment": {
+        "requests": 4,
+        "input_tokens": 110971
+      }
+    },
+    {
+      "task_id": "task-05",
+      "control": {
+        "requests": 2,
+        "input_tokens": 84102
+      },
+      "treatment": {
+        "requests": 4,
+        "input_tokens": 108870
+      }
+    },
+    {
+      "task_id": "task-06",
+      "control": {
+        "requests": 2,
+        "input_tokens": 88623
+      },
+      "treatment": {
+        "requests": 5,
+        "input_tokens": 136154
+      }
+    },
+    {
+      "task_id": "task-07",
+      "control": {
+        "requests": 2,
+        "input_tokens": 92471
+      },
+      "treatment": {
+        "requests": 4,
+        "input_tokens": 110276
+      }
+    },
+    {
+      "task_id": "task-08",
+      "control": {
+        "requests": 3,
+        "input_tokens": 148194
+      },
+      "treatment": {
+        "requests": 7,
+        "input_tokens": 193833
+      }
+    }
+  ]
+}
