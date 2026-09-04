@@ -29,14 +29,25 @@ if grep -Eq '(^|/)\.\.(/|$)|^/' <<<"$archive_entries"; then
   echo "package contains an unsafe archive path" >&2
   exit 1
 fi
-for required in Cargo.toml Cargo.lock LICENSE README.md src/main.rs src/lib.rs src/experiment.rs; do
+for required in \
+  Cargo.toml \
+  Cargo.lock \
+  LICENSE \
+  README.md \
+  src/main.rs \
+  src/lib.rs \
+  src/experiment.rs \
+  tests/release_metadata.rs \
+  tests/runtime_ledger.rs \
+  tests/runtime_packets.rs \
+  tests/fixtures/packet_driver.py; do
   if ! grep -Fxq "$package_prefix/$required" <<<"$archive_entries"; then
     echo "package is missing required entry: $required" >&2
     exit 1
   fi
 done
 
-for forbidden in .github/ scripts/ docs/superpowers/ codeunlimited/ pyproject.toml; do
+for forbidden in .github/ .superpowers/ scripts/ docs/superpowers/ codeunlimited/ pyproject.toml; do
   if grep -Fq "$package_prefix/$forbidden" <<<"$archive_entries"; then
     echo "package contains forbidden entry: $forbidden" >&2
     exit 1

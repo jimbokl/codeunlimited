@@ -118,6 +118,12 @@ def check(root: pathlib.Path, expected: str, tag: str | None = None) -> list[str
     readme = (root / "README.md").read_text(encoding="utf-8")
     if "docs/RUNTIME.md" not in readme:
         errors.append("README.md does not link docs/RUNTIME.md")
+    release_line = ".".join(expected.split(".")[:2])
+    version_doc = root / "docs" / f"VERSION-{release_line}.md"
+    if not version_doc.is_file():
+        errors.append(f"{version_doc.relative_to(root)} is missing")
+    elif f"docs/VERSION-{release_line}.md" not in readme:
+        errors.append(f"README.md does not link docs/VERSION-{release_line}.md")
 
     security = (root / "SECURITY.md").read_text(encoding="utf-8").lower()
     for required in ("observation plane", "execution plane", "provider process"):

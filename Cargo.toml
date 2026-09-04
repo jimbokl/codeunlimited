@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Local token-efficiency auditing and bounded stateful orchestration for Claude Code and Codex CLI."
@@ -15,6 +15,7 @@ exclude = [
     "/scripts/",
     "/docs/launch/",
     "/docs/superpowers/",
+    "/.superpowers/",
     "/.github/",
 ]
 
