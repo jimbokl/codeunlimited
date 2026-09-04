@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wait_timeout::ChildExt;
 
-use super::model::{ProviderConfig, RuntimeError, StepEnvelope, MAX_PROVIDER_OUTPUT_BYTES};
+use super::model::{
+    ProviderConfig, RuntimeError, StepEnvelope, SubscriptionProfile, MAX_PROVIDER_OUTPUT_BYTES,
+};
 use super::prompt::{CompiledPrompt, STEP_ENVELOPE_SCHEMA_JSON};
 use super::validate::validate_provider_config;
 
@@ -103,14 +105,28 @@ impl Provider for ProcessProvider {
         match config {
             ProviderConfig::Command { .. } => {
                 let spec = build_external_command(config)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let envelope = serde_json::from_slice(&raw.stdout)
                     .map_err(|_| ProviderFailure::InvalidOutput)?;
                 Ok(provider_result(envelope, ProviderUsage::default(), raw))
             }
             ProviderConfig::Claude { .. } => {
-                let spec = build_claude_command(config)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let temporary = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+                let empty_mcp = temporary.path().join("empty-mcp.json");
+                fs::write(&empty_mcp, br#"{"mcpServers":{}}"#)
+                    .map_err(|_| ProviderFailure::TemporaryFile)?;
+                let spec = build_claude_command(config, &prompt.instructions_path, &empty_mcp)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let (envelope, usage) = parse_claude_output(&raw.stdout)?;
                 Ok(provider_result(envelope, usage, raw))
             }
@@ -121,7 +137,12 @@ impl Provider for ProcessProvider {
                 fs::write(&schema, STEP_ENVELOPE_SCHEMA_JSON)
                     .map_err(|_| ProviderFailure::TemporaryFile)?;
                 let spec = build_codex_command(config, project_root, &schema, &output)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let response = read_bounded_file(&output)?;
                 let envelope = serde_json::from_slice(&response)
                     .map_err(|_| ProviderFailure::InvalidOutput)?;
@@ -138,9 +159,18 @@ impl Provider for ProcessProvider {
     }
 }
 
-pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, RuntimeError> {
+pub fn build_claude_command(
+    config: &ProviderConfig,
+    instructions_path: &Path,
+    empty_mcp_path: &Path,
+) -> Result<CommandSpec, RuntimeError> {
     validate_provider_config(config)?;
-    let ProviderConfig::Claude { executable, args } = config else {
+    let ProviderConfig::Claude {
+        executable,
+        args,
+        subscription_profile,
+    } = config
+    else {
         return Err(RuntimeError::InvalidManifest(
             "Claude adapter requires a Claude provider".into(),
         ));
@@ -155,6 +185,13 @@ pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, Runt
             "--json-schema",
             "--input-format",
             "--exclude-dynamic-system-prompt-sections",
+            "--append-system-prompt-file",
+            "--disable-slash-commands",
+            "--no-chrome",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "--tools",
+            "--bare",
         ],
     )?;
     let mut command_args = vec![
@@ -165,7 +202,20 @@ pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, Runt
         OsString::from("--json-schema"),
         OsString::from(STEP_ENVELOPE_SCHEMA_JSON),
         OsString::from("--exclude-dynamic-system-prompt-sections"),
+        OsString::from("--append-system-prompt-file"),
+        instructions_path.as_os_str().to_os_string(),
     ];
+    if *subscription_profile == SubscriptionProfile::Lean {
+        command_args.extend([
+            OsString::from("--disable-slash-commands"),
+            OsString::from("--no-chrome"),
+            OsString::from("--strict-mcp-config"),
+            OsString::from("--mcp-config"),
+            empty_mcp_path.as_os_str().to_os_string(),
+            OsString::from("--tools"),
+            OsString::from("Bash,Edit,Read,Write,Glob,Grep"),
+        ]);
+    }
     command_args.extend(args.iter().map(OsString::from));
     Ok(CommandSpec {
         program: executable.clone(),
@@ -180,7 +230,12 @@ pub fn build_codex_command(
     output_path: &Path,
 ) -> Result<CommandSpec, RuntimeError> {
     validate_provider_config(config)?;
-    let ProviderConfig::Codex { executable, args } = config else {
+    let ProviderConfig::Codex {
+        executable,
+        args,
+        subscription_profile,
+    } = config
+    else {
         return Err(RuntimeError::InvalidManifest(
             "Codex adapter requires a Codex provider".into(),
         ));
@@ -198,6 +253,7 @@ pub fn build_codex_command(
             "--cd",
             "-C",
             "--json",
+            "--ignore-user-config",
         ],
     )?;
     let mut command_args = vec![
@@ -211,6 +267,9 @@ pub fn build_codex_command(
         OsString::from("--cd"),
         project_root.as_os_str().to_os_string(),
     ];
+    if *subscription_profile == SubscriptionProfile::Lean {
+        command_args.push(OsString::from("--ignore-user-config"));
+    }
     command_args.extend(args.iter().map(OsString::from));
     Ok(CommandSpec {
         program: executable.clone(),
@@ -229,6 +288,19 @@ pub fn build_external_command(config: &ProviderConfig) -> Result<CommandSpec, Ru
         program: executable.clone(),
         args: args.iter().map(OsString::from).collect(),
     })
+}
+
+fn provider_input(
+    config: &ProviderConfig,
+    prompt: &CompiledPrompt,
+    _project_root: &Path,
+    _run_dir: &Path,
+) -> Vec<u8> {
+    match config {
+        ProviderConfig::Claude { .. } => prompt.dynamic.clone(),
+        ProviderConfig::Codex { .. } => prompt.codex_bootstrap.clone(),
+        ProviderConfig::Command { .. } => prompt.bytes.clone(),
+    }
 }
 
 pub fn parse_claude_output(bytes: &[u8]) -> Result<(StepEnvelope, ProviderUsage), ProviderFailure> {
@@ -435,12 +507,12 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::runtime::model::{ProviderConfig, RuntimeError};
+    use crate::runtime::model::{ProviderConfig, RuntimeError, SubscriptionProfile};
     use crate::runtime::prompt::CompiledPrompt;
 
     use super::{
         build_claude_command, build_codex_command, parse_claude_output, parse_codex_usage,
-        ProcessProvider, Provider, ProviderFailure,
+        provider_input, ProcessProvider, Provider, ProviderFailure,
     };
 
     fn python() -> PathBuf {
@@ -460,6 +532,8 @@ mod tests {
             bytes: b"bounded prompt".to_vec(),
             stable: b"stable".to_vec(),
             dynamic: b"dynamic".to_vec(),
+            codex_bootstrap: b"Load `.codeunlimited/runs/feature-x/provider-instructions.md` first, `.codeunlimited/runs/feature-x/state.json` second, and `.codeunlimited/runs/feature-x/observation.txt` third.\n".to_vec(),
+            instructions_path: PathBuf::from("/tmp/provider-instructions.md"),
             stable_bytes: 7,
             dynamic_bytes: 7,
             stable_sha256: "11".repeat(32),
@@ -636,8 +710,14 @@ mod tests {
         let claude = ProviderConfig::Claude {
             executable: PathBuf::from("claude"),
             args: vec!["--model".into(), "sonnet".into()],
+            subscription_profile: SubscriptionProfile::Standard,
         };
-        let claude = build_claude_command(&claude).expect("claude command");
+        let claude = build_claude_command(
+            &claude,
+            Path::new("/tmp/provider-instructions.md"),
+            Path::new("/tmp/empty-mcp.json"),
+        )
+        .expect("claude command");
         assert_eq!(claude.program, PathBuf::from("claude"));
         assert!(contains_pair(&claude.args, "--output-format", "json"));
         assert!(claude.args.contains(&OsString::from("--print")));
@@ -647,10 +727,17 @@ mod tests {
         assert!(claude
             .args
             .contains(&OsString::from("--exclude-dynamic-system-prompt-sections")));
+        assert!(contains_pair(
+            &claude.args,
+            "--append-system-prompt-file",
+            "/tmp/provider-instructions.md"
+        ));
+        assert!(!claude.args.contains(&OsString::from("--strict-mcp-config")));
 
         let codex = ProviderConfig::Codex {
             executable: PathBuf::from("codex"),
             args: vec!["--model".into(), "gpt-test".into()],
+            subscription_profile: SubscriptionProfile::Lean,
         };
         let codex = build_codex_command(
             &codex,
@@ -661,6 +748,7 @@ mod tests {
         .expect("codex command");
         assert_eq!(codex.args[0], "exec");
         assert!(codex.args.contains(&OsString::from("--ephemeral")));
+        assert!(codex.args.contains(&OsString::from("--ignore-user-config")));
         assert!(contains_pair(
             &codex.args,
             "--output-schema",
@@ -674,6 +762,71 @@ mod tests {
     }
 
     #[test]
+    fn subscription_inputs_are_transport_specific_and_revision_stable() {
+        let project = Path::new("/tmp/project");
+        let run = project.join(".codeunlimited/runs/feature-x");
+        let claude = ProviderConfig::Claude {
+            executable: "claude".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Standard,
+        };
+        let codex = ProviderConfig::Codex {
+            executable: "codex".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Standard,
+        };
+        let command = command_config(&["--mode", "success"]);
+
+        assert_eq!(
+            provider_input(&claude, &prompt(), project, &run),
+            b"dynamic"
+        );
+        assert_eq!(
+            provider_input(&command, &prompt(), project, &run),
+            b"bounded prompt"
+        );
+        let bootstrap =
+            String::from_utf8(provider_input(&codex, &prompt(), project, &run)).unwrap();
+        assert!(bootstrap.contains("provider-instructions.md` first"));
+        assert!(bootstrap.contains("state.json` second"));
+        assert!(bootstrap.contains("observation.txt` third"));
+        assert!(!bootstrap.contains("stable"));
+        assert!(!bootstrap.contains("dynamic"));
+    }
+
+    #[test]
+    fn lean_claude_profile_restricts_dynamic_integrations_without_bare_mode() {
+        let config = ProviderConfig::Claude {
+            executable: "claude".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Lean,
+        };
+        let spec = build_claude_command(
+            &config,
+            Path::new("/tmp/provider-instructions.md"),
+            Path::new("/tmp/empty-mcp.json"),
+        )
+        .unwrap();
+
+        assert!(spec
+            .args
+            .contains(&OsString::from("--disable-slash-commands")));
+        assert!(spec.args.contains(&OsString::from("--no-chrome")));
+        assert!(spec.args.contains(&OsString::from("--strict-mcp-config")));
+        assert!(contains_pair(
+            &spec.args,
+            "--mcp-config",
+            "/tmp/empty-mcp.json"
+        ));
+        assert!(contains_pair(
+            &spec.args,
+            "--tools",
+            "Bash,Edit,Read,Write,Glob,Grep"
+        ));
+        assert!(!spec.args.contains(&OsString::from("--bare")));
+    }
+
+    #[test]
     fn continuation_secret_and_required_override_args_are_rejected() {
         for args in [
             vec!["--resume".into(), "id".into()],
@@ -683,9 +836,14 @@ mod tests {
             let config = ProviderConfig::Claude {
                 executable: PathBuf::from("claude"),
                 args,
+                subscription_profile: SubscriptionProfile::Standard,
             };
             assert!(matches!(
-                build_claude_command(&config),
+                build_claude_command(
+                    &config,
+                    Path::new("/tmp/provider-instructions.md"),
+                    Path::new("/tmp/empty-mcp.json")
+                ),
                 Err(RuntimeError::ContinuationArgument(_)
                     | RuntimeError::SecretArgument
                     | RuntimeError::InvalidManifest(_))

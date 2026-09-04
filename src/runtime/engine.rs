@@ -100,6 +100,9 @@ pub struct RunStatusView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProviderStatus {
     pub kind: String,
+    pub layer: String,
+    pub capability: String,
+    pub subscription_profile: Option<String>,
     pub executable: String,
     pub args: Vec<String>,
     pub isolation: String,
@@ -605,13 +608,36 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
 }
 
 fn provider_status(provider: &ProviderConfig) -> ProviderStatus {
-    let (kind, isolation) = match provider {
-        ProviderConfig::Claude { .. } => ("claude", "ephemeral provider process"),
-        ProviderConfig::Codex { .. } => ("codex", "ephemeral provider process"),
-        ProviderConfig::Command { .. } => ("command", "external-process isolation"),
+    let (kind, layer, capability, isolation) = match provider {
+        ProviderConfig::Claude { .. } => (
+            "claude",
+            "subscription_cli",
+            "coding_agent",
+            "ephemeral provider process",
+        ),
+        ProviderConfig::Codex { .. } => (
+            "codex",
+            "subscription_cli",
+            "coding_agent",
+            "ephemeral provider process",
+        ),
+        ProviderConfig::Command { .. } => (
+            "command",
+            "external_command",
+            "provider_defined",
+            "external-process isolation",
+        ),
     };
     ProviderStatus {
         kind: kind.into(),
+        layer: layer.into(),
+        capability: capability.into(),
+        subscription_profile: provider
+            .subscription_profile()
+            .map(|profile| match profile {
+                super::model::SubscriptionProfile::Standard => "standard".into(),
+                super::model::SubscriptionProfile::Lean => "lean".into(),
+            }),
         executable: provider.executable().to_string_lossy().into_owned(),
         args: provider.args().to_vec(),
         isolation: isolation.into(),

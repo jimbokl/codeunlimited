@@ -72,16 +72,28 @@ impl Manifest {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubscriptionProfile {
+    #[default]
+    Standard,
+    Lean,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ProviderConfig {
     Claude {
         executable: PathBuf,
         args: Vec<String>,
+        #[serde(default)]
+        subscription_profile: SubscriptionProfile,
     },
     Codex {
         executable: PathBuf,
         args: Vec<String>,
+        #[serde(default)]
+        subscription_profile: SubscriptionProfile,
     },
     Command {
         executable: PathBuf,
@@ -104,6 +116,40 @@ impl ProviderConfig {
                 args
             }
         }
+    }
+
+    pub fn subscription_profile(&self) -> Option<SubscriptionProfile> {
+        match self {
+            Self::Claude {
+                subscription_profile,
+                ..
+            }
+            | Self::Codex {
+                subscription_profile,
+                ..
+            } => Some(*subscription_profile),
+            Self::Command { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod provider_config_tests {
+    use super::{ProviderConfig, SubscriptionProfile};
+
+    #[test]
+    fn legacy_subscription_provider_defaults_to_standard_profile() {
+        let claude: ProviderConfig = serde_json::from_value(serde_json::json!({
+            "kind": "claude",
+            "executable": "claude",
+            "args": []
+        }))
+        .expect("v2.0 manifest provider");
+
+        assert_eq!(
+            claude.subscription_profile(),
+            Some(SubscriptionProfile::Standard)
+        );
     }
 }
 

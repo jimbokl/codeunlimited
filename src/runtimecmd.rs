@@ -11,10 +11,10 @@ use crate::runtime::engine::{
     RunStatusView,
 };
 use crate::runtime::model::{
-    ProviderConfig, RuntimeError, VerificationCommand, DEFAULT_MAX_ATTEMPTS_PER_REVISION,
-    DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES, DEFAULT_PROMPT_BUDGET_BYTES,
-    DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES, DEFAULT_WORKFLOW_BUDGET_BYTES,
-    MAX_OBSERVATION_BUDGET_BYTES,
+    ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand,
+    DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
+    DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
+    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES,
 };
 use crate::runtime::provider::ProcessProvider;
 
@@ -43,6 +43,21 @@ pub enum ProviderKind {
     Claude,
     Codex,
     Command,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SubscriptionProfileArg {
+    Standard,
+    Lean,
+}
+
+impl From<SubscriptionProfileArg> for SubscriptionProfile {
+    fn from(value: SubscriptionProfileArg) -> Self {
+        match value {
+            SubscriptionProfileArg::Standard => Self::Standard,
+            SubscriptionProfileArg::Lean => Self::Lean,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -78,6 +93,9 @@ pub enum RunCmd {
         /// Exact provider argument; repeat to preserve argv boundaries
         #[arg(long, value_name = "ARG")]
         provider_arg: Vec<String>,
+        /// Subscription CLI surface: standard preserves integrations; lean minimizes them
+        #[arg(long, value_enum)]
+        subscription_profile: Option<SubscriptionProfileArg>,
         /// Verification executable (no shell)
         #[arg(long, value_name = "PROGRAM")]
         verify_program: Option<PathBuf>,
@@ -175,6 +193,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             provider,
             provider_executable,
             provider_arg,
+            subscription_profile,
             verify_program,
             verify_arg,
             verify_every_step,
@@ -202,13 +221,25 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 ProviderKind::Claude => ProviderConfig::Claude {
                     executable,
                     args: provider_arg,
+                    subscription_profile: subscription_profile
+                        .map(Into::into)
+                        .unwrap_or(SubscriptionProfile::Lean),
                 },
                 ProviderKind::Codex => ProviderConfig::Codex {
                     executable,
                     args: provider_arg,
+                    subscription_profile: subscription_profile
+                        .map(Into::into)
+                        .unwrap_or(SubscriptionProfile::Lean),
                 },
                 ProviderKind::Command => ProviderConfig::Command {
-                    executable,
+                    executable: if subscription_profile.is_some() {
+                        return Err(RunCliError::Input(
+                            "--subscription-profile is only valid for claude and codex",
+                        ));
+                    } else {
+                        executable
+                    },
                     args: provider_arg,
                 },
             };
@@ -337,8 +368,16 @@ fn print_status(view: &RunStatusView) {
         view.prompt_bytes, view.stable_prompt_bytes, view.dynamic_prompt_bytes, view.attempts
     );
     println!(
-        "provider={} executable={} isolation={}",
-        view.provider.kind, view.provider.executable, view.provider.isolation
+        "provider={} layer={} capability={} profile={} executable={} isolation={}",
+        view.provider.kind,
+        view.provider.layer,
+        view.provider.capability,
+        view.provider
+            .subscription_profile
+            .as_deref()
+            .unwrap_or("n/a"),
+        view.provider.executable,
+        view.provider.isolation
     );
     println!("provider_args={:?}", view.provider.args);
 }

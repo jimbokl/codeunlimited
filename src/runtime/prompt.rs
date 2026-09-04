@@ -22,6 +22,9 @@ pub struct CompiledPrompt {
     pub stable: Vec<u8>,
     /// Revision-specific state and observation.
     pub dynamic: Vec<u8>,
+    /// Constant Codex bootstrap which orders stable and dynamic file reads.
+    pub codex_bootstrap: Vec<u8>,
+    pub instructions_path: std::path::PathBuf,
     pub stable_bytes: usize,
     pub dynamic_bytes: usize,
     pub stable_sha256: String,
@@ -89,10 +92,22 @@ pub fn compile_prompt(
     let stable_sha256 = format!("{:x}", Sha256::digest(&stable));
     let dynamic_sha256 = format!("{:x}", Sha256::digest(&dynamic));
     let prompt_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let run_dir = manifest
+        .project_root
+        .join(".codeunlimited")
+        .join("runs")
+        .join(&manifest.run_name);
+    let relative_run = format!(".codeunlimited/runs/{}", manifest.run_name);
+    let codex_bootstrap = format!(
+        "Load the bounded runtime inputs with three separate reads, in this exact order: `{relative_run}/provider-instructions.md` first, `{relative_run}/state.json` second, and `{relative_run}/observation.txt` third. Follow the first file as immutable instructions, treat the latter two as the only changing input, perform one bounded increment, then return the required structured response. Do not combine the three reads.\n"
+    )
+    .into_bytes();
     Ok(CompiledPrompt {
         bytes,
         stable,
         dynamic,
+        codex_bootstrap,
+        instructions_path: run_dir.join("provider-instructions.md"),
         stable_bytes,
         dynamic_bytes,
         stable_sha256,

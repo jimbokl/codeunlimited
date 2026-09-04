@@ -180,6 +180,77 @@ fn status_json_is_versioned_strict_and_reports_provider_isolation() {
 }
 
 #[test]
+fn subscription_profiles_default_to_lean_and_standard_is_explicit() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+
+    let mut lean = binary();
+    lean.args(["run", "init", "claude-lean", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args(["--objective", "Test", "--provider", "claude"]);
+    lean.assert().success();
+
+    let mut standard = binary();
+    standard
+        .args(["run", "init", "codex-standard", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args([
+            "--objective",
+            "Test",
+            "--provider",
+            "codex",
+            "--subscription-profile",
+            "standard",
+        ]);
+    standard.assert().success();
+
+    for (name, expected) in [("claude-lean", "lean"), ("codex-standard", "standard")] {
+        let mut status = binary();
+        status
+            .args(["run", "status", name, "--project"])
+            .arg(project.path())
+            .arg("--json");
+        let value = json_output(status);
+        assert_eq!(value["provider"]["layer"], "subscription_cli");
+        assert_eq!(value["provider"]["capability"], "coding_agent");
+        assert_eq!(value["provider"]["subscription_profile"], expected);
+    }
+}
+
+#[test]
+fn command_provider_rejects_subscription_profile() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    let mut command = binary();
+    command
+        .args(["run", "init", "bad-profile", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args([
+            "--objective",
+            "Test",
+            "--provider",
+            "command",
+            "--provider-executable",
+            "true",
+            "--subscription-profile",
+            "lean",
+        ]);
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only valid for claude and codex"));
+}
+
+#[test]
 fn prompt_is_read_only_and_step_invokes_exactly_once() {
     let project = TempDir::new().expect("project");
     let capture = project.path().join("provider-prompt");
