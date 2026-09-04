@@ -47,6 +47,16 @@ confidence, and an observed difference does not establish causality. That
 honesty is deliberate - run your own experiment with
 `codeunlimited experiment start/finish` around comparable tasks.
 
+## 2b. Controlled A/B (parallel arms, exact counters)
+
+Same 8 coding tasks, same model, run in parallel: one naive growing
+session vs 8 fresh rule-following sessions. Per-request context fell 28%
+(median 39.0k -> 28.2k, Mann-Whitney p = 2.9e-08); totals favored the
+naive session on this *short* batch (8 boots outweighed 24 requests of
+growth), and the measured break-even (~7 requests of work per restart)
+lands exactly where the shipped 30-turn detector threshold sits. Full
+numbers, including the honest loss: [EXPERIMENT.md](EXPERIMENT.md).
+
 ## 3. Scan speed (for the ritual to be free)
 
 Full audit over ~3.6 GB of mixed Claude Code + Codex logs: **~2-4 s**
