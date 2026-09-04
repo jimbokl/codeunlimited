@@ -17,6 +17,11 @@
   unreadable, unsupported, or symlinked state fails visibly without replacing
   original bytes; experiment output excludes prompts, responses, models,
   project paths, hostnames, and raw log records.
+- The bounded one-sprint-per-arm evidence recorded 39,110,299 control input
+  tokens and 16,898,893 treatment input tokens: an observed difference of
+  -22,211,406 input tokens per completed task (-56.8%) and +131.4% observed
+  capacity. This low-confidence historical comparison does not attribute the
+  difference to codeunlimited.
 
 ## 1.7.0 - 2026-09-03
 

@@ -112,6 +112,13 @@ and are low confidence when either arm declares fewer than three completed
 tasks. Differences in task mix, difficulty, models, tools, operator behavior,
 and provider accounting can explain an observed movement.
 
+The dated 1.7/1.8 sprint artifact records 39,110,299 control input tokens and
+16,898,893 treatment input tokens for one completed task in each arm. The exact
+observed difference is -22,211,406 input tokens per task (-56.8%), with a
++131.4% observed capacity view. Because each arm contains one historical
+sprint with uncontrolled differences in scope and difficulty, this is low
+confidence and does not show attributable savings.
+
 ## Query filtering and the Codex metadata index
 
 `audit --days N` discards records with an old or unrecognized timestamp while

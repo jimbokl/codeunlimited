@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "measurement": "codeunlimited-v1.7-v1.8-observed-token-comparison",
+  "recorded_date": "2026-09-04",
+  "branch": "codex/v1.8-measurement",
+  "provenance": {
+    "control_start_git_sha": "78dd522adffa4fa63836897456e647c39d094d59",
+    "control_end_git_sha": "a8036035126221a1903e3a9845f325e9621e8434",
+    "treatment_end_git_sha": "aa3c0a231539e6f6f72daf3719010d760cd55bd0"
+  },
+  "windows": {
+    "control": {
+      "started_unix": 1788462842,
+      "finished_unix": 1788468769,
+      "from_rfc3339": "2026-09-03T19:14:02Z",
+      "to_rfc3339": "2026-09-03T20:52:49Z",
+      "completed_tasks": 1
+    },
+    "treatment": {
+      "started_unix": 1788517678,
+      "finished_unix": 1788519132,
+      "from_rfc3339": "2026-09-04T10:27:58Z",
+      "to_rfc3339": "2026-09-04T10:52:12Z",
+      "completed_tasks": 1
+    }
+  },
+  "record_outputs": {
+    "control": {
+      "name": "v1.7-control",
+      "started_unix": 1788462842,
+      "finished_unix": 1788468769,
+      "completed_tasks": 1,
+      "status": "complete",
+      "complete_accounting": true,
+      "records_without_timestamp": 0,
+      "totals": {
+        "requests": 316,
+        "sessions": 2,
+        "uncached_input_tokens": 1369883,
+        "cache_read_input_tokens": 37740416,
+        "cache_write_5m_input_tokens": 0,
+        "cache_write_1h_input_tokens": 0,
+        "input_tokens": 39110299,
+        "output_tokens": 174081,
+        "total_tokens": 39284380
+      }
+    },
+    "treatment": {
+      "name": "v1.8-treatment",
+      "started_unix": 1788517678,
+      "finished_unix": 1788519132,
+      "completed_tasks": 1,
+      "status": "complete",
+      "complete_accounting": true,
+      "records_without_timestamp": 0,
+      "totals": {
+        "requests": 166,
+        "sessions": 2,
+        "uncached_input_tokens": 224589,
+        "cache_read_input_tokens": 16674304,
+        "cache_write_5m_input_tokens": 0,
+        "cache_write_1h_input_tokens": 0,
+        "input_tokens": 16898893,
+        "output_tokens": 61977,
+        "total_tokens": 16960870
+      }
+    }
+  },
+  "comparison_output": {
+    "control": {
+      "name": "v1.7-control",
+      "started_unix": 1788462842,
+      "finished_unix": 1788468769,
+      "completed_tasks": 1,
+      "status": "complete",
+      "complete_accounting": true,
+      "records_without_timestamp": 0,
+      "totals": {
+        "requests": 316,
+        "sessions": 2,
+        "uncached_input_tokens": 1369883,
+        "cache_read_input_tokens": 37740416,
+        "cache_write_5m_input_tokens": 0,
+        "cache_write_1h_input_tokens": 0,
+        "input_tokens": 39110299,
+        "output_tokens": 174081,
+        "total_tokens": 39284380
+      }
+    },
+    "treatment": {
+      "name": "v1.8-treatment",
+      "started_unix": 1788517678,
+      "finished_unix": 1788519132,
+      "completed_tasks": 1,
+      "status": "complete",
+      "complete_accounting": true,
+      "records_without_timestamp": 0,
+      "totals": {
+        "requests": 166,
+        "sessions": 2,
+        "uncached_input_tokens": 224589,
+        "cache_read_input_tokens": 16674304,
+        "cache_write_5m_input_tokens": 0,
+        "cache_write_1h_input_tokens": 0,
+        "input_tokens": 16898893,
+        "output_tokens": 61977,
+        "total_tokens": 16960870
+      }
+    },
+    "control_input_tokens_per_task": 39110299.0,
+    "treatment_input_tokens_per_task": 16898893.0,
+    "observed_input_delta_per_task": -22211406.0,
+    "observed_input_change_percent": -56.79170593914406,
+    "observed_capacity_change_percent": 131.43704738529323,
+    "confidence": "low",
+    "causality": "observational"
+  },
+  "comparison_text_lines": [
+    "exact observed counters: control=39110299 input tokens/tasks=1; treatment=16898893 input tokens/tasks=1",
+    "treatment has 22211406 lower observed input tokens per task (-56.8% change); observed capacity change +131.4%",
+    "low confidence: either arm has fewer than three completed tasks",
+    "observational comparison: this observed difference does not establish causality"
+  ],
+  "independent_arithmetic_check": {
+    "control_category_sum_matches_input": true,
+    "control_input_plus_output_matches_total": true,
+    "treatment_category_sum_matches_input": true,
+    "treatment_input_plus_output_matches_total": true,
+    "observed_delta_per_task": {
+      "uncached_input_tokens": -1145294,
+      "cache_read_input_tokens": -21066112,
+      "cache_write_5m_input_tokens": 0,
+      "cache_write_1h_input_tokens": 0,
+      "input_tokens": -22211406,
+      "output_tokens": -112104,
+      "total_tokens": -22323510
+    },
+    "observed_input_change_percent_high_precision": "-56.79170593914406023845534906291562741568",
+    "observed_capacity_change_percent_high_precision": "131.4370473852932260119050401703827582079",
+    "matches_cli_json": true
+  },
+  "commands": [
+    "cargo build --release --locked",
+    "codeunlimited experiment record v1.7-control --from 2026-09-03T19:14:02Z --to 2026-09-03T20:52:49Z --tasks 1 . --json",
+    "codeunlimited experiment record v1.8-treatment --from 2026-09-04T10:27:58Z --to 2026-09-04T10:52:12Z --tasks 1 . --json",
+    "codeunlimited experiment compare v1.7-control v1.8-treatment . --json",
+    "codeunlimited experiment compare v1.7-control v1.8-treatment ."
+  ],
+  "limitations": [
+    "One completed sprint is present in each arm, so confidence is low.",
+    "The windows differ in duration, scope, and request count.",
+    "Task difficulty, tool use, operator behavior, and provider accounting are uncontrolled confounders.",
+    "Exact observed counters do not establish that codeunlimited caused the difference."
+  ]
+}
