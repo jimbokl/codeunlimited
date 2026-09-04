@@ -429,7 +429,6 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::thread;
     use std::time::Duration;
 
@@ -566,6 +565,7 @@ mod tests {
     #[test]
     fn executable_paths_with_spaces_and_hyphen_args_are_preserved() {
         use std::os::unix::fs::symlink;
+        use std::process::Command;
 
         let project = TempDir::new().expect("project");
         let resolved = Command::new("which")

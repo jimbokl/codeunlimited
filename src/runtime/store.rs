@@ -176,7 +176,11 @@ impl RunStore {
             .open(&self.paths.lock)
             .map_err(|_| io_error("open run lock"))?;
         file.try_lock_exclusive().map_err(|error| {
-            if error.kind() == io::ErrorKind::WouldBlock {
+            // Windows reports a held LockFileEx as ERROR_LOCK_VIOLATION, which does
+            // not map to ErrorKind::WouldBlock; fs2 exposes the per-OS contended code.
+            if error.kind() == io::ErrorKind::WouldBlock
+                || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+            {
                 RuntimeError::RunBusy
             } else {
                 io_error("lock run")
