@@ -18,6 +18,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
         with:
           toolchain: stable
@@ -32,10 +33,10 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           bash scripts/check_release.sh "$version"
           python scripts/check_release.py --expected "$version" --tag "$GITHUB_REF_NAME"
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --release --locked
-      - run: python -m unittest discover -v
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --release --all-targets --locked
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: cargo package --locked
       - name: Install packaged source and smoke-test it
         shell: bash
@@ -82,6 +83,7 @@ jobs:
         run: |
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
           "./${{ matrix.asset }}" --version | grep -Fx "codeunlimited ${GITHUB_REF_NAME#v}"
+          "./${{ matrix.asset }}" techniques | grep -F "fresh-sessions"
           python -c 'import hashlib,pathlib,sys; p=pathlib.Path(sys.argv[1]); pathlib.Path(str(p)+".sha256").write_text(hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name+"\n", encoding="utf-8")' "${{ matrix.asset }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

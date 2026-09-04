@@ -36,7 +36,13 @@ class ExperimentEvidenceTests(unittest.TestCase):
             "gemini-",
         ):
             self.assertNotIn(forbidden, lower_raw)
-        for key in ("control_start_git_sha", "control_end_git_sha", "treatment_end_git_sha"):
+        for key in (
+            "control_start_git_sha",
+            "control_end_git_sha",
+            "treatment_end_git_sha",
+            "evidence_git_sha",
+            "release_git_sha",
+        ):
             self.assertRegex(evidence["provenance"][key], re.compile(r"^[0-9a-f]{40}$"))
 
         def commit_timestamp(sha: str) -> int:
@@ -62,12 +68,31 @@ class ExperimentEvidenceTests(unittest.TestCase):
             evidence["windows"]["treatment"]["finished_unix"],
             commit_timestamp(provenance["treatment_end_git_sha"]) + 1,
         )
+        release_commit = subprocess.run(
+            ["git", "rev-parse", "v1.8.0^{commit}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(provenance["release_git_sha"], release_commit)
+        subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                provenance["evidence_git_sha"],
+                provenance["release_git_sha"],
+            ],
+            cwd=root,
+            check=True,
+        )
         changed_after_treatment = subprocess.run(
             [
                 "git",
                 "diff",
                 "--name-only",
-                f'{provenance["treatment_end_git_sha"]}..HEAD',
+                f'{provenance["treatment_end_git_sha"]}..{provenance["evidence_git_sha"]}',
             ],
             cwd=root,
             check=True,

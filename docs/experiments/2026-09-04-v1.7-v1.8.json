@@ -6,7 +6,9 @@
   "provenance": {
     "control_start_git_sha": "78dd522adffa4fa63836897456e647c39d094d59",
     "control_end_git_sha": "a8036035126221a1903e3a9845f325e9621e8434",
-    "treatment_end_git_sha": "4bcd40471f7dfa8664c904c31562e31b06e31603"
+    "treatment_end_git_sha": "4bcd40471f7dfa8664c904c31562e31b06e31603",
+    "evidence_git_sha": "85fa0cb088e1d2ba97685a9a4d20281397c372b9",
+    "release_git_sha": "52b47c881b9b34f6ee2e313785a522334ba23c76"
   },
   "windows": {
     "control": {
