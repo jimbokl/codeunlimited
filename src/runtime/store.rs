@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use fs2::FileExt;
@@ -252,28 +252,27 @@ impl RunStore {
     }
 
     pub fn read_attempt_intent<T: DeserializeOwned>(&self) -> Result<Option<T>, RuntimeError> {
-        reject_symlink(&self.paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
-        let bytes = match fs::read(&self.paths.attempt_intent) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(_) => return Err(io_error("read attempt intent")),
+        let Some(bytes) = read_bounded_regular(
+            &self.paths.attempt_intent,
+            MAX_ATTEMPT_INTENT_BYTES,
+            "attempt-intent.json",
+        )?
+        else {
+            return Ok(None);
         };
-        if bytes.len() > MAX_ATTEMPT_INTENT_BYTES {
-            return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
-        }
         serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|_| RuntimeError::InvalidStoredData("attempt-intent.json"))
     }
 
     pub fn attempt_intent_matches<T: Serialize>(&self, value: &T) -> Result<bool, RuntimeError> {
-        reject_symlink(&self.paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
         let expected = json_bytes(value, "attempt-intent.json")?;
-        match fs::read(&self.paths.attempt_intent) {
-            Ok(actual) => Ok(actual == expected),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(_) => Err(io_error("read attempt intent")),
-        }
+        Ok(read_bounded_regular(
+            &self.paths.attempt_intent,
+            MAX_ATTEMPT_INTENT_BYTES,
+            "attempt-intent.json",
+        )?
+        .is_some_and(|actual| actual == expected))
     }
 
     pub fn clear_attempt_intent(&self) -> Result<(), RuntimeError> {
@@ -428,6 +427,36 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>, RuntimeError> {
     fs::read(path).map_err(|_| io_error("read runtime file"))
 }
 
+fn read_bounded_regular(
+    path: &Path,
+    limit: usize,
+    label: &'static str,
+) -> Result<Option<Vec<u8>>, RuntimeError> {
+    reject_symlink(path).map_err(|_| RuntimeError::UnsafeStorePath)?;
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(io_error("read bounded runtime file")),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| io_error("inspect bounded runtime file"))?;
+    if !metadata.is_file() {
+        return Err(RuntimeError::UnsafeStorePath);
+    }
+    if metadata.len() > limit as u64 {
+        return Err(RuntimeError::InvalidStoredData(label));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(limit + 1));
+    file.take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| io_error("read bounded runtime file"))?;
+    if bytes.len() > limit {
+        return Err(RuntimeError::InvalidStoredData(label));
+    }
+    Ok(Some(bytes))
+}
+
 fn read_json<T: DeserializeOwned>(path: &Path, label: &'static str) -> Result<T, RuntimeError> {
     let bytes = read_bytes(path)?;
     serde_json::from_slice(&bytes).map_err(|_| RuntimeError::InvalidStoredData(label))
@@ -491,7 +520,7 @@ mod tests {
         RuntimeError,
     };
 
-    use super::RunStore;
+    use super::{RunStore, MAX_ATTEMPT_INTENT_BYTES};
 
     fn fixture() -> (TempDir, Manifest, Vec<u8>, CodingState) {
         let project = TempDir::new().expect("project");
@@ -617,6 +646,43 @@ mod tests {
         assert_eq!(
             store.write_attempt(1, &record).unwrap_err(),
             RuntimeError::AttemptExists(1)
+        );
+    }
+
+    #[test]
+    fn oversized_attempt_intent_is_rejected_during_inspection() {
+        let (project, manifest, workflow, state) = fixture();
+        let store = RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
+            .expect("create run");
+        fs::write(
+            &store.paths().attempt_intent,
+            vec![b' '; MAX_ATTEMPT_INTENT_BYTES + 1],
+        )
+        .unwrap();
+
+        let result: Result<Option<serde_json::Value>, RuntimeError> = store.read_attempt_intent();
+        assert_eq!(
+            result.unwrap_err(),
+            RuntimeError::InvalidStoredData("attempt-intent.json")
+        );
+    }
+
+    #[test]
+    fn oversized_attempt_intent_is_rejected_during_finalization_match() {
+        let (project, manifest, workflow, state) = fixture();
+        let store = RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
+            .expect("create run");
+        fs::write(
+            &store.paths().attempt_intent,
+            vec![b' '; MAX_ATTEMPT_INTENT_BYTES + 1],
+        )
+        .unwrap();
+
+        assert_eq!(
+            store
+                .attempt_intent_matches(&serde_json::json!({"schema_version": 1}))
+                .unwrap_err(),
+            RuntimeError::InvalidStoredData("attempt-intent.json")
         );
     }
 

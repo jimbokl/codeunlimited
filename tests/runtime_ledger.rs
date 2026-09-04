@@ -393,6 +393,31 @@ fn checked_aggregation_reports_overflow_without_saturating_a_complete_total() {
 }
 
 #[test]
+fn uncached_normalization_overflow_is_reported_instead_of_looking_unavailable() {
+    let project = TempDir::new().expect("project");
+    init_command(project.path(), "normalize-overflow", "success")
+        .assert()
+        .success();
+    let mut overflowing = attempt(
+        1,
+        "succeeded",
+        usage("uncached_only", Some(u64::MAX), Some(1), Some(0), Some(0)),
+    );
+    overflowing["usage"]["uncached_input_tokens"] = json!(u64::MAX);
+    write_attempt(project.path(), "normalize-overflow", 1, &overflowing);
+
+    let report = ledger(project.path(), "normalize-overflow");
+    assert_eq!(
+        report["attempts"][0]["transported_input_tokens"],
+        Value::Null
+    );
+    assert_eq!(report["coverage"]["overflowed"], true);
+    assert_eq!(report["coverage"]["observed_input_tokens"], Value::Null);
+    assert_eq!(report["coverage"]["observed_output_tokens"], 0);
+    assert_eq!(report["coverage"]["total_tokens"], Value::Null);
+}
+
+#[test]
 fn legacy_optional_fields_default_without_rewriting_during_inspection() {
     let project = TempDir::new().expect("project");
     init_command(project.path(), "legacy", "success")
@@ -805,4 +830,51 @@ fn recovery_does_not_reconcile_an_attempt_record_with_different_intent_metadata(
         ));
     assert!(intent.exists());
     assert_eq!(fs::read_dir(run.join("attempts")).unwrap().count(), 1);
+}
+
+#[test]
+fn recovery_rejects_a_valid_but_reidentified_intent_without_double_charging() {
+    let project = TempDir::new().expect("project");
+    let run = run_dir(project.path(), "reidentified");
+    let intent = run.join("attempt-intent.json");
+    init_command(project.path(), "reidentified", "success")
+        .arg("--provider-arg=--mutate-intent-attempt")
+        .arg(format!("--provider-arg={}", intent.display()))
+        .assert()
+        .success();
+    initialize_git(project.path());
+
+    binary()
+        .args(["run", "step", "reidentified", "--project"])
+        .arg(project.path())
+        .assert()
+        .code(8)
+        .stderr(predicate::str::contains("runtime[recovery_required]"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&intent).unwrap()).unwrap()["attempt"],
+        2
+    );
+    assert!(run.join("attempts/00000001.json").exists());
+    assert!(run.join("recovery.json").exists());
+    let state_before = fs::read(run.join("state.json")).unwrap();
+    let observation = project.path().join("recovery.txt");
+    fs::write(&observation, "Reject contradictory intent identity\n").unwrap();
+
+    binary()
+        .args(["run", "recover", "reidentified", "--project"])
+        .arg(project.path())
+        .arg("--observation")
+        .arg(&observation)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "invalid stored runtime data: attempt-intent.json",
+        ));
+
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), state_before);
+    assert_eq!(fs::read_dir(run.join("attempts")).unwrap().count(), 1);
+    assert!(run.join("attempts/00000001.json").exists());
+    assert!(!run.join("attempts/00000002.json").exists());
+    assert!(intent.exists());
+    assert!(run.join("recovery.json").exists());
 }

@@ -729,6 +729,23 @@ pub fn recover(reference: &RunRef, observation: &[u8]) -> Result<RunStatusView, 
     }
 
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
+    if let Some(recovery) = loaded.recovery.as_ref() {
+        let recovered = attempts
+            .iter()
+            .find(|record| record.attempt == recovery.attempt)
+            .ok_or(RuntimeError::InvalidStoredData("recovery.json"))?;
+        if recovered.base_revision != recovery.base_revision {
+            return Err(RuntimeError::InvalidStoredData("recovery.json"));
+        }
+        if let Some(intent) = intent.as_ref() {
+            if intent.attempt != recovery.attempt
+                || intent.base_revision != recovery.base_revision
+                || !record_matches_intent(recovered, intent)
+            {
+                return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
+            }
+        }
+    }
     let mut apply_observation = loaded.recovery.is_some();
     if let Some(intent) = intent.as_ref() {
         match attempts

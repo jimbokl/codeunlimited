@@ -5,7 +5,13 @@ use sha2::{Digest, Sha256};
 
 use super::engine::{AttemptIntent, AttemptOutcome, AttemptRecord};
 use super::model::{Manifest, ProviderConfig, RuntimeError, RUNTIME_SCHEMA_VERSION};
-use super::provider::ProviderUsage;
+use super::provider::{InputTokenSemantics, ProviderUsage};
+
+enum NormalizedInput {
+    Known(u64),
+    Unavailable,
+    Overflow,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LedgerReport {
@@ -86,7 +92,15 @@ pub(crate) fn build_report(
     let mut accepted = BTreeSet::new();
 
     for record in records {
-        let transported_input_tokens = record.usage.transported_input_tokens();
+        let transported_input_tokens = match normalized_input(&record.usage) {
+            NormalizedInput::Known(value) => Some(value),
+            NormalizedInput::Unavailable => None,
+            NormalizedInput::Overflow => {
+                overflowed = true;
+                observed_input = None;
+                None
+            }
+        };
         let output_tokens = record.usage.output_tokens;
         let total_tokens = match (transported_input_tokens, output_tokens) {
             (Some(input), Some(output)) => match input.checked_add(output) {
@@ -209,6 +223,30 @@ pub(crate) fn build_report(
         cap_overshoot_tokens,
         accepted_task_count,
         tokens_per_accepted_task,
+    }
+}
+
+fn normalized_input(usage: &ProviderUsage) -> NormalizedInput {
+    match usage.input_token_semantics {
+        InputTokenSemantics::TotalIncludesCache => usage
+            .input_tokens
+            .map_or(NormalizedInput::Unavailable, NormalizedInput::Known),
+        InputTokenSemantics::UncachedOnly => {
+            let Some(uncached) = usage.uncached_input_tokens.or(usage.input_tokens) else {
+                return NormalizedInput::Unavailable;
+            };
+            let (Some(cache_read), Some(cache_write)) = (
+                usage.cache_read_input_tokens,
+                usage.cache_write_input_tokens,
+            ) else {
+                return NormalizedInput::Unavailable;
+            };
+            uncached
+                .checked_add(cache_read)
+                .and_then(|value| value.checked_add(cache_write))
+                .map_or(NormalizedInput::Overflow, NormalizedInput::Known)
+        }
+        InputTokenSemantics::Unknown => NormalizedInput::Unavailable,
     }
 }
 
