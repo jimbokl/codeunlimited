@@ -44,6 +44,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         persisted.sync_all()?;
         #[cfg(unix)]
         File::open(parent)?.sync_all()?;
+        #[cfg(not(unix))]
+        let _ = parent;
         Ok(())
     })
 }

@@ -78,12 +78,18 @@ fn write_window_fixtures(home: &Path, project: &Path) {
     let codex = home.join("codex/sessions/2099/01/private-log.jsonl");
     fs::create_dir_all(codex.parent().expect("Codex fixture parent"))
         .expect("Codex fixture directory");
+    let turn_context = serde_json::json!({
+        "type": "turn_context",
+        "payload": {
+            "model": "gpt-private-model",
+            "cwd": project.to_string_lossy(),
+        },
+    });
     fs::write(
         codex,
         format!(
             concat!(
-                "{{\"type\":\"turn_context\",\"payload\":{{",
-                "\"model\":\"gpt-private-model\",\"cwd\":\"{}\"}}}}\n",
+                "{}\n",
                 "{{\"timestamp\":\"{}\",\"type\":\"event_msg\",\"payload\":{{",
                 "\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{",
                 "\"input_tokens\":100,\"cached_input_tokens\":25,",
@@ -97,10 +103,7 @@ fn write_window_fixtures(home: &Path, project: &Path) {
                 "\"input_tokens\":900,\"cached_input_tokens\":0,",
                 "\"output_tokens\":900}}}}}}}}\n"
             ),
-            project.display(),
-            FROM,
-            END_MINUS_ONE,
-            TO
+            turn_context, FROM, END_MINUS_ONE, TO
         ),
     )
     .expect("Codex fixture");
