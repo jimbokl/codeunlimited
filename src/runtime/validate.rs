@@ -938,10 +938,19 @@ mod tests {
 
     use super::{apply_delta, validate_state, MAX_EPISTEMIC_ITEMS};
 
+    fn project_root() -> PathBuf {
+        // Absolute on every platform: "/tmp/project" is not absolute on Windows.
+        if cfg!(windows) {
+            PathBuf::from(r"C:\tmp\project")
+        } else {
+            PathBuf::from("/tmp/project")
+        }
+    }
+
     fn manifest() -> Manifest {
         Manifest::for_test(
             "feature-x",
-            PathBuf::from("/tmp/project"),
+            project_root(),
             "Implement feature X",
             ProviderConfig::Command {
                 executable: PathBuf::from("fixture-driver"),

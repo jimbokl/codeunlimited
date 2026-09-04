@@ -203,10 +203,19 @@ mod tests {
 
     const WORKFLOW: &[u8] = b"# Workflow\r\nDo one bounded task.\r\n";
 
+    fn project_root() -> PathBuf {
+        // Absolute on every platform: "/tmp/project" is not absolute on Windows.
+        if cfg!(windows) {
+            PathBuf::from(r"C:\tmp\project")
+        } else {
+            PathBuf::from("/tmp/project")
+        }
+    }
+
     fn manifest() -> Manifest {
         let mut value = Manifest::for_test(
             "feature-x",
-            PathBuf::from("/tmp/project"),
+            project_root(),
             "Implement feature X",
             ProviderConfig::Command {
                 executable: PathBuf::from("fixture-driver"),
