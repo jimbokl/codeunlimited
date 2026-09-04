@@ -55,6 +55,32 @@ existing context remains useful; use a fresh session for a distinct multi-step
 task when the old context would mostly be dead weight. Measure tokens per
 completed comparable task instead of optimizing request size alone.
 
+## Round 2: pre-registered three-arm test (the decisive one)
+
+The two-arm result left a dispute: "no savings" (treatment lost 17%) vs
+"savings exist" (field x6.8). Both follow from one law fitted on observed
+constants - session boot b~24k, linear context growth g~1.0k/request:
+
+    continue - restart = g*N*t0 - b   (restart pays iff N*t0 > b/g ~ 24)
+
+Minimizing total cost gives an optimal session length of ~7 requests
+(2-3 of these micro-tasks per session). **Prediction registered before the
+run**: a third arm batching the same 8 tasks as 3+3+2 per session would
+cost 0.70-0.90M - below BOTH prior arms.
+
+| arm | requests | total tokens |
+|---|---:|---:|
+| control - 1 session x 8 tasks | 24 | 0.92M |
+| treatment - 8 sessions x 1 task | 39 | 1.08M |
+| **optimal - 3 sessions (3+3+2)** | **22** | **0.65M** |
+
+Outcome: **-29.9% vs control, -40.2% vs treatment** - the predicted
+ordering held decisively (the point estimate even beat the registered
+interval's lower edge by 0.05M; all 123 tests green, same quality bar).
+The savings dispute is resolved: session-boundary discipline saves tokens
+when session length follows the break-even law, and burns tokens when it
+does not. The `fresh-sessions` technique text carries exactly this rule.
+
 ## Threats to validity
 
 - Only eight small, self-contained tasks were used.
