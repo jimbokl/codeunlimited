@@ -81,7 +81,7 @@ pub(crate) fn build_report(
     records: &[AttemptRecord],
     pending: Option<&AttemptIntent>,
     busy: bool,
-) -> LedgerReport {
+) -> Result<LedgerReport, RuntimeError> {
     let configuration_sha256 = configuration_sha256(&manifest.provider);
     let mut attempts = Vec::with_capacity(records.len());
     let mut complete_attempts = 0_u64;
@@ -92,6 +92,26 @@ pub(crate) fn build_report(
     let mut accepted = BTreeSet::new();
 
     for record in records {
+        if !record.accepted_task_ids.is_empty() {
+            let Some(plan) = manifest.work_plan.as_ref() else {
+                return Err(RuntimeError::InvalidStoredData("attempt"));
+            };
+            let declared: BTreeSet<_> = plan.tasks.iter().map(|task| task.id.as_str()).collect();
+            if record.outcome != AttemptOutcome::Succeeded
+                || record.verification_passed != Some(true)
+                || record
+                    .accepted_task_ids
+                    .iter()
+                    .any(|id| !declared.contains(id.as_str()))
+            {
+                return Err(RuntimeError::InvalidStoredData("attempt"));
+            }
+            for id in &record.accepted_task_ids {
+                if !accepted.insert(id.clone()) {
+                    return Err(RuntimeError::InvalidStoredData("attempt"));
+                }
+            }
+        }
         let transported_input_tokens = match normalized_input(&record.usage) {
             NormalizedInput::Known(value) => Some(value),
             NormalizedInput::Unavailable => None,
@@ -124,9 +144,6 @@ pub(crate) fn build_report(
         if let Some(value) = output_tokens {
             observed_output = observed_output.and_then(|sum| sum.checked_add(value));
             overflowed |= observed_output.is_none();
-        }
-        if record.outcome == AttemptOutcome::Succeeded {
-            accepted.extend(record.accepted_task_ids.iter().cloned());
         }
         attempts.push(LedgerAttempt {
             attempt: record.attempt,
@@ -200,11 +217,13 @@ pub(crate) fn build_report(
         .zip(coverage.observed_total_tokens)
         .and_then(|(limit, observed)| observed.checked_sub(limit));
     let accepted_task_count = accepted.len() as u64;
-    let tokens_per_accepted_task = coverage.total_tokens.and_then(|total| {
-        (accepted_task_count != 0).then(|| total as f64 / accepted_task_count as f64)
+    let tokens_per_accepted_task = manifest.work_plan.as_ref().and_then(|_| {
+        coverage.total_tokens.and_then(|total| {
+            (accepted_task_count != 0).then(|| total as f64 / accepted_task_count as f64)
+        })
     });
 
-    LedgerReport {
+    Ok(LedgerReport {
         schema_version: RUNTIME_SCHEMA_VERSION,
         run_name: manifest.run_name.clone(),
         provider: provider_name(&manifest.provider).into(),
@@ -223,7 +242,7 @@ pub(crate) fn build_report(
         cap_overshoot_tokens,
         accepted_task_count,
         tokens_per_accepted_task,
-    }
+    })
 }
 
 fn normalized_input(usage: &ProviderUsage) -> NormalizedInput {
@@ -253,19 +272,21 @@ fn normalized_input(usage: &ProviderUsage) -> NormalizedInput {
 pub(crate) fn cap_admission_error(
     manifest: &Manifest,
     records: &[AttemptRecord],
-) -> Option<RuntimeError> {
-    let limit = manifest.max_total_tokens?;
+) -> Result<Option<RuntimeError>, RuntimeError> {
+    let Some(limit) = manifest.max_total_tokens else {
+        return Ok(None);
+    };
     if records.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let report = build_report(manifest, records, None, false);
-    match report.coverage.total_tokens {
+    let report = build_report(manifest, records, None, false)?;
+    Ok(match report.coverage.total_tokens {
         Some(observed) if observed >= limit => {
             Some(RuntimeError::TokenCapReached { limit, observed })
         }
         Some(_) => None,
         None => Some(RuntimeError::TokenCapUsageUnknown),
-    }
+    })
 }
 
 pub(crate) fn configuration_sha256(provider: &ProviderConfig) -> String {

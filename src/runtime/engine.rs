@@ -10,10 +10,10 @@ use sha2::{Digest, Sha256};
 use super::ledger::LedgerReport;
 use super::model::{
     ArtifactRef, CheckResult, CodingState, GitSnapshot, Manifest, ProviderConfig, RecoveryRecord,
-    RunStatus, RuntimeError, StepOutcome, VerificationCommand, DEFAULT_MAX_ATTEMPTS_PER_REVISION,
-    DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES, DEFAULT_PROMPT_BUDGET_BYTES,
-    DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES, DEFAULT_WORKFLOW_BUDGET_BYTES,
-    RUNTIME_SCHEMA_VERSION,
+    RunStatus, RuntimeError, StepOutcome, VerificationCommand, WorkPlan,
+    DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
+    DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
+    DEFAULT_WORKFLOW_BUDGET_BYTES, RUNTIME_SCHEMA_VERSION,
 };
 use super::prompt::{compile_prompt, inspect_prompt, CompiledPrompt};
 use super::provider::{
@@ -41,6 +41,7 @@ pub struct InitRequest {
     pub verification_command: Option<VerificationCommand>,
     pub verify_every_step: bool,
     pub allow_unverified_completion: bool,
+    pub work_plan: Option<WorkPlan>,
 }
 
 impl InitRequest {
@@ -68,6 +69,7 @@ impl InitRequest {
             verification_command: None,
             verify_every_step: false,
             allow_unverified_completion: false,
+            work_plan: None,
         }
     }
 }
@@ -189,6 +191,8 @@ pub(crate) struct AttemptRecord {
     #[serde(default)]
     pub(crate) accepted_task_ids: Vec<String>,
     #[serde(default)]
+    pub(crate) verification_passed: Option<bool>,
+    #[serde(default)]
     pub(crate) configuration_sha256: String,
 }
 
@@ -283,14 +287,19 @@ pub fn init_run(request: InitRequest) -> Result<RunStatusView, RuntimeError> {
         verification_command: request.verification_command,
         verify_every_step: request.verify_every_step,
         allow_unverified_completion: request.allow_unverified_completion,
+        work_plan: request.work_plan,
     };
     validate_manifest(&manifest)?;
+    let mut initial_state = CodingState::initial();
+    if let Some(plan) = &manifest.work_plan {
+        initial_state.queue = super::packet::initial_queue(plan);
+    }
     let store = RunStore::create(
         &project_root,
         &request.run_name,
         &manifest,
         &workflow,
-        &CodingState::initial(),
+        &initial_state,
     )?;
     status_for_store(&store)
 }
@@ -311,9 +320,21 @@ pub fn ledger(reference: &RunRef) -> Result<LedgerReport, RuntimeError> {
     let loaded = store.load()?;
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
     let intent = read_attempt_intent(&store)?;
-    let report = super::ledger::build_report(&loaded.manifest, &attempts, intent.as_ref(), busy);
+    let report = super::ledger::build_report(&loaded.manifest, &attempts, intent.as_ref(), busy)?;
     drop(snapshot_lock);
     Ok(report)
+}
+
+pub fn packet(reference: &RunRef) -> Result<super::packet::PacketPreview, RuntimeError> {
+    let store = RunStore::open(&reference.project_root, &reference.run_name)?;
+    let _lock = store.try_lock()?;
+    let loaded = store.load()?;
+    let plan = loaded
+        .manifest
+        .work_plan
+        .as_ref()
+        .ok_or_else(|| RuntimeError::InvalidState("run has no work plan".into()))?;
+    super::packet::preview(&loaded.manifest.run_name, plan, &loaded.state)
 }
 
 pub fn render_next_prompt(reference: &RunRef) -> Result<CompiledPrompt, RuntimeError> {
@@ -339,7 +360,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         return Err(RuntimeError::TerminalRun);
     }
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
-    if let Some(error) = super::ledger::cap_admission_error(&loaded.manifest, &attempts) {
+    if let Some(error) = super::ledger::cap_admission_error(&loaded.manifest, &attempts)? {
         return Err(error);
     }
     if attempts.len() as u64 >= loaded.manifest.max_steps
@@ -470,7 +491,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
             )
         }
     };
-    let should_verify = loaded.manifest.verify_every_step
+    let should_verify = loaded.manifest.work_plan.is_some()
+        || loaded.manifest.verify_every_step
         || matches!(result.envelope.outcome, StepOutcome::Complete);
     let check = if should_verify {
         match loaded.manifest.verification_command.as_ref() {
@@ -504,11 +526,59 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         None
     };
     let verification_passed = check.as_ref().map(|check| check.passed);
+    if loaded.manifest.work_plan.is_some() && verification_passed == Some(false) {
+        return fail_transition(
+            &store,
+            &intent,
+            intent_intact,
+            &loaded.manifest,
+            &loaded.state,
+            &prompt,
+            attempt,
+            started_unix,
+            &result,
+            before_git,
+            "verification_failed".into(),
+            control_unchanged,
+        );
+    }
     let after_git = git_snapshot(&loaded.manifest.project_root);
+    let mut envelope = result.envelope.clone();
+    if let Some(plan) = &loaded.manifest.work_plan {
+        envelope = match super::packet::validate_and_derive_delta(
+            plan,
+            &loaded.state,
+            envelope,
+            verification_passed == Some(true),
+        ) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                return fail_transition(
+                    &store,
+                    &intent,
+                    intent_intact,
+                    &loaded.manifest,
+                    &loaded.state,
+                    &prompt,
+                    attempt,
+                    started_unix,
+                    &result,
+                    before_git,
+                    error.to_string(),
+                    control_unchanged,
+                )
+            }
+        };
+    }
+    let accepted_task_ids = if loaded.manifest.work_plan.is_some() {
+        super::packet::accepted_ids(&envelope)
+    } else {
+        Vec::new()
+    };
     let mut transition = match apply_delta(
         &loaded.manifest,
         &loaded.state,
-        result.envelope.clone(),
+        envelope,
         &resolved_artifacts,
         check,
         &loaded.observation,
@@ -604,6 +674,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         &result,
         before_git,
         after_git,
+        accepted_task_ids,
+        verification_passed,
     );
     finalize_attempt(&store, &intent, &record, None, intent_intact)?;
     let transported_input_tokens = result.usage.transported_input_tokens();
@@ -998,7 +1070,7 @@ fn fail_transition(
     let after_git = git_snapshot(&manifest.project_root);
     let changed =
         !intent_intact || !control_unchanged || workspace_changed(&before_git, &after_git);
-    let record = result_attempt(
+    let mut record = result_attempt(
         manifest,
         state,
         prompt,
@@ -1014,6 +1086,9 @@ fn fail_transition(
         before_git.clone(),
         after_git.clone(),
     );
+    if category == "verification_failed" {
+        record.verification_passed = Some(false);
+    }
     let recovery = changed.then_some(RecoveryRecord {
         schema_version: RUNTIME_SCHEMA_VERSION,
         attempt,
@@ -1113,6 +1188,7 @@ fn result_attempt(
         before_git,
         after_git,
         accepted_task_ids: Vec::new(),
+        verification_passed: None,
         configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
     }
 }
@@ -1153,6 +1229,7 @@ fn failed_attempt(
         before_git,
         after_git,
         accepted_task_ids: Vec::new(),
+        verification_passed: None,
         configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
     }
 }
@@ -1182,6 +1259,7 @@ fn interrupted_attempt(intent: &AttemptIntent, after_git: GitSnapshot) -> Attemp
         before_git: intent.before_git.clone(),
         after_git,
         accepted_task_ids: Vec::new(),
+        verification_passed: None,
         configuration_sha256: intent.configuration_sha256.clone(),
     }
 }
@@ -1197,6 +1275,8 @@ fn successful_attempt(
     result: &super::provider::ProviderResult,
     before_git: GitSnapshot,
     after_git: GitSnapshot,
+    accepted_task_ids: Vec<String>,
+    verification_passed: Option<bool>,
 ) -> AttemptRecord {
     AttemptRecord {
         schema_version: RUNTIME_SCHEMA_VERSION,
@@ -1221,7 +1301,8 @@ fn successful_attempt(
         state_after_sha256: Some(state_hash(after_state)),
         before_git,
         after_git,
-        accepted_task_ids: Vec::new(),
+        accepted_task_ids,
+        verification_passed,
         configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
     }
 }

@@ -17,6 +17,10 @@ pub const DEFAULT_PROVIDER_TIMEOUT_SECONDS: u64 = 30 * 60;
 pub const MAX_PROVIDER_TIMEOUT_SECONDS: u64 = 4 * 60 * 60;
 pub const DEFAULT_MAX_STEPS: u64 = 100;
 pub const DEFAULT_MAX_ATTEMPTS_PER_REVISION: u64 = 2;
+pub const MAX_WORK_PLAN_BYTES: usize = 32 * 1024;
+pub const MAX_WORK_PLAN_TASKS: usize = 32;
+pub const MAX_PACKET_TASKS: usize = 8;
+pub const MAX_TASK_SCOPE_PATHS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +45,8 @@ pub struct Manifest {
     pub verification_command: Option<VerificationCommand>,
     pub verify_every_step: bool,
     pub allow_unverified_completion: bool,
+    #[serde(default)]
+    pub work_plan: Option<WorkPlan>,
 }
 
 impl Manifest {
@@ -71,8 +77,36 @@ impl Manifest {
             verification_command: None,
             verify_every_step: false,
             allow_unverified_completion: false,
+            work_plan: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkPlan {
+    pub schema_version: u64,
+    pub max_packet_tasks: usize,
+    pub tasks: Vec<PlannedTask>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedTask {
+    pub id: String,
+    pub task: String,
+    pub group: String,
+    pub depends_on: Vec<String>,
+    pub scope: Vec<String>,
+    pub risk: TaskRisk,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskRisk {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

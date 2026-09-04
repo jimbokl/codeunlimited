@@ -21,7 +21,7 @@ pub const MAX_COMPLETED_ITEMS: usize = 32;
 pub const MAX_DECISIONS: usize = 32;
 pub const MAX_BLOCKERS: usize = 16;
 pub const MAX_ACTIVE_FILES: usize = 32;
-pub const MAX_CHECKS: usize = 16;
+pub const MAX_CHECKS: usize = 32;
 pub const MAX_ARTIFACTS: usize = 32;
 pub const MAX_EPISTEMIC_ITEMS: usize = 32;
 pub const MAX_EVIDENCE_PER_ITEM: usize = 8;
@@ -93,6 +93,17 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), RuntimeError> {
     if let Some(command) = &manifest.verification_command {
         validate_executable(&command.program, "verification program")?;
         validate_args(&command.args, None)?;
+    }
+    if let Some(plan) = &manifest.work_plan {
+        super::packet::validate_work_plan(plan)?;
+        if manifest.verification_command.is_none() {
+            return Err(RuntimeError::VerificationRequired);
+        }
+        if manifest.allow_unverified_completion {
+            return Err(RuntimeError::InvalidManifest(
+                "managed work plans cannot allow unverified completion".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -209,6 +220,9 @@ pub fn validate_state(manifest: &Manifest, state: &CodingState) -> Result<(), Ru
             return Err(RuntimeError::BlockerRequired)
         }
         _ => {}
+    }
+    if let Some(plan) = &manifest.work_plan {
+        super::packet::validate_plan_state(plan, state)?;
     }
 
     let actual = serde_json::to_vec(state)
@@ -889,7 +903,7 @@ fn validate_schema(actual: u64) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn validate_safe_id(value: &str) -> Result<(), RuntimeError> {
+pub(crate) fn validate_safe_id(value: &str) -> Result<(), RuntimeError> {
     if value.is_empty()
         || value.len() > 64
         || !value
@@ -903,7 +917,7 @@ fn validate_safe_id(value: &str) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn validate_text(
+pub(crate) fn validate_text(
     field: &'static str,
     value: &str,
     allowed: usize,
@@ -942,7 +956,7 @@ fn insert_unique(seen: &mut HashSet<String>, id: &str) -> Result<(), RuntimeErro
     Ok(())
 }
 
-fn validate_relative_path(path: &str) -> Result<(), RuntimeError> {
+pub(crate) fn validate_relative_path(path: &str) -> Result<(), RuntimeError> {
     let parsed = Path::new(path);
     let windows_prefix = path.as_bytes().get(1) == Some(&b':');
     if path.is_empty()

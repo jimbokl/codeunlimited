@@ -1,5 +1,5 @@
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -7,14 +7,14 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::runtime::engine::{
-    cache_probe, init_run, ledger, recover, render_next_prompt, run_steps, status, step,
+    cache_probe, init_run, ledger, packet, recover, render_next_prompt, run_steps, status, step,
     InitRequest, RunRef, RunStatusView,
 };
 use crate::runtime::model::{
-    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand,
+    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand, WorkPlan,
     DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
     DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
-    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES,
+    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES, MAX_WORK_PLAN_BYTES,
 };
 use crate::runtime::provider::ProcessProvider;
 
@@ -133,6 +133,9 @@ pub enum RunCmd {
         /// Provider prompt-cache TTL
         #[arg(long, value_enum)]
         cache_ttl: Option<CacheTtlArg>,
+        /// Bounded JSON work plan to snapshot into the run manifest
+        #[arg(long, value_name = "FILE")]
+        work_plan: Option<PathBuf>,
         /// Verification executable (no shell)
         #[arg(long, value_name = "PROGRAM")]
         verify_program: Option<PathBuf>,
@@ -180,6 +183,14 @@ pub enum RunCmd {
     },
     /// Show immutable worker-attempt counters and aggregate coverage
     Ledger {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview the next deterministic work packet without invoking a provider
+    Packet {
         #[command(flatten)]
         target: TargetArgs,
         /// Machine-readable output
@@ -254,6 +265,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             api_endpoint,
             api_key_env,
             cache_ttl,
+            work_plan,
             verify_program,
             verify_arg,
             verify_every_step,
@@ -349,6 +361,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             request.verification_command = verification_command;
             request.verify_every_step = verify_every_step;
             request.allow_unverified_completion = allow_unverified_completion;
+            request.work_plan = work_plan.as_deref().map(read_work_plan).transpose()?;
             let view = init_run(request)?;
             println!(
                 "Initialized run {} at revision {}.\nRecommended .gitignore entry: .codeunlimited/runs/",
@@ -386,6 +399,21 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                     report
                         .max_total_tokens
                         .map_or_else(|| "none".into(), |value| value.to_string()),
+                );
+            }
+        }
+        RunCmd::Packet { target, json } => {
+            let preview = packet(&reference(target)?)?;
+            if json {
+                print_json(&preview)?;
+            } else {
+                println!(
+                    "run={} revision={} selected={} remaining={} reason={}",
+                    preview.run_name,
+                    preview.revision,
+                    preview.selected_task_ids.join(","),
+                    preview.remaining_count,
+                    preview.reason
                 );
             }
         }
@@ -504,6 +532,36 @@ fn read_observation(path: &Path) -> Result<Vec<u8>, RunCliError> {
     fs::read(path).map_err(|_| RunCliError::Input("observation file could not be read"))
 }
 
+fn read_work_plan(path: &Path) -> Result<WorkPlan, RunCliError> {
+    let file = File::open(path)
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    if metadata.len() > MAX_WORK_PLAN_BYTES as u64 {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    let link_metadata = fs::symlink_metadata(path)
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    if link_metadata.file_type().is_symlink() || !link_metadata.is_file() {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(MAX_WORK_PLAN_BYTES + 1));
+    file.take((MAX_WORK_PLAN_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RunCliError::Input("work plan file could not be read"))?;
+    if bytes.len() > MAX_WORK_PLAN_BYTES {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| RunCliError::Input("work plan must be valid JSON"))
+}
+
 fn print_json(value: &impl Serialize) -> Result<(), RunCliError> {
     let rendered = serde_json::to_string_pretty(value).map_err(|_| RunCliError::Output)?;
     println!("{rendered}");
@@ -618,7 +676,9 @@ fn runtime_exit(error: &RuntimeError) -> (i32, &'static str) {
             (EXIT_TIMEOUT, "timeout")
         }
         RuntimeError::ProviderFailed(category)
-            if category == "invalid_output" || category.starts_with("verification_") =>
+            if category == "invalid_output"
+                || category == "invalid_transition"
+                || category.starts_with("verification_") =>
         {
             (EXIT_INVALID_TRANSITION, "invalid_transition")
         }
