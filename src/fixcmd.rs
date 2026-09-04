@@ -122,13 +122,21 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
     let mut applied = 0;
     let mut failed = false;
 
-    // 1. Efficiency rules block present?
-    let has_rules = ["CLAUDE.md", "AGENTS.md"]
-        .iter()
-        .all(|f| std::fs::read_to_string(root.join(f)).is_ok_and(|t| t.contains(initcmd::MARKER)));
-    if !has_rules {
+    // 1. Efficiency rules block present and current (v2, technique-rendered)?
+    let has_current = ["CLAUDE.md", "AGENTS.md"].iter().all(|f| {
+        std::fs::read_to_string(root.join(f))
+            .is_ok_and(|t| t.contains(crate::techniques::MARKER_V2))
+    });
+    if !has_current {
+        let has_legacy = ["CLAUDE.md", "AGENTS.md"].iter().any(|f| {
+            std::fs::read_to_string(root.join(f)).is_ok_and(|t| t.contains(initcmd::MARKER))
+        });
         n += 1;
-        println!(" {n}. [rules] CLAUDE.md/AGENTS.md lack the efficiency block");
+        if has_legacy {
+            println!(" {n}. [rules] efficiency block is v1 - an in-place upgrade is available");
+        } else {
+            println!(" {n}. [rules] CLAUDE.md/AGENTS.md lack the efficiency block");
+        }
         if apply {
             if initcmd::run(root) == 0 {
                 applied += 1;
@@ -136,7 +144,7 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
                 failed = true;
             }
         } else {
-            println!("        -> --apply runs `init` here (rules + baseline)");
+            println!("        -> --apply runs `init` here (renders the enabled technique set)");
         }
     }
 
@@ -192,6 +200,44 @@ fn run_with_config(root: &Path, apply: bool, cfg: &Config) -> i32 {
                  doesn't use (manual - never auto-edited)",
                 servers.join(", ")
             );
+        }
+    }
+
+    // 4. Lean memory files: CLAUDE.md/AGENTS.md bill on every turn.
+    let technique_on = |id: &str| crate::techniques::enabled(cfg).iter().any(|t| t.id == id);
+    if technique_on("lean-memory") {
+        let bytes: u64 = ["CLAUDE.md", "AGENTS.md"]
+            .iter()
+            .filter_map(|f| std::fs::metadata(root.join(f)).ok())
+            .map(|m| m.len())
+            .sum();
+        let est_tokens = bytes / 4;
+        if est_tokens > 8_000 {
+            n += 1;
+            println!(
+                " {n}. [memory] CLAUDE.md+AGENTS.md weigh ~{}k tokens and are injected \
+                 every turn - trim to stable essentials (manual, reviewable)",
+                est_tokens / 1000
+            );
+        }
+    }
+
+    // 5. Codex config hints (read-only - config is never auto-edited).
+    if technique_on("tool-output-budget") {
+        let codex_cfg = crate::parsers::codex_root()
+            .parent()
+            .map(|p| p.join("config.toml"));
+        if let Some(p) = codex_cfg {
+            let raw = std::fs::read_to_string(&p).unwrap_or_default();
+            if p.exists() && !raw.contains("tool_output_token_limit") {
+                n += 1;
+                println!(
+                    " {n}. [codex] {} has no tool_output_token_limit - verbose command \
+                     output is the largest avoidable cost; suggested: \
+                     tool_output_token_limit = 12000 (manual, reviewable)",
+                    p.display()
+                );
+            }
         }
     }
 

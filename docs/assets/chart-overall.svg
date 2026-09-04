@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="200" font-family="ui-sans-serif,system-ui,'Segoe UI',sans-serif" font-size="14">
+  <style>
+    .t { fill: #57606a; } .v { fill: #1a7f37; font-weight: 600; } .h { fill: #24292f; font-weight: 600; }
+    @media (prefers-color-scheme: dark) {
+      .t { fill: #8b949e; } .v { fill: #3fd158; } .h { fill: #e6edf3; }
+    }
+  </style>
+  <text x="10" y="24" class="h" font-size="16">Context tax, measured exactly — 9 real sessions longer than 30 turns</text>
+  <text x="10" y="62" class="t">actual prompt tokens processed</text>
+  <rect x="10" y="70" width="640" height="26" rx="4" fill="#cf222e" opacity="0.85"/>
+  <text x="540" y="88" fill="#ffffff" font-weight="600">3,551M</text>
+  <text x="10" y="128" class="t">same turns at bounded context (state-file loop)</text>
+  <rect x="10" y="136" width="94" height="26" rx="4" fill="#2ea44f"/>
+  <text x="112" y="154" class="v">519M</text>
+  <text x="10" y="190" class="t">= <tspan class="v">x6.8</tspan> — 3,033M tokens burned by context growth alone. Exact sums over raw logs, no estimates (scripts/bench_context.py).</text>
+</svg>

@@ -42,6 +42,48 @@ hours of work are left before the wall - and how much a fix moves it".
 Each finding is reported in **limit currency**: tokens reclaimed, % of your
 weekly volume, extra agent answers that fit into the same limit.
 
+## The techniques — no black box
+
+Every rule the tool installs is a named, individually toggleable technique.
+Each maps to a detector, and the numbers come from your own logs — run
+`codeunlimited audit` and `python scripts/bench_context.py` to regenerate
+every chart below on your machine.
+
+![Context tax measured exactly](docs/assets/chart-overall.svg)
+
+![Reclaimable tokens per leak](docs/assets/chart-by-technique.svg)
+
+| Technique | Prevents | Evidence | Default |
+|---|---|---|---|
+| `fresh-sessions` | dragging dead history through every turn | exact: x6.8 on 9 real sessions | on |
+| `state-file-loops` | re-reading conversation in long loops | exact (same benchmark) | on |
+| `manual-compact` | passive autocompact of stale threads | exact (same benchmark) | on |
+| `delegate-mechanical` | top-tier model on renames/boilerplate | audit estimate w/ range | on, guardrailed |
+| `no-rereads` | re-reading files already in context | part of context tax | on |
+| `file-refs` | pasted file bodies living in context forever | part of context tax | on |
+| `concise-answers` | output tokens spent on narration | rule-only | on |
+| `mcp-hygiene` | unused MCP schemas billed at every session start | measured (fat-start detector) | on |
+| `lean-memory` | oversized CLAUDE.md/AGENTS.md billed every turn | measured (fix check) | on |
+| `scan-ignore` | searches burning tokens in dumps/build output | rule-only | on |
+| `tool-output-budget` | verbose Codex command output | rule-only (config hint) | on |
+| `reasoning-effort` | thinking tokens on routine work | **opt-in** — can affect quality | off |
+| `model-routing` | top-tier sessions for routine tasks | **opt-in** — can affect quality | off |
+
+Toggle any of them (`.codeunlimited.toml`):
+
+```toml
+[techniques]
+disable = ["delegate-mechanical"]
+enable  = ["reasoning-effort"]
+```
+
+`codeunlimited techniques` lists the catalog with live status;
+`codeunlimited init` re-renders the blocks after toggling and upgrades old
+block versions in place (backup kept). Quality guardrail: techniques that
+could trade output quality for tokens are marked, phrased with explicit
+limits, and the aggressive ones default to off — built for smart,
+token-hungry next-gen models.
+
 ## Install (one command)
 
 macOS / Linux:

@@ -12,6 +12,10 @@
 //! long_session_turns = 30
 //! trivial_output_tokens = 300
 //! fat_start_tokens = 25000
+//!
+//! [techniques]
+//! disable = ["delegate-mechanical"]  # switch any rule off by id
+//! enable  = ["reasoning-effort"]     # opt into default-off techniques
 //! ```
 
 use std::path::Path;
@@ -22,6 +26,10 @@ pub struct Config {
     pub trivial_output_tokens: u64,
     pub fat_start_tokens: u64,
     pub ignore_projects: Vec<String>,
+    /// Technique ids switched off ([techniques] disable = [...]).
+    pub techniques_disable: Vec<String>,
+    /// Default-off technique ids opted into ([techniques] enable = [...]).
+    pub techniques_enable: Vec<String>,
 }
 
 impl Default for Config {
@@ -31,6 +39,8 @@ impl Default for Config {
             trivial_output_tokens: 300,
             fat_start_tokens: 25_000,
             ignore_projects: vec![],
+            techniques_disable: vec![],
+            techniques_enable: vec![],
         }
     }
 }
@@ -73,6 +83,22 @@ impl Config {
                 .filter_map(|s| s.as_str())
                 .map(|s| s.to_lowercase())
                 .collect();
+        }
+        if let Some(t) = v.get("techniques") {
+            let read = |key: &str| -> Option<Vec<String>> {
+                t.get(key).and_then(|x| x.as_array()).map(|list| {
+                    list.iter()
+                        .filter_map(|s| s.as_str())
+                        .map(|s| s.to_lowercase())
+                        .collect()
+                })
+            };
+            if let Some(list) = read("disable") {
+                self.techniques_disable = list;
+            }
+            if let Some(list) = read("enable") {
+                self.techniques_enable = list;
+            }
         }
         if let Some(t) = v.get("thresholds") {
             if let Some(n) = t.get("long_session_turns").and_then(|x| x.as_integer()) {

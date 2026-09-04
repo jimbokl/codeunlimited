@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="330" font-family="ui-sans-serif,system-ui,'Segoe UI',sans-serif" font-size="13.5">
+  <style>
+    .t { fill: #57606a; } .v { fill: #24292f; font-weight: 600; } .h { fill: #24292f; font-weight: 600; }
+    .rng { fill: #57606a; opacity: 0.35; }
+    @media (prefers-color-scheme: dark) {
+      .t { fill: #8b949e; } .v { fill: #e6edf3; } .h { fill: #e6edf3; }
+      .rng { fill: #8b949e; }
+    }
+  </style>
+  <text x="10" y="24" class="h" font-size="16">Reclaimable tokens per leak — author's logs, 113 days (bars = mid, whiskers = honest range)</text>
+
+  <text x="10" y="60" class="t">context discipline: fresh-sessions + state-file-loops + manual-compact</text>
+  <rect x="10" y="68" width="479" height="22" rx="4" fill="#2ea44f"/>
+  <rect x="319" y="74" width="320" height="10" rx="3" class="rng"/>
+  <text x="497" y="84" class="v">5,522M (3.7–7.4B)</text>
+
+  <text x="10" y="122" class="t">delegate-mechanical (+ opt-in model-routing / reasoning-effort)</text>
+  <rect x="10" y="130" width="53" height="22" rx="4" fill="#2ea44f"/>
+  <rect x="27" y="136" width="52" height="10" rx="3" class="rng"/>
+  <text x="88" y="146" class="v">604M (302–905)</text>
+
+  <text x="10" y="184" class="t">retry hygiene (flaky tools re-sending full context)</text>
+  <rect x="10" y="192" width="12" height="22" rx="3" fill="#2ea44f"/>
+  <text x="30" y="208" class="v">114M (57–172)</text>
+
+  <text x="10" y="246" class="t">cache-prefix hygiene (measured exactly)</text>
+  <rect x="10" y="254" width="3" height="22" fill="#2ea44f"/>
+  <text x="20" y="270" class="v">3M</text>
+
+  <text x="10" y="308" class="t">mcp-hygiene + lean-memory + scan-ignore: ~0 on this machine (session starts already lean — the detector proves absence too). tool-output-budget: not separable from logs, applied as a rule.</text>
+</svg>

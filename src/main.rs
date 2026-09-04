@@ -1,6 +1,6 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, schedule, skillcmd,
+    parsers, report, reportcmd, schedule, skillcmd, techniques,
 };
 
 use std::io::IsTerminal;
@@ -174,6 +174,12 @@ enum Cmd {
         #[command(subcommand)]
         command: ExperimentCmd,
     },
+    /// List every efficiency technique with on/off status and how to toggle it
+    Techniques {
+        /// Evaluate against this project's config (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 fn main() {
@@ -302,6 +308,11 @@ fn main() {
                 } => experiment::compare(&control, &treatment, &path, json),
                 ExperimentCmd::List { path, json } => experiment::list(&path, json),
             });
+        }
+        Cmd::Techniques { path } => {
+            let root = path.canonicalize().ok();
+            let cfg = config::Config::load_for(root.as_deref());
+            std::process::exit(techniques::list(&cfg));
         }
     }
 }
