@@ -20,8 +20,8 @@ fn golden_end_to_end() {
     assert_eq!(claude.len(), 2, "duplicate m1 deduped, synthetic skipped");
     let r1 = &claude[0];
     assert_eq!(r1.source, "claude");
-    assert_eq!(r1.project, "C--test-proj");
-    assert_eq!(r1.model, "claude-opus-5");
+    assert_eq!(r1.project.as_ref(), "C--test-proj");
+    assert_eq!(r1.model.as_ref(), "claude-opus-5");
     assert_eq!(
         (r1.unc_in, r1.cached_in, r1.w5, r1.w1h, r1.out),
         (100, 0, 30000, 0, 500)
@@ -43,8 +43,8 @@ fn golden_end_to_end() {
     );
     let c1 = &codex[0];
     assert_eq!(c1.source, "codex");
-    assert_eq!(c1.model, "gpt-5.5");
-    assert_eq!(c1.project, "testcx");
+    assert_eq!(c1.model.as_ref(), "gpt-5.5");
+    assert_eq!(c1.project.as_ref(), "testcx");
     assert_eq!((c1.unc_in, c1.cached_in, c1.out), (200, 800, 50));
     let c2 = &codex[1];
     assert_eq!((c2.unc_in, c2.cached_in, c2.out), (100, 1900, 100));
@@ -62,7 +62,7 @@ fn golden_end_to_end() {
     assert!(text.contains("CODEUNLIMITED"));
     assert!(text.contains("claude"));
     assert!(text.contains("codex"));
-    let json = report::render_json(&all, &findings);
+    let json = report::render_json(&all, &findings, None);
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
     assert_eq!(v["schema_version"], 1);
     assert_eq!(v["sources"]["claude"]["requests"], 2);

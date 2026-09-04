@@ -1,7 +1,7 @@
 # How the numbers are computed (and why they are conservative)
 
-codeunlimited reports savings as ranges grounded in your own logs, not
-marketing multipliers. This page documents every estimate the tool makes, so
+codeunlimited reports estimated opportunities as ranges grounded in your own
+logs, not marketing multipliers. This page documents every estimate the tool makes, so
 you can audit the auditor.
 
 ## Limit currency
@@ -19,7 +19,8 @@ work using your own average output size and your own context-to-output ratio.
 the average prompt size of turns past 30 is compared with the average of the
 first 5 turns. Only **60% of the excess** is counted as reclaimable — some
 tail context is legitimately needed; a fresh session still needs the task
-brief. The multiplier shown (e.g. "x9.6") is measured, not estimated.
+brief. The multiplier shown (e.g. "x9.6") is observed in the selected logs;
+the reclaimable share remains an estimate.
 
 **2. Top-tier model on mechanical replies.** Requests to top-tier models
 (Fable/Mythos/Opus classes) whose reply was shorter than 300 tokens. Only
@@ -79,6 +80,43 @@ metrics on activity after it. **Caveat:** right after the baseline, sessions
 are young by definition, so "context per turn" dips mechanically. Trust the
 **trend across a week or more** (one snapshot per `report` run), not a
 single day-1 delta. The tool never extrapolates a day into a week for you.
+
+These are observational comparisons. A change after `init` may also reflect a
+different task mix, model, operator, or provider behavior. Use the outcome
+protocol in [BENCHMARKING.md](BENCHMARKING.md) when evaluating whether the
+utility helped real work.
+
+## Query filtering and the Codex metadata index
+
+`audit --days N` discards records with an old or unrecognized timestamp while
+parsing, before allocating a request. This matches the prior report-level time
+filter. Codex project scope uses normalized cwd values from `turn_context` and
+never infers project identity from a session filename.
+
+By default, audit may maintain `codex-index-v1.json` under
+`CODEUNLIMITED_HOME` (normally `~/.codeunlimited`). For each canonical JSONL
+path it stores only file length, modification time in nanoseconds, normalized
+cwd keys, and the minimum/maximum recognized timestamp. It does not store
+models, token events, counts, prompts, or responses. Paths and cwd keys can
+still identify projects.
+
+Only an unchanged fingerprint can be skipped. Project mismatch takes
+precedence over an entirely-old timestamp range in scan counters. Unknown
+timestamps, unknown layouts, changed files, unreadable fingerprints, missing
+indexes, and invalid regular-file indexes are handled conservatively by
+opening or rebuilding rather than excluding data. A symlinked/non-regular or
+unreadable index disables caching. `--no-index` performs no index read or
+write. Indexed and unindexed reports are required to match after removing the
+optional `scan` diagnostics object.
+
+## Evidence levels
+
+Scanner performance is reported as wall time, RSS, request counts, and scan
+counters from the redacted local harness. It demonstrates runtime behavior on
+the named machine and history only. Product benefit is a separate before/after
+observation using completed tasks per million input tokens plus the guardrails
+defined in [BENCHMARKING.md](BENCHMARKING.md); it is not inferred from scanner
+speed or from the reclaim estimate alone.
 
 ## What the tool never does
 

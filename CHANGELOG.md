@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0 - 2026-09-03
+
+- Audit time and project filters now run inside the parsers, before retained
+  usage records allocate `Request` values. `audit --json --scan-stats` exposes
+  files discovered/opened/skipped and retained usage-record counts;
+  `--scan-stats` requires JSON output.
+- A best-effort Codex metadata index skips unchanged session files only when
+  their cwd or timestamp range proves them irrelevant. `--no-index` disables
+  all index reads and writes; missing, stale, invalid, unreadable, and symlinked
+  cache states fall back conservatively.
+- Repeated request metadata uses shared immutable strings, reducing the
+  `Request` layout to 120 bytes without changing report or detector semantics.
+- `scripts/benchmark_local.py` provides redacted fixture, full, bounded, and
+  project-scoped measurements with wall-time and RSS summaries. Performance
+  evidence and the real-work before/after outcome protocol are documented
+  separately.
+- Product wording now describes estimated token-leak opportunities and
+  observational before/after tracking instead of causal or guaranteed savings.
+- On the documented Apple M4 history, the final three-run median was 18.92 s
+  for a full unindexed audit, 7.00 s for a warm indexed 30-day audit, and
+  0.025 s for the all-files-skipped warm project scope. The published benchmark
+  records the full and 30-day memory targets as misses rather than moving them.
+
 ## 1.6.0 - 2026-09-03
 
 - Project-scoped commands now load global configuration first and then the
@@ -10,7 +33,7 @@
   `turn_context` records can set Codex model and working-directory metadata.
 - Reclaimable totals now form a conservative union of per-request detector
   claims. A request found by two detectors is counted once, and normal cache
-  TTL expiry remains visible without being presented as avoidable savings.
+  TTL expiry remains visible without being presented as an avoidable opportunity.
 - Token arithmetic saturates safely, long-session metrics require a real tail,
   and JSON output includes `schema_version: 1` plus stable finding keys.
 - Project, registry, baseline, history, report, badge, state, and skill writes
@@ -81,14 +104,14 @@
   to write.
 - **Codex delta**: baselines now capture both sources; `delta` and `report`
   show a per-source before/after. Old single-source baselines stay readable.
-- Measured on the author's own project after 1 day under the rules:
+- Observed on the author's own project after 1 day under the rules:
   context per turn down 46%, long-session growth 10x -> 0.2x.
 
 ## 1.1.0 - 2026-09-03
 
 - **`report`**: saved, shareable Markdown report per project
   (`CODEUNLIMITED_REPORT.md`, or `--out FILE`) - findings in limit currency,
-  verified delta vs the `init` baseline, and a trend table. Each run appends
+  before/after delta vs the `init` baseline, and a trend table. Each run appends
   a snapshot to `.codeunlimited.history.jsonl`, so the trend grows over time.
 
 ## 1.0.0 - 2026-09-03
@@ -106,8 +129,8 @@ First stable release.
 - **`init`**: both adoption cases first-class - brand-new project and
   attach-to-existing (instant per-project baseline). Writes idempotent
   token-efficiency rules into CLAUDE.md/AGENTS.md and captures a baseline.
-- **`delta`**: verified before/after per project - proves reclaimed work
-  since the baseline (claude source; codex delta planned).
+- **`delta`**: observational before/after per project since the baseline
+  (claude source; codex delta planned).
 - **Sources**: Claude Code (`~/.claude/projects`) and Codex CLI
   (`~/.codex/sessions`) supported natively. Gemini CLI planned once real
   logs are available to validate against.

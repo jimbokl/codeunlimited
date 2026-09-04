@@ -1,15 +1,109 @@
 //! Parsers for Claude Code (~/.claude/projects) and Codex CLI (~/.codex/sessions) logs.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use crate::scan_index::{self, FileFingerprint, FileIndexEntry, IndexAccess};
 use crate::types::{parse_ts, Request};
+
+#[derive(Debug, Clone, Default)]
+pub struct ScanOptions {
+    pub project: Option<PathBuf>,
+    pub since: Option<i64>,
+    pub use_index: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ScanStats {
+    pub files_discovered: u64,
+    pub files_opened: u64,
+    pub files_skipped_by_date: u64,
+    pub files_skipped_by_index: u64,
+    pub usage_records: u64,
+}
+
+impl AddAssign for ScanStats {
+    fn add_assign(&mut self, rhs: Self) {
+        self.files_discovered = self.files_discovered.saturating_add(rhs.files_discovered);
+        self.files_opened = self.files_opened.saturating_add(rhs.files_opened);
+        self.files_skipped_by_date = self
+            .files_skipped_by_date
+            .saturating_add(rhs.files_skipped_by_date);
+        self.files_skipped_by_index = self
+            .files_skipped_by_index
+            .saturating_add(rhs.files_skipped_by_index);
+        self.usage_records = self.usage_records.saturating_add(rhs.usage_records);
+    }
+}
+
+pub struct ClaudeScan {
+    pub requests: Vec<Request>,
+    pub stats: ScanStats,
+}
+
+pub struct CodexScan {
+    pub requests: Vec<Request>,
+    pub series: LimitSeries,
+    pub stats: ScanStats,
+}
+
+type ClaudeRecord = (Option<String>, Option<Request>);
+type ClaudeFileScan = Option<(Vec<ClaudeRecord>, ScanStats)>;
+
+#[derive(Default)]
+struct FileObservation {
+    cwd_keys: BTreeSet<String>,
+    min_ts: Option<i64>,
+    max_ts: Option<i64>,
+}
+
+impl FileObservation {
+    fn observe_ts(&mut self, ts: Option<i64>) {
+        if let Some(ts) = ts {
+            self.min_ts = Some(self.min_ts.map_or(ts, |current| current.min(ts)));
+            self.max_ts = Some(self.max_ts.map_or(ts, |current| current.max(ts)));
+        }
+    }
+
+    fn into_entry(self, fingerprint: FileFingerprint) -> FileIndexEntry {
+        FileIndexEntry {
+            fingerprint,
+            cwd_keys: self.cwd_keys.into_iter().collect(),
+            min_ts: self.min_ts,
+            max_ts: self.max_ts,
+        }
+    }
+}
+
+struct CodexCandidate {
+    path: PathBuf,
+    key: String,
+    fingerprint: Option<FileFingerprint>,
+}
+
+type CodexFileScan = Option<(Vec<Request>, LimitSeries, ScanStats, FileObservation)>;
+
+struct ParsedCandidate {
+    key: String,
+    fingerprint: Option<FileFingerprint>,
+    scan: CodexFileScan,
+}
+
+#[derive(Default)]
+struct CodexAggregate {
+    requests: Vec<Request>,
+    series: LimitSeries,
+    stats: ScanStats,
+    observations: Vec<(String, FileFingerprint, FileObservation)>,
+}
 
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE")
@@ -46,27 +140,36 @@ pub fn claude_project_key(project: &Path) -> String {
 }
 
 fn jsonl_files(base: &Path) -> Vec<PathBuf> {
-    WalkDir::new(base)
+    let mut files: Vec<_> = WalkDir::new(base)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
         .map(|e| e.into_path())
-        .collect()
+        .collect();
+    files.sort_unstable();
+    files
 }
 
 fn u64_of(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
-    let project = path
+fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
+    let project: Arc<str> = path
         .parent()
         .and_then(|p| p.file_name())
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let Ok(f) = File::open(path) else {
-        return vec![];
+        .map(|s| s.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| Arc::from(""));
+    let file_session: Arc<str> = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
+        .into();
+    let f = File::open(path).ok()?;
+    let mut stats = ScanStats {
+        files_opened: 1,
+        ..ScanStats::default()
     };
     let mut out = Vec::new();
     for line in BufReader::new(f).lines() {
@@ -80,58 +183,69 @@ fn parse_claude_file(path: &Path) -> Vec<(Option<String>, Request)> {
         if d.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
-        let msg = d.get("message").cloned().unwrap_or(Value::Null);
+        let msg = d.get("message").unwrap_or(&Value::Null);
         let Some(u) = msg.get("usage").filter(|u| u.is_object()) else {
             continue;
         };
-        let model = msg
+        let model: Arc<str> = msg
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or("?")
-            .to_string();
+            .into();
         if model.contains("<synthetic>") {
             continue;
         }
+        let ts = d
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_ts);
         let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
+        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
+            // Keep the id so global first-seen deduplication stays identical to
+            // an unfiltered scan, without retaining the excluded request.
+            out.push((mid, None));
+            continue;
+        }
         let cw = u64_of(u, "cache_creation_input_tokens");
-        let cc = u.get("cache_creation").cloned().unwrap_or(Value::Null);
-        let w1h = u64_of(&cc, "ephemeral_1h_input_tokens");
+        let cc = u.get("cache_creation").unwrap_or(&Value::Null);
+        let w1h = u64_of(cc, "ephemeral_1h_input_tokens");
         let w5 = cc
             .get("ephemeral_5m_input_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(cw.saturating_sub(w1h));
         out.push((
             mid,
-            Request {
+            Some(Request {
                 source: "claude",
-                project: project.clone(),
+                project: Arc::clone(&project),
                 session: d
                     .get("sessionId")
                     .and_then(Value::as_str)
-                    .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or("?"))
-                    .to_string(),
-                ts: d
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .and_then(parse_ts),
+                    .map(Arc::from)
+                    .unwrap_or_else(|| Arc::clone(&file_session)),
+                ts,
                 model,
                 unc_in: u64_of(u, "input_tokens"),
                 cached_in: u64_of(u, "cache_read_input_tokens"),
                 w5,
                 w1h,
                 out: u64_of(u, "output_tokens"),
-            },
+            }),
         ));
+        stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    out
+    Some((out, stats))
 }
 
-pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
+pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
     let root = claude_root();
     if !root.is_dir() {
-        return vec![];
+        return ClaudeScan {
+            requests: vec![],
+            stats: ScanStats::default(),
+        };
     }
-    let files: Vec<PathBuf> = match project {
+    let files: Vec<PathBuf> = match options.project.as_deref() {
         Some(p) => {
             let key = claude_project_key(p).to_lowercase();
             std::fs::read_dir(&root)
@@ -144,22 +258,43 @@ pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
         }
         None => jsonl_files(&root),
     };
-    let parsed: Vec<Vec<(Option<String>, Request)>> =
-        files.par_iter().map(|f| parse_claude_file(f)).collect();
+    let mut stats = ScanStats {
+        files_discovered: files.len() as u64,
+        ..ScanStats::default()
+    };
+    let parsed: Vec<ClaudeFileScan> = files
+        .par_iter()
+        .map(|f| parse_claude_file(f, options.since))
+        .collect();
     // Streamed chunks repeat the same message id - keep the first occurrence.
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
-    for chunk in parsed {
-        for (mid, r) in chunk {
+    for (chunk, file_stats) in parsed.into_iter().flatten() {
+        stats += file_stats;
+        for (mid, request) in chunk {
             if let Some(id) = mid {
                 if !seen.insert(id) {
                     continue;
                 }
             }
-            out.push(r);
+            if let Some(request) = request {
+                out.push(request);
+            }
         }
     }
-    out
+    ClaudeScan {
+        requests: out,
+        stats,
+    }
+}
+
+pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
+    scan_claude(&ScanOptions {
+        project: project.map(Path::to_path_buf),
+        since: None,
+        use_index: false,
+    })
+    .requests
 }
 
 fn normalize_path_text(raw: &str) -> String {
@@ -224,32 +359,74 @@ pub fn peak(series: &LimitSeries) -> LimitPeak {
         .map(|&(_, u, w)| (u, w))
 }
 
-fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeries) {
-    let Ok(f) = File::open(path) else {
-        return (vec![], vec![]);
+fn leading_timestamp(line: &str) -> Option<i64> {
+    const PREFIX: &str = r#"{"timestamp":""#;
+    if !line.starts_with(PREFIX) || line.matches("\"timestamp\"").count() != 1 {
+        return None;
+    }
+    let value = line.get(PREFIX.len()..)?.split('"').next()?;
+    if value.contains('\\') {
+        return None;
+    }
+    parse_ts(value)
+}
+
+fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
+    let f = File::open(path).ok()?;
+    let mut stats = ScanStats {
+        files_opened: 1,
+        ..ScanStats::default()
     };
-    let mut model = String::from("?");
-    let mut project = String::from("?");
+    let session: Arc<str> = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?")
+        .into();
+    let mut model: Arc<str> = Arc::from("?");
+    let mut project: Arc<str> = Arc::from("?");
     let mut cwd_key = String::new();
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
+    let mut observation = FileObservation::default();
     for line in BufReader::new(f).lines() {
         let Ok(line) = line else { continue };
         if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
             continue;
         }
-        let Ok(d) = serde_json::from_str::<Value>(&line) else {
+        if let Some(cutoff) = since {
+            if line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
+                if let Some(ts) = leading_timestamp(&line) {
+                    observation.observe_ts(Some(ts));
+                    if ts < cutoff {
+                        continue;
+                    }
+                }
+            }
+        }
+        let Ok(record) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
-        if d.get("type").and_then(Value::as_str) == Some("turn_context") {
-            let payload = d.get("payload").unwrap_or(&Value::Null);
+        let payload = record.get("payload").unwrap_or(&Value::Null);
+        if record.get("type").and_then(Value::as_str) == Some("turn_context") {
             if let Some(value) = payload.get("model").and_then(Value::as_str) {
-                model = value.to_string();
+                model = Arc::from(value);
             }
             if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
                 cwd_key = path_key(Path::new(value));
-                project = project_label(value);
+                project = project_label(value).into();
+                observation.cwd_keys.insert(cwd_key.clone());
             }
+            continue;
+        }
+        let ts = record
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_ts);
+        observation.observe_ts(ts);
+        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
+            continue;
+        }
+        if payload.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
         }
         if let Some(w) = want {
@@ -257,80 +434,268 @@ fn parse_codex_file(path: &Path, want: Option<&str>) -> (Vec<Request>, LimitSeri
                 continue;
             }
         }
-        let p = d.get("payload").cloned().unwrap_or(Value::Null);
-        if p.get("type").and_then(Value::as_str) != Some("token_count") {
-            continue;
+        if let Some(primary) = payload
+            .get("rate_limits")
+            .and_then(|limits| limits.get("primary"))
+        {
+            series.push((
+                ts.unwrap_or(0),
+                primary
+                    .get("used_percent")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+                primary
+                    .get("window_minutes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            ));
         }
-        if let Some(pr) = p.get("rate_limits").and_then(|rl| rl.get("primary")) {
-            let used = pr
-                .get("used_percent")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            let win = pr
-                .get("window_minutes")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let ts = d
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_ts)
-                .unwrap_or(0);
-            series.push((ts, used, win));
-        }
-        let Some(u) = p
+        let Some(usage) = payload
             .get("info")
-            .and_then(|i| i.get("last_token_usage"))
-            .filter(|u| u.is_object())
+            .and_then(|info| info.get("last_token_usage"))
+            .filter(|usage| usage.is_object())
         else {
             continue;
         };
-        let inp = u64_of(u, "input_tokens");
-        let cch = u64_of(u, "cached_input_tokens");
+        let input_tokens = u64_of(usage, "input_tokens");
+        let cached_input_tokens = u64_of(usage, "cached_input_tokens");
         out.push(Request {
             source: "codex",
-            project: project.clone(),
-            session: path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?")
-                .to_string(),
-            ts: d
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_ts),
-            model: model.clone(),
-            unc_in: inp.saturating_sub(cch),
-            cached_in: cch,
-            w5: u64_of(u, "cache_write_input_tokens"),
+            project: Arc::clone(&project),
+            session: Arc::clone(&session),
+            ts,
+            model: Arc::clone(&model),
+            unc_in: input_tokens.saturating_sub(cached_input_tokens),
+            cached_in: cached_input_tokens,
+            w5: u64_of(usage, "cache_write_input_tokens"),
             w1h: 0,
-            out: u64_of(u, "output_tokens"),
+            out: u64_of(usage, "output_tokens"),
         });
+        stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    (out, series)
+    Some((out, series, stats, observation))
+}
+
+fn parse_codex_batch(
+    candidates: &[CodexCandidate],
+    want: Option<&str>,
+    since: Option<i64>,
+) -> Vec<ParsedCandidate> {
+    candidates
+        .par_iter()
+        .map(|candidate| ParsedCandidate {
+            key: candidate.key.clone(),
+            fingerprint: candidate.fingerprint.clone(),
+            scan: parse_codex_file(&candidate.path, want, since),
+        })
+        .collect()
 }
 
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
-pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
+pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let root = codex_root();
     if !root.is_dir() {
-        return (vec![], vec![]);
+        return CodexScan {
+            requests: vec![],
+            series: vec![],
+            stats: ScanStats::default(),
+        };
     }
-    let want = project.map(path_key);
+    let want = options.project.as_deref().map(path_key);
     let files = jsonl_files(&root);
-    let parts: Vec<(Vec<Request>, LimitSeries)> = files
-        .par_iter()
-        .map(|f| parse_codex_file(f, want.as_deref()))
-        .collect();
-    let mut out = Vec::new();
-    let mut series: LimitSeries = Vec::new();
-    for (reqs, s) in parts {
-        out.extend(reqs);
-        series.extend(s);
+    let mut stats = ScanStats {
+        files_discovered: files.len() as u64,
+        ..ScanStats::default()
+    };
+    let mut index = if options.use_index {
+        IndexAccess::load()
+    } else {
+        IndexAccess::Disabled
+    };
+    let mut discovered_keys = HashSet::new();
+    let mut candidates = Vec::new();
+    for path in files {
+        let key = scan_index::file_key(&path);
+        discovered_keys.insert(key.clone());
+        let fingerprint = match &index {
+            IndexAccess::Enabled(_) => scan_index::fingerprint(&path).ok(),
+            IndexAccess::Disabled => None,
+        };
+        let cached = match (&index, &fingerprint) {
+            (IndexAccess::Enabled(index), Some(fingerprint)) => index
+                .files
+                .get(&key)
+                .filter(|entry| entry.fingerprint == *fingerprint),
+            _ => None,
+        };
+        if let Some(entry) = cached {
+            let wrong_project = want
+                .as_ref()
+                .is_some_and(|key| !entry.cwd_keys.iter().any(|cwd| cwd == key));
+            if wrong_project {
+                stats.files_skipped_by_index = stats.files_skipped_by_index.saturating_add(1);
+                continue;
+            }
+            let entirely_old = options
+                .since
+                .is_some_and(|cutoff| entry.max_ts.is_some_and(|ts| ts < cutoff));
+            if entirely_old {
+                stats.files_skipped_by_date = stats.files_skipped_by_date.saturating_add(1);
+                continue;
+            }
+        }
+        candidates.push(CodexCandidate {
+            path,
+            key,
+            fingerprint,
+        });
     }
+    let batch_size = rayon::current_num_threads().max(1).saturating_mul(2);
+    let mut aggregate = CodexAggregate::default();
+    for batch in candidates.chunks(batch_size) {
+        for parsed in parse_codex_batch(batch, want.as_deref(), options.since) {
+            let Some((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
+                continue;
+            };
+            aggregate.stats += file_stats;
+            aggregate.requests.append(&mut reqs);
+            aggregate.series.append(&mut series);
+            if let Some(fingerprint) = parsed.fingerprint {
+                aggregate
+                    .observations
+                    .push((parsed.key, fingerprint, observation));
+            }
+        }
+    }
+    stats += aggregate.stats;
+    let mut out = aggregate.requests;
+    out.shrink_to_fit();
+    let mut series = aggregate.series;
+    if let IndexAccess::Enabled(index) = &mut index {
+        for (key, fingerprint, observation) in aggregate.observations {
+            index.files.insert(key, observation.into_entry(fingerprint));
+        }
+    }
+    if let IndexAccess::Enabled(index) = &mut index {
+        index.files.retain(|key, _| discovered_keys.contains(key));
+    }
+    index.save();
     series.sort_unstable_by_key(|&(t, _, _)| t);
-    (out, series)
+    CodexScan {
+        requests: out,
+        series,
+        stats,
+    }
+}
+
+pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
+    let scan = scan_codex(&ScanOptions {
+        project: project.map(Path::to_path_buf),
+        since: None,
+        use_index: false,
+    });
+    (scan.requests, scan.series)
 }
 
 pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
     iter_codex_full(project).0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn leading_timestamp_requires_one_unescaped_first_field() {
+        assert_eq!(
+            leading_timestamp(r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg"}"#),
+            Some(4_070_908_800)
+        );
+        assert_eq!(
+            leading_timestamp(r#"{"type":"event_msg","timestamp":"2099-01-01T00:00:00Z"}"#),
+            None
+        );
+        assert_eq!(
+            leading_timestamp(
+                r#"{"timestamp":"2099-01-01T00:00:00Z","timestamp":"2000-01-01T00:00:00Z"}"#
+            ),
+            None
+        );
+        assert_eq!(
+            leading_timestamp(r#"{"timestamp":"2099-01-01T00:00:00\u005a"}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn codex_records_in_one_context_share_metadata_allocations() {
+        let root = TempDir::new().expect("fixture root");
+        let path = root.path().join("session.jsonl");
+        fs::write(
+            &path,
+            concat!(
+                r#"{"type":"turn_context","payload":{"model":"gpt-shared","cwd":"/work/shared"}}"#,
+                "\n",
+                r#"{"timestamp":"2099-01-01T00:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#,
+                "\n",
+                r#"{"timestamp":"2099-01-01T00:01:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":2}}}}"#,
+                "\n",
+            ),
+        )
+        .expect("fixture session");
+
+        let (requests, _, _, _) = parse_codex_file(&path, None, None).expect("parsed file");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].session.as_ptr(), requests[1].session.as_ptr());
+        assert_eq!(requests[0].project.as_ptr(), requests[1].project.as_ptr());
+        assert_eq!(requests[0].model.as_ptr(), requests[1].model.as_ptr());
+    }
+
+    #[test]
+    fn codex_parallel_batch_preserves_candidate_order() {
+        let root = TempDir::new().expect("fixture root");
+        let first = root.path().join("a-first.jsonl");
+        let second = root.path().join("b-second.jsonl");
+        for (path, cwd) in [(&first, "/work/first"), (&second, "/work/second")] {
+            fs::write(
+                path,
+                format!(
+                    concat!(
+                        "{{\"type\":\"turn_context\",\"payload\":{{\"model\":\"gpt-test\",\"cwd\":\"{}\"}}}}\n",
+                        "{{\"timestamp\":\"2099-01-01T00:00:00Z\",\"type\":\"event_msg\",",
+                        "\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":",
+                        "{{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":1}}}}}}}}\n"
+                    ),
+                    cwd
+                ),
+            )
+            .expect("fixture session");
+        }
+        let candidates = vec![
+            CodexCandidate {
+                path: first,
+                key: "first".to_string(),
+                fingerprint: None,
+            },
+            CodexCandidate {
+                path: second,
+                key: "second".to_string(),
+                fingerprint: None,
+            },
+        ];
+
+        let parsed = parse_codex_batch(&candidates, None, None);
+        let sessions: Vec<_> = parsed
+            .into_iter()
+            .filter_map(|candidate| candidate.scan)
+            .flat_map(|(requests, _, _, _)| requests)
+            .map(|request| request.session.to_string())
+            .collect();
+
+        assert_eq!(sessions, ["a-first", "b-second"]);
+    }
 }
