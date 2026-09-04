@@ -1,12 +1,16 @@
 # codeunlimited
 
-**Find estimated token-leak opportunities and track whether fixes help.**
+**Set up once — more work from the same subscription limits.**
 
 ![codeunlimited audit](docs/assets/terminal.svg)
 
-Observed in the author's own logs (71k requests, 113 days): the estimated
-opportunity was ~52% of weekly Claude Code volume; every estimate is conservative and
-documented in [docs/ACCURACY.md](docs/ACCURACY.md).
+The core number is exact, not an estimate: in the author's own logs
+(71k requests, 113 days) the 9 longest sessions processed **3,551M prompt
+tokens where a bounded-context loop pays 519M — x6.8**, three billion tokens
+burned by context growth alone ([docs/BENCHMARK.md](docs/BENCHMARK.md),
+reproduce with `scripts/bench_context.py`). On top of that the audit
+estimates ~52% of weekly volume as reclaimable opportunity — estimates are
+conservative and documented in [docs/ACCURACY.md](docs/ACCURACY.md).
 
 You hit the weekly limit of Claude Code or Codex CLI mid-task. The limit is
 fixed — but how much *work* fits inside it is not. `codeunlimited` reads the

@@ -10,7 +10,11 @@ answers one question: where does the limit actually go, and how much more
 work could fit into it?
 
 On my own logs (71k requests over 113 days) the audit found ~52% of weekly
-volume reclaimable. The two big leaks, in my case:
+volume reclaimable. The headline number is exact, not an estimate: my 9
+longest sessions processed 3,551M prompt tokens where a bounded-context
+loop would have paid 519M - x6.8, three billion tokens burned purely by
+re-dragging history (methodology + reproduce script: docs/BENCHMARK.md).
+The two big leaks, in my case:
 
 1. **Context tax of long sessions** - by turn 40+, every reply drags the
    whole accumulated history through the context window. My worst sessions
