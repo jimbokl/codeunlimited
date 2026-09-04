@@ -29,7 +29,7 @@
     {"id": "combined-policy-change", "input": " ", "updates": {"config.whitespace": "strict", "spec.empty": "zero"}, "expected": "invalid", "route": "reconsider"},
     {"id": "missing-config", "input": "12", "updates": {}, "remove": ["config.whitespace"], "expected": null, "route": "abstain"},
     {"id": "unknown-environment", "input": "12", "updates": {"env.hidden": "override"}, "expected": null, "route": "abstain"},
-    {"id": "unsupported-source", "input": "12", "updates": {"source": "dynamic-plugin"}, "expected": null, "route": "reconsider"},
+    {"id": "unsupported-source", "input": "12", "updates": {"source": "dynamic-plugin"}, "expected": null, "route": "abstain"},
     {"id": "unreviewed-contract", "input": "12", "updates": {}, "complete": false, "expected": "12", "route": "abstain"},
     {"id": "insufficient-context-budget", "input": "12", "updates": {}, "context_budget_bytes": 1, "expected": "12", "route": "abstain"}
   ]

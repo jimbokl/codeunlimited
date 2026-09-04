@@ -1,0 +1,413 @@
+{
+  "cases": [
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "12",
+      "dcr_route": "reuse",
+      "expected": "12",
+      "expected_route": "reuse",
+      "id": "unchanged",
+      "manual_output": "12",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "12",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "12",
+      "dcr_route": "reuse",
+      "expected": "12",
+      "expected_route": "reuse",
+      "id": "docs-only",
+      "manual_output": "12",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "12",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "19",
+      "dcr_route": "reuse",
+      "expected": "19",
+      "expected_route": "reuse",
+      "id": "new-argument",
+      "manual_output": "19",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "19",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "-7",
+      "dcr_route": "reuse",
+      "expected": "-7",
+      "expected_route": "reuse",
+      "id": "negative-argument",
+      "manual_output": "-7",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "-7",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "invalid",
+      "dcr_route": "reuse",
+      "expected": "invalid",
+      "expected_route": "reuse",
+      "id": "invalid-argument",
+      "manual_output": "invalid",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "invalid",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "empty",
+      "dcr_route": "reuse",
+      "expected": "empty",
+      "expected_route": "reuse",
+      "id": "blank-argument",
+      "manual_output": "empty",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "empty",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": "12",
+      "dcr_route": "reuse",
+      "expected": "12",
+      "expected_route": "reuse",
+      "id": "docs-removed",
+      "manual_output": "12",
+      "reason": "declared_dependencies_unchanged",
+      "unrefined_output": "12",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "config.whitespace"
+      ],
+      "context_bytes": 97,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "reconsider",
+      "expected": "invalid",
+      "expected_route": "reconsider",
+      "id": "strict-tabs",
+      "manual_output": "invalid",
+      "reason": "dependency_changed",
+      "unrefined_output": "14",
+      "unrefined_route": "reuse",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "spec.empty"
+      ],
+      "context_bytes": 94,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "reconsider",
+      "expected": "0",
+      "expected_route": "reconsider",
+      "id": "empty-is-zero",
+      "manual_output": "0",
+      "reason": "dependency_changed",
+      "unrefined_output": null,
+      "unrefined_route": "reconsider",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "spec.negative"
+      ],
+      "context_bytes": 96,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "reconsider",
+      "expected": "invalid",
+      "expected_route": "reconsider",
+      "id": "negative-disallowed",
+      "manual_output": "invalid",
+      "reason": "dependency_changed",
+      "unrefined_output": null,
+      "unrefined_route": "reconsider",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "source"
+      ],
+      "context_bytes": 91,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "reconsider",
+      "expected": "255",
+      "expected_route": "reconsider",
+      "id": "source-hex",
+      "manual_output": "255",
+      "reason": "dependency_changed",
+      "unrefined_output": null,
+      "unrefined_route": "reconsider",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "config.whitespace",
+        "spec.empty"
+      ],
+      "context_bytes": 96,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "reconsider",
+      "expected": "invalid",
+      "expected_route": "reconsider",
+      "id": "combined-policy-change",
+      "manual_output": "invalid",
+      "reason": "dependency_changed",
+      "unrefined_output": null,
+      "unrefined_route": "reconsider",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "config.whitespace"
+      ],
+      "context_bytes": 68,
+      "context_keys": [
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "abstain",
+      "expected": null,
+      "expected_route": "abstain",
+      "id": "missing-config",
+      "manual_output": null,
+      "reason": "unsupported_domain",
+      "unrefined_output": null,
+      "unrefined_route": "abstain",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "abstain",
+      "expected": null,
+      "expected_route": "abstain",
+      "id": "unknown-environment",
+      "manual_output": null,
+      "reason": "unsupported_domain",
+      "unrefined_output": null,
+      "unrefined_route": "abstain",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [
+        "source"
+      ],
+      "context_bytes": 99,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "abstain",
+      "expected": null,
+      "expected_route": "abstain",
+      "id": "unsupported-source",
+      "manual_output": null,
+      "reason": "unsupported_domain",
+      "unrefined_output": null,
+      "unrefined_route": "abstain",
+      "whole_snapshot_route": "reconsider"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 95,
+      "context_keys": [
+        "config.whitespace",
+        "source",
+        "spec.empty",
+        "spec.negative"
+      ],
+      "dcr_output": null,
+      "dcr_route": "abstain",
+      "expected": "12",
+      "expected_route": "abstain",
+      "id": "unreviewed-contract",
+      "manual_output": "12",
+      "reason": "incomplete_dependency_model",
+      "unrefined_output": null,
+      "unrefined_route": "abstain",
+      "whole_snapshot_route": "reuse"
+    },
+    {
+      "changed_dependencies": [],
+      "context_bytes": 0,
+      "context_keys": [],
+      "dcr_output": null,
+      "dcr_route": "abstain",
+      "expected": "12",
+      "expected_route": "abstain",
+      "id": "insufficient-context-budget",
+      "manual_output": "12",
+      "reason": "context_budget",
+      "unrefined_output": null,
+      "unrefined_route": "abstain",
+      "whole_snapshot_route": "reuse"
+    }
+  ],
+  "dcr": {
+    "correct_reuses": 7,
+    "incorrect_reuses": 0,
+    "route_mismatches": 0,
+    "routes": {
+      "abstain": 5,
+      "reconsider": 5,
+      "reuse": 7
+    }
+  },
+  "evidence_scope": "synthetic_offline",
+  "holdout_cases": 17,
+  "implementation_sha256": "5ecd4b8ec4bf2b3cc275dbaf3727a935c6dbbf799ce9a4deac68a9a8b4fa1af5",
+  "limitations": [
+    "No native model execution or measured token savings.",
+    "Fixed handcrafted dependency model and small human-authored holdout.",
+    "Counterexamples propose dependencies; they do not prove completeness.",
+    "Non-reuse means deferred work, not a completed or free solution.",
+    "The manual script already covers all supported cases in this closed DSL.",
+    "Snapshot assessment is not an atomic filesystem or sandbox boundary."
+  ],
+  "manual_script": {
+    "abstained": 3,
+    "accepted": 14,
+    "incorrect": 0
+  },
+  "native_agent_comparison": "not_run",
+  "paid_pilot_decision": "no_go_pending_advantage_over_manual_script",
+  "provider_calls": 0,
+  "scenario_sha256": "49c6300276b75b2c6788dae7fd7708fcf7a42671842918a1a6a60283cdeb796b",
+  "schema_version": 1,
+  "token_savings_percent": null,
+  "training": {
+    "added_dependencies": [
+      "config.whitespace"
+    ],
+    "id": "isolated-whitespace-counterexample",
+    "oracle_matches_literals": true,
+    "promotion": "explicit_fixture_author_assumption",
+    "proposal_receipt": "9947539fa2b6a6b81ab33dd8b3fd9c816a45fb3fb3f122aa58285fc49e63ef67",
+    "proposal_route": "abstain",
+    "witness_sha256": "bc7e139f464aca3b0ab9267eb4ac61bfa9ec97080329d6504152f7c40f713322"
+  },
+  "unrefined": {
+    "correct_reuses": 7,
+    "incorrect_reuses": 1,
+    "route_mismatches": 1,
+    "routes": {
+      "abstain": 5,
+      "reconsider": 4,
+      "reuse": 8
+    }
+  },
+  "whole_snapshot": {
+    "routes": {
+      "reconsider": 10,
+      "reuse": 7
+    },
+    "scope": "routing-only strawman, not a safety or token comparator"
+  }
+}

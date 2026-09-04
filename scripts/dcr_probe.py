@@ -15,19 +15,23 @@ SCENARIOS = ROOT / "tests" / "fixtures" / "dcr" / "scenarios.json"
 REQUIRED = {"source", "config.whitespace", "spec.empty", "spec.negative"}
 
 
+def _supported(snapshot, text):
+    if not REQUIRED <= snapshot.keys() or snapshot.keys() - (REQUIRED | {"README"}):
+        return False
+    return (snapshot["source"] in ("decimal-v1", "hex-v1")
+            and snapshot["config.whitespace"] in ("trim", "strict")
+            and snapshot["spec.empty"] in ("zero", "error")
+            and snapshot["spec.negative"] in ("allow", "reject")
+            and isinstance(text, str) and len(text) <= 2048)
+
+
 def manual_parse(snapshot, text):
     """Hand-written baseline reads current policy; independent of graph/recipe.
 
     This is a closed two-parser DSL, not an interpreter for repository source.
     Unknown semantics produce no result. It intentionally needs no LLM.
     """
-    if not REQUIRED <= snapshot.keys() or snapshot.keys() - (REQUIRED | {"README"}):
-        return None
-    if (snapshot["source"] not in ("decimal-v1", "hex-v1")
-            or snapshot["config.whitespace"] not in ("trim", "strict")
-            or snapshot["spec.empty"] not in ("zero", "error")
-            or snapshot["spec.negative"] not in ("allow", "reject")
-            or not isinstance(text, str) or len(text) > 2048):
+    if not _supported(snapshot, text):
         return None
     value = text.strip() if snapshot["config.whitespace"] == "trim" else text
     if not value:
@@ -66,6 +70,8 @@ def _current(baseline, case):
 def _outcome(graph, baseline, current, case, recipe):
     budget = case.get("context_budget_bytes", 4096)
     decision = assess(graph, baseline, current, context_budget_bytes=budget)["accept"]
+    if not _supported(current, case["input"]):
+        decision = replace(decision, route="abstain", reason="unsupported_domain")
     output = None
     if reuse_is_current(decision, graph, baseline, current, context_budget_bytes=budget):
         output = _apply_recipe(recipe, case["input"])
@@ -93,6 +99,10 @@ def run_probe():
     candidate = refine(draft, (Witness(baseline, training_current,
                                        training["before_expected"], training["after_expected"]),))
     proposal = assess((candidate, consumer), baseline, training_current)["accept"]
+    witness_sha256 = hashlib.sha256(json.dumps({
+        "before": baseline, "after": training_current, "input": training["input"],
+        "before_expected": training["before_expected"], "after_expected": training["after_expected"],
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     # Only the fixture author knows this finite DSL's complete dependency set.
     # This explicit assumption is not inferred from the single witness.
     reviewed = replace(candidate, complete=True)
@@ -134,6 +144,8 @@ def run_probe():
             "id": training["id"],
             "added_dependencies": sorted(set(candidate.dependencies) - set(draft.dependencies)),
             "proposal_route": proposal.route,
+            "proposal_receipt": proposal.receipt,
+            "witness_sha256": witness_sha256,
             "promotion": "explicit_fixture_author_assumption",
             "oracle_matches_literals": (manual_parse(baseline, training["input"]) == training["before_expected"]
                                         and manual_parse(training_current, training["input"]) == training["after_expected"]),

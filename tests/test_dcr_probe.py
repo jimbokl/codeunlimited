@@ -11,20 +11,21 @@ class ProbeTests(unittest.TestCase):
     def test_probe_matches_frozen_routes_and_checks_actual_reuse_outputs(self):
         report = dcr_probe.run_probe()
         self.assertEqual(report["holdout_cases"], 17)
-        self.assertEqual(report["dcr"]["routes"], {"reuse": 7, "reconsider": 6, "abstain": 4})
+        self.assertEqual(report["dcr"]["routes"], {"reuse": 7, "reconsider": 5, "abstain": 5})
         self.assertEqual(report["dcr"]["route_mismatches"], 0)
         self.assertEqual(report["dcr"]["incorrect_reuses"], 0)
         self.assertEqual(report["dcr"]["correct_reuses"], 7)
 
     def test_negative_control_exposes_the_omitted_dependency(self):
         report = dcr_probe.run_probe()
-        self.assertEqual(report["unrefined"]["incorrect_reuses"], 2)
+        self.assertEqual(report["unrefined"]["incorrect_reuses"], 1)
         strict = next(row for row in report["cases"] if row["id"] == "strict-tabs")
         self.assertEqual(strict["unrefined_output"], "14")
         self.assertEqual(strict["expected"], "invalid")
         self.assertIsNone(strict["dcr_output"])
         missing = next(row for row in report["cases"] if row["id"] == "missing-config")
-        self.assertEqual(missing["unrefined_output"], "12")
+        self.assertIsNone(missing["unrefined_output"])
+        self.assertEqual(missing["unrefined_route"], "abstain")
         self.assertEqual(missing["dcr_route"], "abstain")
         self.assertIsNone(missing["expected"])
 
@@ -40,6 +41,8 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(training["added_dependencies"], ["config.whitespace"])
         self.assertEqual(training["proposal_route"], "abstain")
         self.assertEqual(training["promotion"], "explicit_fixture_author_assumption")
+        self.assertEqual(len(training["proposal_receipt"]), 64)
+        self.assertEqual(len(training["witness_sha256"]), 64)
 
     def test_report_does_not_convert_local_reuse_into_measured_savings(self):
         report = dcr_probe.run_probe()
@@ -63,6 +66,19 @@ class ProbeTests(unittest.TestCase):
     def test_local_parser_is_not_a_source_interpreter(self):
         self.assertIsNone(dcr_probe.manual_parse({"source": "__import__('os').system('false')"}, "12"))
         self.assertIsNone(dcr_probe.manual_parse({}, "12"))
+
+    def test_unsupported_semantics_and_operation_input_abstain_before_execution(self):
+        from scripts.dcr_contracts import Contract
+        base = {"source": "decimal-v1", "config.whitespace": "trim", "spec.empty": "error", "spec.negative": "allow"}
+        graph = (Contract("accept", tuple(base), complete=True),)
+        recipe = (True, False, True, 10)
+        for current, value in ((dict(base, source="dynamic-plugin"), "12"),
+                               ({**base, "config.whitespace": "collapse"}, "12"),
+                               (base, 12), (base, "1" * 2049)):
+            with self.subTest(current=current, value_type=type(value)):
+                decision, output = dcr_probe._outcome(graph, base, current, {"input": value}, recipe)
+                self.assertEqual(decision.route, "abstain")
+                self.assertIsNone(output)
 
     def test_probe_runs_with_network_processes_and_file_writes_denied(self):
         code = """
