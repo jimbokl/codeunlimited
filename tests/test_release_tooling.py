@@ -175,11 +175,27 @@ class ExperimentEvidenceTests(unittest.TestCase):
         self.assertEqual(comparison["causality"], "observational")
 
 
+class PythonMatrixTests(unittest.TestCase):
+    def test_every_supported_python_runs_the_same_discovered_suite(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('python-version: ["3.10", "3.12"]', workflow)
+        self.assertEqual(
+            workflow.count("python -m unittest discover -s tests -p 'test_*.py' -v"),
+            1,
+        )
+        self.assertNotIn("matrix.python-version == '3.10'", workflow)
+
+
 __all__ = [
     "BenchmarkOutputTests",
     "BenchmarkProvenanceTests",
     "BenchmarkScenarioTests",
     "BenchmarkStatisticsTests",
     "ExperimentEvidenceTests",
+    "PythonMatrixTests",
     "ReleaseCheckerTests",
 ]

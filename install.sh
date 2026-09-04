@@ -59,14 +59,14 @@ if [ "$ACTUAL_LOWER" != "$SUM_LOWER" ]; then
 fi
 
 chmod 755 "$DOWNLOAD"
-if ! "$DOWNLOAD" --version >/dev/null; then
+if ! VERSION_OUTPUT="$("$DOWNLOAD" --version)"; then
   echo "Downloaded binary failed its smoke test - preserving the existing installation." >&2
   exit 1
 fi
 install -m 755 "$DOWNLOAD" "$STAGED"
 mv -f "$STAGED" "$DEST/codeunlimited"
 echo "Installed: $DEST/codeunlimited"
-"$DEST/codeunlimited" --version
+printf '%s\n' "$VERSION_OUTPUT"
 case ":$PATH:" in
   *":$DEST:"*) ;;
   *) echo "Note: add it to PATH ->  export PATH=\"$DEST:\$PATH\"" ;;

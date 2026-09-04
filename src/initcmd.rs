@@ -222,11 +222,6 @@ pub fn run(path: &Path) -> i32 {
             return 1;
         }
     };
-    if let Err(e) = crate::registry::register(&root) {
-        eprintln!("Cannot register {}: {e}", root.display());
-        return 1;
-    }
-    println!("codeunlimited init -> {disp}");
     let cfg = crate::config::Config::load_for(Some(&root));
     let techs = crate::techniques::enabled(&cfg);
     let claude_block = crate::techniques::render_claude(&techs);
@@ -239,6 +234,11 @@ pub fn run(path: &Path) -> i32 {
         eprintln!("Cannot update {}: {e}", agents_path.display());
         return 1;
     }
+    if let Err(e) = crate::registry::register(&root) {
+        eprintln!("Cannot register {}: {e}", root.display());
+        return 1;
+    }
+    println!("codeunlimited init -> {disp}");
     let claude_status = match apply_block(&claude_path, &claude_block, claude_current.as_deref()) {
         Ok(status) => status,
         Err(e) => {

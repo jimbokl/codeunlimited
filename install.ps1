@@ -40,16 +40,9 @@ try {
         throw 'Checksum mismatch - preserving the existing installation.'
     }
 
-    & $download --version *> $null
+    $versionOutput = & $download --version 2>&1
     if ($LASTEXITCODE -ne 0) {
         throw 'Downloaded binary failed its smoke test - preserving the existing installation.'
-    }
-
-    Copy-Item -LiteralPath $download -Destination $staged
-    if (Test-Path -LiteralPath $exe -PathType Leaf) {
-        [IO.File]::Replace($staged, $exe, $null)
-    } else {
-        [IO.File]::Move($staged, $exe)
     }
 
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -65,8 +58,15 @@ try {
         Write-Host "Added to user PATH (new terminals pick it up automatically)."
     }
 
+    Copy-Item -LiteralPath $download -Destination $staged
+    if (Test-Path -LiteralPath $exe -PathType Leaf) {
+        [IO.File]::Replace($staged, $exe, $null)
+    } else {
+        [IO.File]::Move($staged, $exe)
+    }
+
     Write-Host "Installed: $exe"
-    & $exe --version
+    Write-Host $versionOutput
     Write-Host 'Next: codeunlimited audit'
 } finally {
     Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue

@@ -86,6 +86,8 @@ fn init_rejects_a_malformed_legacy_block_without_changing_files() {
     );
     assert!(!project.path().join("CLAUDE.md.codeunlimited.bak").exists());
     assert!(!project.path().join("AGENTS.md").exists());
+    assert!(!state.path().join("state/projects.json").exists());
+    assert!(!state.path().join("state/projects.lock").exists());
 }
 
 #[test]

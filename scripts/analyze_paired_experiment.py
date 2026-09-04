@@ -52,7 +52,7 @@ def _sign_flip_p_value(differences: list[int]) -> float:
 def analyze(payload: dict[str, object]) -> dict[str, object]:
     if not isinstance(payload, dict) or set(payload) != {"schema_version", "pairs"}:
         raise ValueError("payload must contain only schema_version and pairs")
-    if payload["schema_version"] != 1:
+    if isinstance(payload["schema_version"], bool) or payload["schema_version"] != 1:
         raise ValueError("unsupported schema_version")
     pairs = payload["pairs"]
     if not isinstance(pairs, list) or len(pairs) < 2:
@@ -74,7 +74,7 @@ def analyze(payload: dict[str, object]) -> dict[str, object]:
         if not isinstance(task_id, str) or not task_id.strip():
             raise ValueError(f"pairs[{index}].task_id must be a non-empty string")
         if task_id in seen:
-            raise ValueError(f"duplicate task_id: {task_id}")
+            raise ValueError(f"pairs[{index}].task_id duplicates an earlier task_id")
         seen.add(task_id)
 
         control_request, control_input = _arm(pair["control"], f"pairs[{index}].control")

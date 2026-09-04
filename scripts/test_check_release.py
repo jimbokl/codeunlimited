@@ -1,3 +1,4 @@
+import ast
 import pathlib
 import subprocess
 import sys
@@ -23,6 +24,11 @@ class ReleaseCheckerTests(unittest.TestCase):
     def test_matching_release_metadata_passes(self) -> None:
         result = self.run_checker("1.9.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_checker_does_not_require_python_311_tomllib(self) -> None:
+        source = CHECKER.read_text(encoding="utf-8")
+        self.assertNotIn("import tomllib", source)
+        ast.parse(source, filename=str(CHECKER), feature_version=(3, 10))
 
     def test_mismatching_expected_version_fails(self) -> None:
         result = self.run_checker("9.9.9")

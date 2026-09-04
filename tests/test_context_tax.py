@@ -133,6 +133,29 @@ class ContextTaxTests(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertIn("does not exist", stderr.getvalue())
 
+    def test_invalid_utf8_fails_instead_of_silently_dropping_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            folder = root / "private-project"
+            folder.mkdir()
+            log = folder / "session.jsonl"
+            log.write_bytes(
+                assistant_record("private-session", "m1", 10, "2026-01-01T00:00:01Z").encode()
+                + b"\n\xff\n"
+            )
+
+            with self.assertRaises(UnicodeDecodeError):
+                bench_context.load_sessions(root)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = bench_context.main(["--root", str(root)])
+
+        self.assertEqual(status, 2)
+        self.assertIn("benchmark failed", stderr.getvalue())
+        self.assertNotIn("private-project", stderr.getvalue())
+        self.assertNotIn("private-session", stderr.getvalue())
+
     def test_default_root_is_cross_platform(self) -> None:
         self.assertEqual(
             bench_context.default_root(), pathlib.Path.home() / ".claude" / "projects"

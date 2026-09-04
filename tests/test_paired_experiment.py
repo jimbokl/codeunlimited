@@ -1,4 +1,8 @@
+import contextlib
+import io
 import json
+import pathlib
+import tempfile
 import unittest
 
 from scripts import analyze_paired_experiment
@@ -75,6 +79,7 @@ class PairedExperimentTests(unittest.TestCase):
         valid_pair = {"task_id": "a", "control": arm(1, 10), "treatment": arm(1, 9)}
         cases = [
             {},
+            {"schema_version": True, "pairs": [valid_pair, valid_pair]},
             {"schema_version": 2, "pairs": [valid_pair, valid_pair]},
             {"schema_version": 1, "pairs": [valid_pair]},
             {"schema_version": 1, "pairs": [valid_pair, valid_pair]},
@@ -111,6 +116,27 @@ class PairedExperimentTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(ValueError):
                     analyze_paired_experiment.analyze(payload)
+
+    def test_duplicate_task_error_does_not_disclose_identifier(self) -> None:
+        secret = "private-customer-task-id"
+        payload = {
+            "schema_version": 1,
+            "pairs": [
+                {"task_id": secret, "control": arm(1, 10), "treatment": arm(1, 9)},
+                {"task_id": secret, "control": arm(1, 8), "treatment": arm(1, 7)},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "private-input.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = analyze_paired_experiment.main([str(path)])
+
+        self.assertEqual(status, 2)
+        self.assertIn("duplicates an earlier task_id", stderr.getvalue())
+        self.assertNotIn(secret, stderr.getvalue())
+        self.assertNotIn(str(path), stderr.getvalue())
 
 
 if __name__ == "__main__":

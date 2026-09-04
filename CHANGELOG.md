@@ -9,20 +9,24 @@
 - Made instruction upgrades fail closed. Duplicate, orphaned, reversed, mixed,
   or malformed v1/v2 markers leave the target byte-identical; valid LF and CRLF
   blocks upgrade in place through the existing safe-write and backup layer.
+  Marker validation also completes before the project registry is changed.
 - Replaced the historical context-tax script's Windows-only path and
   positive-result filter. It now includes favorable and unfavorable sessions,
   exposes accounting completeness, keeps identifiers private, and labels the
-  early-context counterfactual as modeled rather than exact savings.
+  early-context counterfactual as modeled rather than exact savings. Invalid
+  UTF-8 now aborts instead of silently dropping bytes from the accounting.
 - Added a strict paired-task experiment analyzer with an exact sign-flip test.
   The historical controlled run is reported as a negative total-token result
   (approximately +17.4% for treatment), and its invalid request-level
   significance claim was removed.
 - Unix and PowerShell installers now require a valid sha256 asset, smoke-test
-  the download, and stage it before replacing an existing installation. Unix
-  prints PATH guidance; PowerShell updates user PATH idempotently.
+  the download, and finish fallible setup before atomically replacing an
+  existing installation. Unix prints PATH guidance; PowerShell updates user
+  PATH idempotently.
 - CI explicitly discovers the complete Python suite, validates historical
   evidence against immutable release commits, tests installers on their native
   runners, and smoke-tests the `techniques` command in release artifacts.
+  Python 3.10 and 3.12 now execute the identical discovered suite.
 - Public documentation and graphics now distinguish exact observed counters,
   modeled counterfactuals, detector estimates, and realized observational
   outcomes. Console, Markdown, HTML, badge, and JSON output label detector

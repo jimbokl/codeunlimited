@@ -36,8 +36,8 @@ your projects up so the same subscription produces more code.
   auto-retries), each attempt dragging the full context.
 
 Plus a **limit forecast**: Codex logs expose `used_percent`, so the tool
-calibrates your window's capacity from your own data and answers "how many
-hours of work are left before the wall - and how much a fix moves it".
+calibrates your window's capacity from your own data and estimates how many
+hours remain at the observed pace. It does not attribute that forecast to a fix.
 
 Each finding is reported in **limit currency**: estimated reclaimable tokens,
 share of weekly volume, and an estimated number of extra agent answers.
@@ -139,7 +139,7 @@ Machine-wide settings come from `~/.codeunlimited/config.toml`; an explicitly
 selected project's file is layered on top. See the header of
 [src/config.rs](src/config.rs) for the format.
 
-`report` extras: `--badge` writes an SVG "reclaimable %" badge for your
+`report` extras: `--badge` writes an SVG "estimated opportunity" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.
 
 `experiment` stores exact observed integer token counters for explicit

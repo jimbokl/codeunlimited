@@ -60,12 +60,15 @@ class UnixInstallerTests(unittest.TestCase):
             f"{digest}  {self.asset.name}\n", encoding="ascii"
         )
 
-    def run_installer(self) -> subprocess.CompletedProcess[str]:
+    def run_installer(
+        self, extra_env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["CODEUNLIMITED_DOWNLOAD_BASE_URL"] = (
             f"http://127.0.0.1:{self.server.server_port}"
         )
         env["CODEUNLIMITED_INSTALL_DIR"] = str(self.destination)
+        env.update(extra_env or {})
         return subprocess.run(
             ["sh", "install.sh"],
             cwd=ROOT,
@@ -131,6 +134,34 @@ class UnixInstallerTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.installed_bytes(), sentinel)
+
+    def test_binary_is_not_invoked_after_the_atomic_commit(self) -> None:
+        marker = self.root / "smoke-count"
+        self.write_asset(
+            "#!/bin/sh\n"
+            'if [ -e "$CODEUNLIMITED_SMOKE_MARKER" ]; then exit 23; fi\n'
+            'touch "$CODEUNLIMITED_SMOKE_MARKER"\n'
+            "echo 'codeunlimited 1.9.0'\n"
+        )
+        self.write_checksum()
+
+        result = self.run_installer(
+            {"CODEUNLIMITED_SMOKE_MARKER": str(marker)}
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
+        self.assertIn("codeunlimited 1.9.0", result.stdout)
+
+
+class PowerShellInstallerStructureTests(unittest.TestCase):
+    def test_all_fallible_work_precedes_the_atomic_commit(self) -> None:
+        script = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        replace = script.index("[IO.File]::Replace")
+
+        self.assertLess(script.index("SetEnvironmentVariable"), replace)
+        self.assertLess(script.index("& $download --version"), replace)
+        self.assertNotIn("& $exe --version", script)
 
 
 if __name__ == "__main__":

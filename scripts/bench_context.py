@@ -53,7 +53,7 @@ def load_sessions(root: pathlib.Path) -> LoadResult:
     for path in sorted(root.glob("*/*.jsonl")):
         files_read += 1
         project = path.parent.name
-        with path.open(encoding="utf-8", errors="ignore") as stream:
+        with path.open(encoding="utf-8") as stream:
             for line in stream:
                 if '"usage"' not in line or '"assistant"' not in line:
                     continue
@@ -192,7 +192,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         parser.error("--early-turns must be positive")
     try:
         loaded = load_sessions(args.root)
-    except (FileNotFoundError, OSError) as error:
+    except (OSError, UnicodeError) as error:
         print(f"benchmark failed: {error}", file=sys.stderr)
         return 2
     result = analyze(
