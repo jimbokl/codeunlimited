@@ -1,7 +1,7 @@
 # codeunlimited 2.0 Stateful Runtime Design
 
 **Date:** 2026-09-04
-**Status:** Ready for written-spec review
+**Status:** Approved for autonomous implementation
 **Base:** `main` at `71cde837493fdeb77a108001d6e8300bef6dae5a`
 
 ## Goal
