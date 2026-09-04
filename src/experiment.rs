@@ -243,8 +243,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::config::Config;
+use crate::parsers;
 use crate::safeio::{atomic_write, read_optional_text};
 use crate::types::Request;
 
@@ -487,12 +490,6 @@ fn validate_record(key: &str, record: &ExperimentRecord) -> io::Result<()> {
             "experiment record name does not match its key",
         ));
     }
-    if record.complete_accounting != (record.records_without_timestamp == 0) {
-        return Err(invalid_data(
-            "experiment timestamp accounting fields are inconsistent",
-        ));
-    }
-
     match record.status {
         ExperimentStatus::Active => {
             if record.finished_unix.is_some()
@@ -505,6 +502,11 @@ fn validate_record(key: &str, record: &ExperimentRecord) -> io::Result<()> {
             }
         }
         ExperimentStatus::Complete => {
+            if record.complete_accounting != (record.records_without_timestamp == 0) {
+                return Err(invalid_data(
+                    "experiment timestamp accounting fields are inconsistent",
+                ));
+            }
             let finished_unix = record
                 .finished_unix
                 .ok_or_else(|| invalid_data("completed experiment has no finish time"))?;
@@ -555,4 +557,234 @@ pub fn save_store(project: &Path, store: &ExperimentStore) -> io::Result<()> {
         serde_json::to_vec_pretty(store).map_err(|error| invalid_data(error.to_string()))?;
     bytes.push(b'\n');
     atomic_write(&experiment_path(project), &bytes)
+}
+
+fn positive_tasks(completed_tasks: u64) -> Result<(), String> {
+    if completed_tasks == 0 {
+        return Err("completed tasks must be at least 1".to_string());
+    }
+    Ok(())
+}
+
+fn scan_project(project: &Path) -> Vec<Request> {
+    let mut requests = parsers::iter_claude(Some(project));
+    requests.extend(parsers::iter_codex(Some(project)));
+    let config = Config::load_for(Some(project));
+    requests.retain(|request| !config.is_ignored(&request.project));
+    requests
+}
+
+fn completed_record_from_scan(
+    name: &str,
+    started_unix: i64,
+    finished_unix: i64,
+    completed_tasks: u64,
+    requests: &[Request],
+) -> ExperimentRecord {
+    let accounting = aggregate(requests, started_unix, finished_unix);
+    ExperimentRecord {
+        name: name.to_string(),
+        started_unix,
+        finished_unix: Some(finished_unix),
+        completed_tasks: Some(completed_tasks),
+        status: ExperimentStatus::Complete,
+        complete_accounting: accounting.complete_accounting,
+        records_without_timestamp: accounting.records_without_timestamp,
+        totals: Some(accounting.totals),
+    }
+}
+
+fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
+    let output = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
+    println!("{output}");
+    Ok(())
+}
+
+fn print_record(record: &ExperimentRecord, json: bool) -> Result<(), String> {
+    if json {
+        return print_json(record);
+    }
+    match (&record.status, &record.totals) {
+        (ExperimentStatus::Active, _) => {
+            println!(
+                "experiment '{}' started at Unix {}",
+                record.name, record.started_unix
+            );
+        }
+        (ExperimentStatus::Complete, Some(totals)) => {
+            println!(
+                "experiment '{}' exact observed counters: {} requests, {} input tokens, {} output tokens, {} total tokens",
+                record.name,
+                totals.requests,
+                totals.input_tokens,
+                totals.output_tokens,
+                totals.total_tokens
+            );
+            if !record.complete_accounting {
+                println!(
+                    "incomplete accounting: {} recognized records had no timestamp",
+                    record.records_without_timestamp
+                );
+            }
+        }
+        (ExperimentStatus::Complete, None) => {
+            return Err("completed experiment has no totals".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn command_result(run: impl FnOnce() -> Result<(), String>) -> i32 {
+    match run() {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    }
+}
+
+pub fn start(name: &str, project: &Path) -> i32 {
+    let started_unix = Utc::now().timestamp();
+    command_result(|| {
+        validate_name(name)?;
+        let mut store = load_store(project).map_err(|error| error.to_string())?;
+        if store.records.contains_key(name) {
+            return Err(format!("experiment '{name}' already exists"));
+        }
+        let record = ExperimentRecord {
+            name: name.to_string(),
+            started_unix,
+            finished_unix: None,
+            completed_tasks: None,
+            status: ExperimentStatus::Active,
+            complete_accounting: false,
+            records_without_timestamp: 0,
+            totals: None,
+        };
+        store.records.insert(name.to_string(), record.clone());
+        save_store(project, &store).map_err(|error| error.to_string())?;
+        print_record(&record, false)
+    })
+}
+
+pub fn finish(name: &str, completed_tasks: u64, project: &Path, json: bool) -> i32 {
+    let finished_unix = Utc::now().timestamp();
+    command_result(|| {
+        validate_name(name)?;
+        positive_tasks(completed_tasks)?;
+        let mut store = load_store(project).map_err(|error| error.to_string())?;
+        let existing = store
+            .records
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unknown experiment '{name}'"))?;
+        if existing.status == ExperimentStatus::Complete {
+            return print_record(&existing, json);
+        }
+        validate_window(existing.started_unix, finished_unix)?;
+        let requests = scan_project(project);
+        let record = completed_record_from_scan(
+            name,
+            existing.started_unix,
+            finished_unix,
+            completed_tasks,
+            &requests,
+        );
+        store.records.insert(name.to_string(), record.clone());
+        save_store(project, &store).map_err(|error| error.to_string())?;
+        print_record(&record, json)
+    })
+}
+
+pub fn record(
+    name: &str,
+    from: &str,
+    to: &str,
+    completed_tasks: u64,
+    project: &Path,
+    json: bool,
+) -> i32 {
+    command_result(|| {
+        validate_name(name)?;
+        positive_tasks(completed_tasks)?;
+        let started_unix = DateTime::parse_from_rfc3339(from)
+            .map_err(|_| format!("invalid RFC 3339 start timestamp: {from}"))?
+            .timestamp();
+        let finished_unix = DateTime::parse_from_rfc3339(to)
+            .map_err(|_| format!("invalid RFC 3339 finish timestamp: {to}"))?
+            .timestamp();
+        validate_window(started_unix, finished_unix)?;
+        let mut store = load_store(project).map_err(|error| error.to_string())?;
+        if store.records.contains_key(name) {
+            return Err(format!("experiment '{name}' already exists"));
+        }
+        let requests = scan_project(project);
+        let record = completed_record_from_scan(
+            name,
+            started_unix,
+            finished_unix,
+            completed_tasks,
+            &requests,
+        );
+        store.records.insert(name.to_string(), record.clone());
+        save_store(project, &store).map_err(|error| error.to_string())?;
+        print_record(&record, json)
+    })
+}
+
+pub fn compare(control: &str, treatment: &str, project: &Path, json: bool) -> i32 {
+    command_result(|| {
+        let store = load_store(project).map_err(|error| error.to_string())?;
+        let control_record = store
+            .records
+            .get(control)
+            .ok_or_else(|| format!("unknown experiment '{control}'"))?;
+        let treatment_record = store
+            .records
+            .get(treatment)
+            .ok_or_else(|| format!("unknown experiment '{treatment}'"))?;
+        let comparison = compare_records(control_record, treatment_record)?;
+        if json {
+            print_json(&comparison)
+        } else {
+            println!(
+                "observed input difference per task: {:.0} tokens ({:.1}%)",
+                comparison.observed_input_delta_per_task, comparison.observed_input_change_percent
+            );
+            Ok(())
+        }
+    })
+}
+
+pub fn list(project: &Path, json: bool) -> i32 {
+    command_result(|| {
+        let store = load_store(project).map_err(|error| error.to_string())?;
+        if json {
+            let records: Vec<&ExperimentRecord> = store.records.values().collect();
+            return print_json(&records);
+        }
+        for record in store.records.values() {
+            let finished = record
+                .finished_unix
+                .map_or_else(|| "active".to_string(), |value| value.to_string());
+            let tasks = record
+                .completed_tasks
+                .map_or_else(|| "-".to_string(), |value| value.to_string());
+            let totals = record.totals.as_ref().map_or_else(
+                || "-".to_string(),
+                |totals| {
+                    format!(
+                        "{} input / {} output / {} total",
+                        totals.input_tokens, totals.output_tokens, totals.total_tokens
+                    )
+                },
+            );
+            println!(
+                "{} {:?} {}..{} tasks={} {}",
+                record.name, record.status, record.started_unix, finished, tasks, totals
+            );
+        }
+        Ok(())
+    })
 }

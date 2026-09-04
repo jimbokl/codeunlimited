@@ -1,6 +1,6 @@
 use codeunlimited::{
-    comparecmd, config, deltacmd, detectors, doctor, fixcmd, forecast, initcmd, parsers, report,
-    reportcmd, schedule, skillcmd,
+    comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
+    parsers, report, reportcmd, schedule, skillcmd,
 };
 
 use std::io::IsTerminal;
@@ -35,6 +35,56 @@ enum Source {
     All,
     Claude,
     Codex,
+}
+
+#[derive(Subcommand)]
+enum ExperimentCmd {
+    /// Start a bounded measurement window
+    Start {
+        name: String,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Finish an active window and save exact observed counters
+    Finish {
+        name: String,
+        #[arg(long, value_name = "N")]
+        tasks: u64,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Backfill a completed window from RFC 3339 boundaries
+    Record {
+        name: String,
+        #[arg(long, value_name = "RFC3339")]
+        from: String,
+        #[arg(long, value_name = "RFC3339")]
+        to: String,
+        #[arg(long, value_name = "N")]
+        tasks: u64,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare exact observed counters per completed task
+    Compare {
+        control: String,
+        treatment: String,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List saved experiment windows
+    List {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -118,6 +168,11 @@ enum Cmd {
         /// Replace a different existing skill, preserving its first backup
         #[arg(long)]
         force: bool,
+    },
+    /// Record and compare bounded token-accounting experiments
+    Experiment {
+        #[command(subcommand)]
+        command: ExperimentCmd,
     },
 }
 
@@ -221,6 +276,32 @@ fn main() {
         }
         Cmd::Skill { force } => {
             std::process::exit(skillcmd::run(force));
+        }
+        Cmd::Experiment { command } => {
+            std::process::exit(match command {
+                ExperimentCmd::Start { name, path } => experiment::start(&name, &path),
+                ExperimentCmd::Finish {
+                    name,
+                    tasks,
+                    path,
+                    json,
+                } => experiment::finish(&name, tasks, &path, json),
+                ExperimentCmd::Record {
+                    name,
+                    from,
+                    to,
+                    tasks,
+                    path,
+                    json,
+                } => experiment::record(&name, &from, &to, tasks, &path, json),
+                ExperimentCmd::Compare {
+                    control,
+                    treatment,
+                    path,
+                    json,
+                } => experiment::compare(&control, &treatment, &path, json),
+                ExperimentCmd::List { path, json } => experiment::list(&path, json),
+            });
         }
     }
 }
