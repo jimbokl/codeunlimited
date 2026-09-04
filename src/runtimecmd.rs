@@ -199,7 +199,7 @@ pub enum RunCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Make two explicit read-only calls and report provider cache counters
+    /// Make two no-op provider calls (consumes usage) and report cache counters
     CacheProbe {
         #[command(flatten)]
         target: TargetArgs,

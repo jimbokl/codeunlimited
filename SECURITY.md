@@ -46,7 +46,9 @@ bodies are capped, and errors omit remote bodies and credentials.
 Cache probes disable integrations regardless of the normal run profile. Claude
 uses no built-in tools/MCP/Chrome/slash commands/hooks; Codex ignores user
 configuration and uses a read-only filesystem sandbox. Those are provider
-controls, not an OS sandbox for an arbitrary replacement executable. Probe
+controls; both CLI samples run in a temporary directory with the stable
+instruction copy instead of loading the target project's configuration. This
+is not an OS sandbox for an arbitrary replacement executable. Probe
 results report any provider cache read, not attribution to our stable file.
 
 ## Files and system state it can change

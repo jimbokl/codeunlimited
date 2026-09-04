@@ -58,8 +58,9 @@ codeunlimited run init fixture \
 Arguments are passed as exact argv values with repeated `--provider-arg` or
 `--verify-arg`; no shell is involved. Provider arguments that would disable the
 required ephemeral, instruction, profile, or structured-output controls are
-rejected at initialization. Codex `-c`/`--config` and profile overrides are not
-accepted through this adapter; configure the supported runtime options instead.
+rejected at initialization. Codex `-c`/`--config` accepts only validated
+`model_reasoning_effort` and `model_verbosity` values; instruction, integration,
+and profile overrides are rejected.
 
 `standard` is the default for both existing and new subscription runs. `lean`
 is opt-in: Claude disables MCP servers, Chrome, and slash commands and retains
@@ -251,7 +252,10 @@ This command consumes two provider calls and never runs automatically. It uses
 two distinct no-op samples with a maximum 60 seconds per call. Subscription
 probes force the reduced integration profile: Claude has no built-in tools,
 MCP, Chrome, slash commands, or hooks; Codex ignores user configuration and
-uses a read-only filesystem sandbox. Only model/effort provider arguments are
+uses a read-only filesystem sandbox. Both CLI samples run from one temporary
+directory containing only the stable instruction copy, so the actual project's
+configuration is not loaded. Codex's `--ignore-user-config` alone would not
+disable project configuration. Only model/effort and validated tuning arguments are
 accepted for probing. A user-supplied executable is still trusted code; the
 runtime cannot make an arbitrary binary harmless.
 

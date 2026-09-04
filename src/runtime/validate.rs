@@ -757,6 +757,7 @@ fn validate_runtime_args(args: &[String], provider: &str) -> Result<(), RuntimeE
             "--settings",
             "--setting-sources",
             "--plugin-dir",
+            "--plugin-url",
             "--",
         ]
     } else {
@@ -778,16 +779,55 @@ fn validate_runtime_args(args: &[String], provider: &str) -> Result<(), RuntimeE
             "--",
         ]
     };
-    if args.iter().any(|arg| {
-        protected
+    let invalid = || {
+        RuntimeError::InvalidManifest(
+            "provider argument overrides required runtime configuration".into(),
+        )
+    };
+    let mut arguments = args.iter();
+    while let Some(arg) = arguments.next() {
+        if provider == "codex" {
+            let setting = if arg == "-c" || arg == "--config" {
+                Some(arguments.next().ok_or_else(invalid)?.as_str())
+            } else {
+                arg.strip_prefix("--config=")
+                    .or_else(|| arg.strip_prefix("-c"))
+            };
+            if let Some(setting) = setting {
+                if !safe_codex_tuning(setting) {
+                    return Err(invalid());
+                }
+                continue;
+            }
+        }
+        if protected
             .iter()
             .any(|flag| option_matches(&arg.to_ascii_lowercase(), flag))
-    }) {
-        return Err(RuntimeError::InvalidManifest(
-            "provider argument overrides required runtime configuration".into(),
-        ));
+        {
+            return Err(invalid());
+        }
     }
     Ok(())
+}
+
+fn safe_codex_tuning(setting: &str) -> bool {
+    let Some((key, value)) = setting.split_once('=') else {
+        return false;
+    };
+    let value = value.trim();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+        .unwrap_or(value);
+    match key.trim() {
+        "model_reasoning_effort" => [
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ]
+        .contains(&value),
+        "model_verbosity" => ["low", "medium", "high"].contains(&value),
+        _ => false,
+    }
 }
 
 fn validate_args(args: &[String], provider: Option<&str>) -> Result<(), RuntimeError> {
@@ -806,6 +846,7 @@ fn validate_args(args: &[String], provider: Option<&str>) -> Result<(), RuntimeE
                 "--continue",
                 "-c",
                 "--resume",
+                "--from-pr",
                 "-r",
                 "--fork-session",
                 "--session-id",

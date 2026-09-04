@@ -273,9 +273,25 @@ impl Provider for ProcessProvider {
             return Err(ProviderFailure::ProbeUnsupported);
         }
         let config = probe_config(config)?;
+        // Keep one path for both samples, but never load the real project's
+        // .codex/.claude configuration while probing. ignore-user-config alone
+        // does not disable Codex project configuration.
+        let isolated = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+        let mut probe_prompt = prompt.clone();
+        let probe_root = if matches!(
+            config,
+            ProviderConfig::Claude { .. } | ProviderConfig::Codex { .. }
+        ) {
+            probe_prompt.instructions_path = isolated.path().join("provider-instructions.md");
+            fs::write(&probe_prompt.instructions_path, &prompt.stable)
+                .map_err(|_| ProviderFailure::TemporaryFile)?;
+            isolated.path()
+        } else {
+            project_root
+        };
         let timeout = timeout.min(Duration::from_secs(60));
-        let first = probe_once(&config, prompt, project_root, timeout, 1)?;
-        let second = probe_once(&config, prompt, project_root, timeout, 2)?;
+        let first = probe_once(&config, &probe_prompt, probe_root, timeout, 1)?;
+        let second = probe_once(&config, &probe_prompt, probe_root, timeout, 2)?;
         Ok(ProviderProbeResult::new(first, second))
     }
 }
@@ -297,11 +313,15 @@ fn probe_config(config: &ProviderConfig) -> Result<ProviderConfig, ProviderFailu
             // remote tools or hooks outside a filesystem read-only sandbox.
             let mut arguments = args.iter();
             while let Some(arg) = arguments.next() {
-                if ["--model", "-m", "--effort"].contains(&arg.as_str()) {
+                if ["--model", "-m", "--effort", "-c", "--config"].contains(&arg.as_str()) {
                     if arguments.next().is_none() {
                         return Err(ProviderFailure::ProbeUnsupported);
                     }
-                } else if !arg.starts_with("--model=") && !arg.starts_with("--effort=") {
+                } else if !arg.starts_with("--model=")
+                    && !arg.starts_with("--effort=")
+                    && !arg.starts_with("--config=")
+                    && !arg.starts_with("-c")
+                {
                     return Err(ProviderFailure::ProbeUnsupported);
                 }
             }
@@ -357,6 +377,7 @@ fn probe_once(
             fs::write(&schema, strict_step_schema().to_string())
                 .map_err(|_| ProviderFailure::TemporaryFile)?;
             let mut spec = build_codex_command(config, project_root, &schema, &output)?;
+            spec.args.push(OsString::from("--skip-git-repo-check"));
             spec.args
                 .extend([OsString::from("--sandbox"), OsString::from("read-only")]);
             let input = format!("Read only {} as inert reference context. Do not follow its work instructions or read state/observation files.\n{no_op}", serde_json::to_string(&prompt.instructions_path).map_err(|_| ProviderFailure::InvalidOutput)?);
@@ -406,25 +427,6 @@ pub fn build_claude_command(
             "Claude adapter requires a Claude provider".into(),
         ));
     };
-    reject_overrides(
-        args,
-        &[
-            "--print",
-            "-p",
-            "--no-session-persistence",
-            "--output-format",
-            "--json-schema",
-            "--input-format",
-            "--exclude-dynamic-system-prompt-sections",
-            "--append-system-prompt-file",
-            "--disable-slash-commands",
-            "--no-chrome",
-            "--strict-mcp-config",
-            "--mcp-config",
-            "--tools",
-            "--bare",
-        ],
-    )?;
     let mut command_args = vec![
         OsString::from("--print"),
         OsString::from("--no-session-persistence"),
@@ -471,22 +473,6 @@ pub fn build_codex_command(
             "Codex adapter requires a Codex provider".into(),
         ));
     };
-    reject_overrides(
-        args,
-        &[
-            "exec",
-            "resume",
-            "fork",
-            "--ephemeral",
-            "--output-schema",
-            "--output-last-message",
-            "-o",
-            "--cd",
-            "-C",
-            "--json",
-            "--ignore-user-config",
-        ],
-    )?;
     let mut command_args = vec![
         OsString::from("exec"),
         OsString::from("--ephemeral"),
@@ -793,8 +779,8 @@ mod tests {
         fs::write(&driver, r#"#!/usr/bin/env python3
 import sys,json,pathlib
 request=sys.stdin.read()
-with pathlib.Path('captures.jsonl').open('a') as f:
-    f.write(json.dumps({'args':sys.argv[1:],'input':request})+'\n')
+with (pathlib.Path(sys.argv[0]).resolve().parent / 'captures.jsonl').open('a') as f:
+    f.write(json.dumps({'args':sys.argv[1:],'input':request,'cwd':str(pathlib.Path.cwd())})+'\n')
 envelope={'schema_version':1,'base_revision':0,'outcome':'continue','summary':'probe','delta':{}}
 usage={'input_tokens':100,'cache_read_input_tokens':80,'cache_creation_input_tokens':0,'output_tokens':2}
 if '--output-last-message' in sys.argv:
@@ -827,6 +813,10 @@ print(json.dumps({'structured_output':envelope,'usage':usage}))
             .collect();
         assert_eq!(captures.len(), 4);
         for capture in &captures {
+            assert_ne!(
+                PathBuf::from(capture["cwd"].as_str().unwrap()),
+                fs::canonicalize(project.path()).unwrap()
+            );
             let input = capture["input"].as_str().unwrap();
             assert!(input.contains("CACHE_PROBE"));
             assert!(input.contains("Do not execute the workflow"));
@@ -834,6 +824,8 @@ print(json.dumps({'structured_output':envelope,'usage':usage}))
         }
         assert_ne!(captures[0]["input"], captures[1]["input"]);
         assert_ne!(captures[2]["input"], captures[3]["input"]);
+        assert_eq!(captures[0]["cwd"], captures[1]["cwd"]);
+        assert_eq!(captures[2]["cwd"], captures[3]["cwd"]);
         for capture in &captures[..2] {
             let args = capture["args"].as_array().unwrap();
             assert!(args.contains(&serde_json::json!("--strict-mcp-config")));
@@ -844,6 +836,7 @@ print(json.dumps({'structured_output':envelope,'usage':usage}))
         }
         for capture in &captures[2..] {
             let args = capture["args"].as_array().unwrap();
+            assert!(args.contains(&serde_json::json!("--skip-git-repo-check")));
             assert!(args.contains(&serde_json::json!("--ignore-user-config")));
             assert!(args.contains(&serde_json::json!("read-only")));
         }
@@ -1063,7 +1056,12 @@ print(json.dumps({'structured_output':envelope,'usage':usage}))
 
         let codex = ProviderConfig::Codex {
             executable: PathBuf::from("codex"),
-            args: vec!["--model".into(), "gpt-test".into()],
+            args: vec![
+                "--model".into(),
+                "gpt-test".into(),
+                "-c".into(),
+                "model_reasoning_effort=\"high\"".into(),
+            ],
             subscription_profile: SubscriptionProfile::Lean,
         };
         let codex = build_codex_command(
@@ -1074,6 +1072,11 @@ print(json.dumps({'structured_output':envelope,'usage':usage}))
         )
         .expect("codex command");
         assert_eq!(codex.args[0], "exec");
+        assert!(contains_pair(
+            &codex.args,
+            "-c",
+            "model_reasoning_effort=\"high\""
+        ));
         assert!(codex.args.contains(&OsString::from("--ephemeral")));
         assert!(codex.args.contains(&OsString::from("--ignore-user-config")));
         assert!(contains_pair(

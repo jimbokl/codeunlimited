@@ -257,6 +257,8 @@ fn command_provider_rejects_subscription_profile() {
 fn protected_provider_arguments_fail_at_init_before_creating_a_run() {
     for (provider, argument) in [
         ("claude", "--resume=session"),
+        ("claude", "--from-pr=123"),
+        ("claude", "--plugin-url=https://example.invalid/plugin"),
         ("claude", "-rsession"),
         ("claude", "--system-prompt=replace"),
         ("claude", "--append-system-prompt=extra"),
@@ -282,6 +284,35 @@ fn protected_provider_arguments_fail_at_init_before_creating_a_run() {
             .path()
             .join(".codeunlimited/runs/protected")
             .exists());
+    }
+}
+
+#[test]
+fn codex_tuning_config_remains_compatible_without_allowing_instruction_overrides() {
+    for args in [
+        vec!["-c", "model_reasoning_effort=\"high\""],
+        vec!["--config", "model_verbosity=\"low\""],
+        vec!["-cmodel_reasoning_effort=high"],
+        vec!["--config=model_reasoning_effort=high"],
+    ] {
+        let project = TempDir::new().unwrap();
+        let skill = workflow(project.path());
+        let mut init = binary();
+        init.args(["run", "init", "tuning", "--project"])
+            .arg(project.path())
+            .arg("--skill")
+            .arg(skill)
+            .args(["--objective", "Test", "--provider", "codex"]);
+        for arg in args {
+            init.arg(format!("--provider-arg={arg}"));
+        }
+        init.assert().success();
+        binary()
+            .args(["run", "status", "tuning", "--project"])
+            .arg(project.path())
+            .arg("--json")
+            .assert()
+            .success();
     }
 }
 
