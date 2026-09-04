@@ -9,19 +9,69 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Digest;
 use wait_timeout::ChildExt;
 
-use super::model::{ProviderConfig, RuntimeError, StepEnvelope, MAX_PROVIDER_OUTPUT_BYTES};
-use super::prompt::{CompiledPrompt, STEP_ENVELOPE_SCHEMA_JSON};
+use super::model::{
+    ProviderConfig, RuntimeError, StepEnvelope, SubscriptionProfile, MAX_PROVIDER_OUTPUT_BYTES,
+};
+use super::prompt::{strict_step_schema, CompiledPrompt};
 use super::validate::validate_provider_config;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputTokenSemantics {
+    /// The raw input counter already includes cache reads and writes.
+    TotalIncludesCache,
+    /// The raw input counter is only the uncached remainder.
+    UncachedOnly,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct ProviderUsage {
+    pub input_token_semantics: InputTokenSemantics,
+    /// Provider-native input counter; meaning is declared above.
     pub input_tokens: Option<u64>,
+    pub uncached_input_tokens: Option<u64>,
     pub cache_read_input_tokens: Option<u64>,
     pub cache_write_input_tokens: Option<u64>,
+    pub cache_write_5m_input_tokens: Option<u64>,
+    pub cache_write_1h_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+}
+
+impl ProviderUsage {
+    pub fn transported_input_tokens(&self) -> Option<u64> {
+        match self.input_token_semantics {
+            InputTokenSemantics::TotalIncludesCache => self.input_tokens,
+            InputTokenSemantics::UncachedOnly => self
+                .uncached_input_tokens
+                .or(self.input_tokens)
+                .and_then(|uncached| {
+                    uncached
+                        .checked_add(self.cache_read_input_tokens?)?
+                        .checked_add(self.cache_write_input_tokens?)
+                }),
+            InputTokenSemantics::Unknown => None,
+        }
+    }
+
+    pub fn cache_read_ratio_basis_points(&self) -> Option<u64> {
+        let total = self.transported_input_tokens()?;
+        let reads = self.cache_read_input_tokens?;
+        (total != 0).then(|| {
+            u64::try_from(
+                u128::from(reads)
+                    .saturating_mul(10_000)
+                    .checked_div(u128::from(total))
+                    .unwrap_or(0),
+            )
+            .unwrap_or(u64::MAX)
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +83,33 @@ pub struct ProviderResult {
     pub duration_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderProbeSample {
+    pub usage: ProviderUsage,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderProbeResult {
+    pub first: ProviderProbeSample,
+    pub second: ProviderProbeSample,
+    pub cache_hit_reported: Option<bool>,
+}
+
+impl ProviderProbeResult {
+    pub fn new(first: ProviderProbeSample, second: ProviderProbeSample) -> Self {
+        let cache_hit_reported = second
+            .usage
+            .cache_read_input_tokens
+            .map(|tokens| tokens > 0);
+        Self {
+            first,
+            second,
+            cache_hit_reported,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderFailure {
     MissingExecutable,
@@ -42,8 +119,12 @@ pub enum ProviderFailure {
     Exit(i32),
     OutputTooLarge,
     InvalidOutput,
+    InvalidOutputWithUsage(Box<ProviderUsage>),
     InvalidConfiguration(RuntimeError),
     TemporaryFile,
+    MissingCredential,
+    Http,
+    ProbeUnsupported,
 }
 
 impl fmt::Display for ProviderFailure {
@@ -55,11 +136,16 @@ impl fmt::Display for ProviderFailure {
             Self::Timeout => write!(f, "provider process timed out"),
             Self::Exit(code) => write!(f, "provider process exited with status {code}"),
             Self::OutputTooLarge => write!(f, "provider output exceeded the configured limit"),
-            Self::InvalidOutput => write!(f, "provider returned an invalid structured response"),
+            Self::InvalidOutput | Self::InvalidOutputWithUsage(_) => {
+                write!(f, "provider returned an invalid structured response")
+            }
             Self::InvalidConfiguration(error) => {
                 write!(f, "invalid provider configuration: {error}")
             }
             Self::TemporaryFile => write!(f, "provider temporary files could not be prepared"),
+            Self::MissingCredential => write!(f, "provider API credential is unavailable"),
+            Self::Http => write!(f, "provider API request failed"),
+            Self::ProbeUnsupported => write!(f, "provider does not support cache probing"),
         }
     }
 }
@@ -86,6 +172,14 @@ pub trait Provider {
         project_root: &Path,
         timeout: Duration,
     ) -> Result<ProviderResult, ProviderFailure>;
+
+    fn probe(
+        &self,
+        config: &ProviderConfig,
+        prompt: &CompiledPrompt,
+        project_root: &Path,
+        timeout: Duration,
+    ) -> Result<ProviderProbeResult, ProviderFailure>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -103,14 +197,28 @@ impl Provider for ProcessProvider {
         match config {
             ProviderConfig::Command { .. } => {
                 let spec = build_external_command(config)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let envelope = serde_json::from_slice(&raw.stdout)
                     .map_err(|_| ProviderFailure::InvalidOutput)?;
                 Ok(provider_result(envelope, ProviderUsage::default(), raw))
             }
             ProviderConfig::Claude { .. } => {
-                let spec = build_claude_command(config)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let temporary = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+                let empty_mcp = temporary.path().join("empty-mcp.json");
+                fs::write(&empty_mcp, br#"{"mcpServers":{}}"#)
+                    .map_err(|_| ProviderFailure::TemporaryFile)?;
+                let spec = build_claude_command(config, &prompt.instructions_path, &empty_mcp)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let (envelope, usage) = parse_claude_output(&raw.stdout)?;
                 Ok(provider_result(envelope, usage, raw))
             }
@@ -118,10 +226,15 @@ impl Provider for ProcessProvider {
                 let temporary = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
                 let schema = temporary.path().join("step-envelope.schema.json");
                 let output = temporary.path().join("last-message.json");
-                fs::write(&schema, STEP_ENVELOPE_SCHEMA_JSON)
+                fs::write(&schema, strict_step_schema().to_string())
                     .map_err(|_| ProviderFailure::TemporaryFile)?;
                 let spec = build_codex_command(config, project_root, &schema, &output)?;
-                let raw = run_process(&spec, &prompt.bytes, project_root, timeout)?;
+                let raw = run_process(
+                    &spec,
+                    &provider_input(config, prompt, project_root, project_root),
+                    project_root,
+                    timeout,
+                )?;
                 let response = read_bounded_file(&output)?;
                 let envelope = serde_json::from_slice(&response)
                     .map_err(|_| ProviderFailure::InvalidOutput)?;
@@ -134,38 +247,208 @@ impl Provider for ProcessProvider {
                     duration_ms: raw.duration_ms,
                 })
             }
+            ProviderConfig::OpenAiApi { .. } | ProviderConfig::AnthropicApi { .. } => {
+                let (envelope, usage, response_bytes, duration_ms) =
+                    super::api::invoke_api(config, prompt, timeout)?;
+                Ok(ProviderResult {
+                    envelope,
+                    usage,
+                    exit_code: 0,
+                    response_bytes,
+                    duration_ms,
+                })
+            }
         }
+    }
+
+    fn probe(
+        &self,
+        config: &ProviderConfig,
+        prompt: &CompiledPrompt,
+        project_root: &Path,
+        timeout: Duration,
+    ) -> Result<ProviderProbeResult, ProviderFailure> {
+        validate_provider_config(config)?;
+        if matches!(config, ProviderConfig::Command { .. }) {
+            return Err(ProviderFailure::ProbeUnsupported);
+        }
+        let config = probe_config(config)?;
+        // Keep one path for both samples, but never load the real project's
+        // .codex/.claude configuration while probing. ignore-user-config alone
+        // does not disable Codex project configuration.
+        let isolated = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+        let mut probe_prompt = prompt.clone();
+        let probe_root = if matches!(
+            config,
+            ProviderConfig::Claude { .. } | ProviderConfig::Codex { .. }
+        ) {
+            probe_prompt.instructions_path = isolated.path().join("provider-instructions.md");
+            fs::write(&probe_prompt.instructions_path, &prompt.stable)
+                .map_err(|_| ProviderFailure::TemporaryFile)?;
+            isolated.path()
+        } else {
+            project_root
+        };
+        let timeout = timeout.min(Duration::from_secs(60));
+        let first = probe_once(&config, &probe_prompt, probe_root, timeout, 1)?;
+        let second = probe_once(&config, &probe_prompt, probe_root, timeout, 2)?;
+        Ok(ProviderProbeResult::new(first, second))
     }
 }
 
-pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, RuntimeError> {
+fn probe_config(config: &ProviderConfig) -> Result<ProviderConfig, ProviderFailure> {
+    let mut config = config.clone();
+    match &mut config {
+        ProviderConfig::Claude {
+            args,
+            subscription_profile,
+            ..
+        }
+        | ProviderConfig::Codex {
+            args,
+            subscription_profile,
+            ..
+        } => {
+            // Probe only the configured model; arbitrary overrides could re-enable
+            // remote tools or hooks outside a filesystem read-only sandbox.
+            let mut arguments = args.iter();
+            while let Some(arg) = arguments.next() {
+                if ["--model", "-m", "--effort", "-c", "--config"].contains(&arg.as_str()) {
+                    if arguments.next().is_none() {
+                        return Err(ProviderFailure::ProbeUnsupported);
+                    }
+                } else if !arg.starts_with("--model=")
+                    && !arg.starts_with("--effort=")
+                    && !arg.starts_with("--config=")
+                    && !arg.starts_with("-c")
+                {
+                    return Err(ProviderFailure::ProbeUnsupported);
+                }
+            }
+            *subscription_profile = SubscriptionProfile::Lean;
+        }
+        _ => {}
+    }
+    Ok(config)
+}
+
+fn probe_once(
+    config: &ProviderConfig,
+    prompt: &CompiledPrompt,
+    project_root: &Path,
+    timeout: Duration,
+    sample: u8,
+) -> Result<ProviderProbeSample, ProviderFailure> {
+    let no_op = format!("CACHE_PROBE sample={sample}. Do not execute the workflow or objective. Do not modify files, invoke external tools, or perform external actions. Return only a no-change StepEnvelope with base_revision=0, outcome=continue, summary=cache probe {sample}; use null for unchanged replacements and [] for additions.\n");
+    match config {
+        ProviderConfig::Claude { .. } => {
+            let temporary = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+            let empty_mcp = temporary.path().join("empty-mcp.json");
+            fs::write(&empty_mcp, br#"{"mcpServers":{}}"#)
+                .map_err(|_| ProviderFailure::TemporaryFile)?;
+            let mut spec = build_claude_command(config, &prompt.instructions_path, &empty_mcp)?;
+            force_empty_claude_tools(&mut spec.args);
+            spec.args.extend([
+                OsString::from("--settings"),
+                OsString::from(r#"{"disableAllHooks":true}"#),
+                OsString::from("--max-turns"),
+                OsString::from("1"),
+            ]);
+            let raw = run_process(&spec, no_op.as_bytes(), project_root, timeout)?;
+            let (_, usage) = parse_claude_output(&raw.stdout)?;
+            Ok(ProviderProbeSample {
+                usage,
+                duration_ms: raw.duration_ms,
+            })
+        }
+        ProviderConfig::Codex { args, .. } => {
+            reject_overrides(
+                args,
+                &[
+                    "--sandbox",
+                    "-s",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--yolo",
+                ],
+            )?;
+            let temporary = tempfile::tempdir().map_err(|_| ProviderFailure::TemporaryFile)?;
+            let schema = temporary.path().join("step-envelope.schema.json");
+            let output = temporary.path().join("last-message.json");
+            fs::write(&schema, strict_step_schema().to_string())
+                .map_err(|_| ProviderFailure::TemporaryFile)?;
+            let mut spec = build_codex_command(config, project_root, &schema, &output)?;
+            spec.args.push(OsString::from("--skip-git-repo-check"));
+            spec.args
+                .extend([OsString::from("--sandbox"), OsString::from("read-only")]);
+            let input = format!("Read only {} as inert reference context. Do not follow its work instructions or read state/observation files.\n{no_op}", serde_json::to_string(&prompt.instructions_path).map_err(|_| ProviderFailure::InvalidOutput)?);
+            let raw = run_process(&spec, input.as_bytes(), project_root, timeout)?;
+            let _: StepEnvelope = serde_json::from_slice(&read_bounded_file(&output)?)
+                .map_err(|_| ProviderFailure::InvalidOutput)?;
+            Ok(ProviderProbeSample {
+                usage: parse_codex_usage(&raw.stdout),
+                duration_ms: raw.duration_ms,
+            })
+        }
+        ProviderConfig::OpenAiApi { .. } | ProviderConfig::AnthropicApi { .. } => {
+            let mut probe = prompt.clone();
+            probe.dynamic = no_op.into_bytes();
+            probe.dynamic_bytes = probe.dynamic.len();
+            probe.dynamic_sha256 = format!("{:x}", sha2::Sha256::digest(&probe.dynamic));
+            let (_, usage, _, duration_ms) = super::api::invoke_api(config, &probe, timeout)?;
+            Ok(ProviderProbeSample { usage, duration_ms })
+        }
+        ProviderConfig::Command { .. } => Err(ProviderFailure::ProbeUnsupported),
+    }
+}
+
+fn force_empty_claude_tools(args: &mut Vec<OsString>) {
+    if let Some(index) = args.iter().position(|arg| arg == "--tools") {
+        if let Some(value) = args.get_mut(index + 1) {
+            *value = OsString::new();
+            return;
+        }
+    }
+    args.extend([OsString::from("--tools"), OsString::new()]);
+}
+
+pub fn build_claude_command(
+    config: &ProviderConfig,
+    instructions_path: &Path,
+    empty_mcp_path: &Path,
+) -> Result<CommandSpec, RuntimeError> {
     validate_provider_config(config)?;
-    let ProviderConfig::Claude { executable, args } = config else {
+    let ProviderConfig::Claude {
+        executable,
+        args,
+        subscription_profile,
+    } = config
+    else {
         return Err(RuntimeError::InvalidManifest(
             "Claude adapter requires a Claude provider".into(),
         ));
     };
-    reject_overrides(
-        args,
-        &[
-            "--print",
-            "-p",
-            "--no-session-persistence",
-            "--output-format",
-            "--json-schema",
-            "--input-format",
-            "--exclude-dynamic-system-prompt-sections",
-        ],
-    )?;
     let mut command_args = vec![
         OsString::from("--print"),
         OsString::from("--no-session-persistence"),
         OsString::from("--output-format"),
         OsString::from("json"),
         OsString::from("--json-schema"),
-        OsString::from(STEP_ENVELOPE_SCHEMA_JSON),
+        OsString::from(strict_step_schema().to_string()),
         OsString::from("--exclude-dynamic-system-prompt-sections"),
+        OsString::from("--append-system-prompt-file"),
+        instructions_path.as_os_str().to_os_string(),
     ];
+    if *subscription_profile == SubscriptionProfile::Lean {
+        command_args.extend([
+            OsString::from("--disable-slash-commands"),
+            OsString::from("--no-chrome"),
+            OsString::from("--strict-mcp-config"),
+            OsString::from("--mcp-config"),
+            empty_mcp_path.as_os_str().to_os_string(),
+            OsString::from("--tools"),
+            OsString::from("Bash,Edit,Read,Write,Glob,Grep"),
+        ]);
+    }
     command_args.extend(args.iter().map(OsString::from));
     Ok(CommandSpec {
         program: executable.clone(),
@@ -180,26 +463,16 @@ pub fn build_codex_command(
     output_path: &Path,
 ) -> Result<CommandSpec, RuntimeError> {
     validate_provider_config(config)?;
-    let ProviderConfig::Codex { executable, args } = config else {
+    let ProviderConfig::Codex {
+        executable,
+        args,
+        subscription_profile,
+    } = config
+    else {
         return Err(RuntimeError::InvalidManifest(
             "Codex adapter requires a Codex provider".into(),
         ));
     };
-    reject_overrides(
-        args,
-        &[
-            "exec",
-            "resume",
-            "fork",
-            "--ephemeral",
-            "--output-schema",
-            "--output-last-message",
-            "-o",
-            "--cd",
-            "-C",
-            "--json",
-        ],
-    )?;
     let mut command_args = vec![
         OsString::from("exec"),
         OsString::from("--ephemeral"),
@@ -211,6 +484,9 @@ pub fn build_codex_command(
         OsString::from("--cd"),
         project_root.as_os_str().to_os_string(),
     ];
+    if *subscription_profile == SubscriptionProfile::Lean {
+        command_args.push(OsString::from("--ignore-user-config"));
+    }
     command_args.extend(args.iter().map(OsString::from));
     Ok(CommandSpec {
         program: executable.clone(),
@@ -231,6 +507,22 @@ pub fn build_external_command(config: &ProviderConfig) -> Result<CommandSpec, Ru
     })
 }
 
+fn provider_input(
+    config: &ProviderConfig,
+    prompt: &CompiledPrompt,
+    _project_root: &Path,
+    _run_dir: &Path,
+) -> Vec<u8> {
+    match config {
+        ProviderConfig::Claude { .. } => prompt.dynamic.clone(),
+        ProviderConfig::Codex { .. } => prompt.codex_bootstrap.clone(),
+        ProviderConfig::Command { .. } => prompt.bytes.clone(),
+        ProviderConfig::OpenAiApi { .. } | ProviderConfig::AnthropicApi { .. } => {
+            prompt.dynamic.clone()
+        }
+    }
+}
+
 pub fn parse_claude_output(bytes: &[u8]) -> Result<(StepEnvelope, ProviderUsage), ProviderFailure> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ProviderFailure::InvalidOutput)?;
     let envelope = match value.get("structured_output") {
@@ -241,7 +533,10 @@ pub fn parse_claude_output(bytes: &[u8]) -> Result<(StepEnvelope, ProviderUsage)
         },
     }
     .map_err(|_| ProviderFailure::InvalidOutput)?;
-    Ok((envelope, usage_from_value(value.get("usage"))))
+    Ok((
+        envelope,
+        usage_from_value(value.get("usage"), InputTokenSemantics::UncachedOnly),
+    ))
 }
 
 fn provider_result(envelope: StepEnvelope, usage: ProviderUsage, raw: RawOutput) -> ProviderResult {
@@ -391,12 +686,15 @@ fn parse_codex_usage(bytes: &[u8]) -> ProviderUsage {
         .split(|byte| *byte == b'\n')
         .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
         .filter_map(|value| value.get("usage").cloned())
-        .map(|usage| usage_from_value(Some(&usage)))
+        .map(|usage| usage_from_value(Some(&usage), InputTokenSemantics::TotalIncludesCache))
         .next_back()
         .unwrap_or_default()
 }
 
-fn usage_from_value(value: Option<&Value>) -> ProviderUsage {
+pub(crate) fn usage_from_value(
+    value: Option<&Value>,
+    input_token_semantics: InputTokenSemantics,
+) -> ProviderUsage {
     let get = |name: &str| {
         value
             .and_then(|usage| usage.get(name))
@@ -412,14 +710,36 @@ fn usage_from_value(value: Option<&Value>) -> ProviderUsage {
             .and_then(|value| value.get(name))
             .and_then(Value::as_u64)
     };
+    let cache_creation = value.and_then(|usage| usage.get("cache_creation"));
+    let get_cache_creation = |name: &str| {
+        cache_creation
+            .and_then(|value| value.get(name))
+            .and_then(Value::as_u64)
+    };
+    let input_tokens = get("input_tokens").or_else(|| get("prompt_tokens"));
+    let cache_read_input_tokens = get("cache_read_input_tokens")
+        .or_else(|| get("cached_input_tokens"))
+        .or_else(|| get_detail("cached_tokens"));
+    let cache_write_input_tokens = get("cache_creation_input_tokens")
+        .or_else(|| get("cache_write_input_tokens"))
+        .or_else(|| get_detail("cache_write_tokens"));
+    let uncached_input_tokens = match input_token_semantics {
+        InputTokenSemantics::UncachedOnly => input_tokens,
+        InputTokenSemantics::TotalIncludesCache => input_tokens.and_then(|total| {
+            let read = cache_read_input_tokens?;
+            let write = cache_write_input_tokens.unwrap_or(0);
+            total.checked_sub(read)?.checked_sub(write)
+        }),
+        InputTokenSemantics::Unknown => None,
+    };
     ProviderUsage {
-        input_tokens: get("input_tokens").or_else(|| get("prompt_tokens")),
-        cache_read_input_tokens: get("cache_read_input_tokens")
-            .or_else(|| get("cached_input_tokens"))
-            .or_else(|| get_detail("cached_tokens")),
-        cache_write_input_tokens: get("cache_creation_input_tokens")
-            .or_else(|| get("cache_write_input_tokens"))
-            .or_else(|| get_detail("cache_write_tokens")),
+        input_token_semantics,
+        input_tokens,
+        uncached_input_tokens,
+        cache_read_input_tokens,
+        cache_write_input_tokens,
+        cache_write_5m_input_tokens: get_cache_creation("ephemeral_5m_input_tokens"),
+        cache_write_1h_input_tokens: get_cache_creation("ephemeral_1h_input_tokens"),
         output_tokens: get("output_tokens"),
     }
 }
@@ -434,12 +754,12 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::runtime::model::{ProviderConfig, RuntimeError};
+    use crate::runtime::model::{ProviderConfig, RuntimeError, SubscriptionProfile};
     use crate::runtime::prompt::CompiledPrompt;
 
     use super::{
         build_claude_command, build_codex_command, parse_claude_output, parse_codex_usage,
-        ProcessProvider, Provider, ProviderFailure,
+        provider_input, ProcessProvider, Provider, ProviderFailure,
     };
 
     fn python() -> PathBuf {
@@ -450,6 +770,78 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn probes_are_noop_unique_and_disable_integrations_for_standard_profile() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = TempDir::new().unwrap();
+        let driver = project.path().join("mock-cli");
+        fs::write(&driver, r#"#!/usr/bin/env python3
+import sys,json,pathlib
+request=sys.stdin.read()
+with (pathlib.Path(sys.argv[0]).resolve().parent / 'captures.jsonl').open('a') as f:
+    f.write(json.dumps({'args':sys.argv[1:],'input':request,'cwd':str(pathlib.Path.cwd())})+'\n')
+envelope={'schema_version':1,'base_revision':0,'outcome':'continue','summary':'probe','delta':{}}
+usage={'input_tokens':100,'cache_read_input_tokens':80,'cache_creation_input_tokens':0,'output_tokens':2}
+if '--output-last-message' in sys.argv:
+    pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps(envelope))
+print(json.dumps({'structured_output':envelope,'usage':usage}))
+"#).unwrap();
+        fs::set_permissions(&driver, fs::Permissions::from_mode(0o755)).unwrap();
+        for codex in [false, true] {
+            let config = if codex {
+                ProviderConfig::Codex {
+                    executable: driver.clone(),
+                    args: vec![],
+                    subscription_profile: SubscriptionProfile::Standard,
+                }
+            } else {
+                ProviderConfig::Claude {
+                    executable: driver.clone(),
+                    args: vec![],
+                    subscription_profile: SubscriptionProfile::Standard,
+                }
+            };
+            ProcessProvider
+                .probe(&config, &prompt(), project.path(), Duration::from_secs(3))
+                .unwrap();
+        }
+        let raw = fs::read_to_string(project.path().join("captures.jsonl")).unwrap();
+        let captures: Vec<serde_json::Value> = raw
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(captures.len(), 4);
+        for capture in &captures {
+            assert_ne!(
+                PathBuf::from(capture["cwd"].as_str().unwrap()),
+                fs::canonicalize(project.path()).unwrap()
+            );
+            let input = capture["input"].as_str().unwrap();
+            assert!(input.contains("CACHE_PROBE"));
+            assert!(input.contains("Do not execute the workflow"));
+            assert!(!input.contains("perform one bounded increment"));
+        }
+        assert_ne!(captures[0]["input"], captures[1]["input"]);
+        assert_ne!(captures[2]["input"], captures[3]["input"]);
+        assert_eq!(captures[0]["cwd"], captures[1]["cwd"]);
+        assert_eq!(captures[2]["cwd"], captures[3]["cwd"]);
+        for capture in &captures[..2] {
+            let args = capture["args"].as_array().unwrap();
+            assert!(args.contains(&serde_json::json!("--strict-mcp-config")));
+            assert!(args.contains(&serde_json::json!("--no-chrome")));
+            assert!(args.contains(&serde_json::json!("--disable-slash-commands")));
+            let tools = args.iter().position(|v| v == "--tools").unwrap();
+            assert_eq!(args[tools + 1], "");
+        }
+        for capture in &captures[2..] {
+            let args = capture["args"].as_array().unwrap();
+            assert!(args.contains(&serde_json::json!("--skip-git-repo-check")));
+            assert!(args.contains(&serde_json::json!("--ignore-user-config")));
+            assert!(args.contains(&serde_json::json!("read-only")));
+        }
+    }
+
     fn fixture() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime_driver.py")
     }
@@ -457,9 +849,14 @@ mod tests {
     fn prompt() -> CompiledPrompt {
         CompiledPrompt {
             bytes: b"bounded prompt".to_vec(),
+            stable: b"stable".to_vec(),
+            dynamic: b"dynamic".to_vec(),
+            codex_bootstrap: b"Load `.codeunlimited/runs/feature-x/provider-instructions.md` first, `.codeunlimited/runs/feature-x/state.json` second, and `.codeunlimited/runs/feature-x/observation.txt` third.\n".to_vec(),
+            instructions_path: PathBuf::from("/tmp/provider-instructions.md"),
             stable_bytes: 7,
             dynamic_bytes: 7,
             stable_sha256: "11".repeat(32),
+            dynamic_sha256: "33".repeat(32),
             prompt_sha256: "22".repeat(32),
         }
     }
@@ -633,8 +1030,14 @@ mod tests {
         let claude = ProviderConfig::Claude {
             executable: PathBuf::from("claude"),
             args: vec!["--model".into(), "sonnet".into()],
+            subscription_profile: SubscriptionProfile::Standard,
         };
-        let claude = build_claude_command(&claude).expect("claude command");
+        let claude = build_claude_command(
+            &claude,
+            Path::new("/tmp/provider-instructions.md"),
+            Path::new("/tmp/empty-mcp.json"),
+        )
+        .expect("claude command");
         assert_eq!(claude.program, PathBuf::from("claude"));
         assert!(contains_pair(&claude.args, "--output-format", "json"));
         assert!(claude.args.contains(&OsString::from("--print")));
@@ -644,10 +1047,22 @@ mod tests {
         assert!(claude
             .args
             .contains(&OsString::from("--exclude-dynamic-system-prompt-sections")));
+        assert!(contains_pair(
+            &claude.args,
+            "--append-system-prompt-file",
+            "/tmp/provider-instructions.md"
+        ));
+        assert!(!claude.args.contains(&OsString::from("--strict-mcp-config")));
 
         let codex = ProviderConfig::Codex {
             executable: PathBuf::from("codex"),
-            args: vec!["--model".into(), "gpt-test".into()],
+            args: vec![
+                "--model".into(),
+                "gpt-test".into(),
+                "-c".into(),
+                "model_reasoning_effort=\"high\"".into(),
+            ],
+            subscription_profile: SubscriptionProfile::Lean,
         };
         let codex = build_codex_command(
             &codex,
@@ -657,7 +1072,13 @@ mod tests {
         )
         .expect("codex command");
         assert_eq!(codex.args[0], "exec");
+        assert!(contains_pair(
+            &codex.args,
+            "-c",
+            "model_reasoning_effort=\"high\""
+        ));
         assert!(codex.args.contains(&OsString::from("--ephemeral")));
+        assert!(codex.args.contains(&OsString::from("--ignore-user-config")));
         assert!(contains_pair(
             &codex.args,
             "--output-schema",
@@ -671,6 +1092,71 @@ mod tests {
     }
 
     #[test]
+    fn subscription_inputs_are_transport_specific_and_revision_stable() {
+        let project = Path::new("/tmp/project");
+        let run = project.join(".codeunlimited/runs/feature-x");
+        let claude = ProviderConfig::Claude {
+            executable: "claude".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Standard,
+        };
+        let codex = ProviderConfig::Codex {
+            executable: "codex".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Standard,
+        };
+        let command = command_config(&["--mode", "success"]);
+
+        assert_eq!(
+            provider_input(&claude, &prompt(), project, &run),
+            b"dynamic"
+        );
+        assert_eq!(
+            provider_input(&command, &prompt(), project, &run),
+            b"bounded prompt"
+        );
+        let bootstrap =
+            String::from_utf8(provider_input(&codex, &prompt(), project, &run)).unwrap();
+        assert!(bootstrap.contains("provider-instructions.md` first"));
+        assert!(bootstrap.contains("state.json` second"));
+        assert!(bootstrap.contains("observation.txt` third"));
+        assert!(!bootstrap.contains("stable"));
+        assert!(!bootstrap.contains("dynamic"));
+    }
+
+    #[test]
+    fn lean_claude_profile_restricts_dynamic_integrations_without_bare_mode() {
+        let config = ProviderConfig::Claude {
+            executable: "claude".into(),
+            args: vec![],
+            subscription_profile: SubscriptionProfile::Lean,
+        };
+        let spec = build_claude_command(
+            &config,
+            Path::new("/tmp/provider-instructions.md"),
+            Path::new("/tmp/empty-mcp.json"),
+        )
+        .unwrap();
+
+        assert!(spec
+            .args
+            .contains(&OsString::from("--disable-slash-commands")));
+        assert!(spec.args.contains(&OsString::from("--no-chrome")));
+        assert!(spec.args.contains(&OsString::from("--strict-mcp-config")));
+        assert!(contains_pair(
+            &spec.args,
+            "--mcp-config",
+            "/tmp/empty-mcp.json"
+        ));
+        assert!(contains_pair(
+            &spec.args,
+            "--tools",
+            "Bash,Edit,Read,Write,Glob,Grep"
+        ));
+        assert!(!spec.args.contains(&OsString::from("--bare")));
+    }
+
+    #[test]
     fn continuation_secret_and_required_override_args_are_rejected() {
         for args in [
             vec!["--resume".into(), "id".into()],
@@ -680,9 +1166,14 @@ mod tests {
             let config = ProviderConfig::Claude {
                 executable: PathBuf::from("claude"),
                 args,
+                subscription_profile: SubscriptionProfile::Standard,
             };
             assert!(matches!(
-                build_claude_command(&config),
+                build_claude_command(
+                    &config,
+                    Path::new("/tmp/provider-instructions.md"),
+                    Path::new("/tmp/empty-mcp.json")
+                ),
                 Err(RuntimeError::ContinuationArgument(_)
                     | RuntimeError::SecretArgument
                     | RuntimeError::InvalidManifest(_))
@@ -705,6 +1196,11 @@ mod tests {
             "usage": {
                 "input_tokens": 101,
                 "cache_read_input_tokens": 70,
+                "cache_creation_input_tokens": 30,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 20,
+                    "ephemeral_1h_input_tokens": 10
+                },
                 "output_tokens": 9
             }
         });
@@ -712,7 +1208,13 @@ mod tests {
             parse_claude_output(&serde_json::to_vec(&raw).unwrap()).expect("structured response");
         assert_eq!(parsed.0.base_revision, 2);
         assert_eq!(parsed.1.input_tokens, Some(101));
+        assert_eq!(parsed.1.uncached_input_tokens, Some(101));
         assert_eq!(parsed.1.cache_read_input_tokens, Some(70));
+        assert_eq!(parsed.1.cache_write_input_tokens, Some(30));
+        assert_eq!(parsed.1.cache_write_5m_input_tokens, Some(20));
+        assert_eq!(parsed.1.cache_write_1h_input_tokens, Some(10));
+        assert_eq!(parsed.1.transported_input_tokens(), Some(201));
+        assert_eq!(parsed.1.cache_read_ratio_basis_points(), Some(3482));
         assert_eq!(parsed.1.output_tokens, Some(9));
     }
 
@@ -724,9 +1226,48 @@ mod tests {
         let usage = parse_codex_usage(raw);
 
         assert_eq!(usage.input_tokens, Some(15000));
+        assert_eq!(usage.uncached_input_tokens, Some(0));
         assert_eq!(usage.cache_read_input_tokens, Some(12000));
         assert_eq!(usage.cache_write_input_tokens, Some(3000));
+        assert_eq!(usage.transported_input_tokens(), Some(15000));
+        assert_eq!(usage.cache_read_ratio_basis_points(), Some(8000));
         assert_eq!(usage.output_tokens, Some(100));
+    }
+
+    #[test]
+    fn missing_usage_stays_unknown_instead_of_becoming_zero() {
+        let usage = super::usage_from_value(None, super::InputTokenSemantics::Unknown);
+
+        assert_eq!(usage.input_tokens, None);
+        assert_eq!(usage.uncached_input_tokens, None);
+        assert_eq!(usage.transported_input_tokens(), None);
+        assert_eq!(usage.cache_read_ratio_basis_points(), None);
+    }
+
+    #[test]
+    fn cache_probe_verdict_uses_only_second_reported_cache_read() {
+        let sample = |cached| super::ProviderProbeSample {
+            usage: super::ProviderUsage {
+                input_token_semantics: super::InputTokenSemantics::TotalIncludesCache,
+                input_tokens: Some(100),
+                cache_read_input_tokens: cached,
+                ..Default::default()
+            },
+            duration_ms: 1,
+        };
+
+        assert_eq!(
+            super::ProviderProbeResult::new(sample(Some(0)), sample(Some(80))).cache_hit_reported,
+            Some(true)
+        );
+        assert_eq!(
+            super::ProviderProbeResult::new(sample(Some(0)), sample(Some(0))).cache_hit_reported,
+            Some(false)
+        );
+        assert_eq!(
+            super::ProviderProbeResult::new(sample(None), sample(None)).cache_hit_reported,
+            None
+        );
     }
 
     fn contains_pair(args: &[OsString], key: &str, value: &str) -> bool {

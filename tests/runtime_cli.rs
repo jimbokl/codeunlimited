@@ -114,6 +114,7 @@ fn run_help_lists_the_complete_bounded_lifecycle() {
         .stdout(predicate::str::contains("prompt"))
         .stdout(predicate::str::contains("step"))
         .stdout(predicate::str::contains("auto"))
+        .stdout(predicate::str::contains("cache-probe"))
         .stdout(predicate::str::contains("recover"));
 }
 
@@ -165,6 +166,7 @@ fn status_json_is_versioned_strict_and_reports_provider_isolation() {
         BTreeSet::from([
             "attempts",
             "busy",
+            "cache_read_ratio_basis_points",
             "dynamic_prompt_bytes",
             "prompt_bytes",
             "provider",
@@ -174,9 +176,413 @@ fn status_json_is_versioned_strict_and_reports_provider_isolation() {
             "schema_version",
             "stable_prompt_bytes",
             "status",
+            "transported_input_tokens",
             "usage",
         ])
     );
+}
+
+#[test]
+fn subscription_profiles_preserve_integrations_by_default_and_lean_is_explicit() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+
+    let mut lean = binary();
+    lean.args(["run", "init", "claude-lean", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args([
+            "--objective",
+            "Test",
+            "--provider",
+            "claude",
+            "--subscription-profile",
+            "lean",
+        ]);
+    lean.assert().success();
+
+    let mut standard = binary();
+    standard
+        .args(["run", "init", "codex-standard", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args(["--objective", "Test", "--provider", "codex"]);
+    standard.assert().success();
+
+    for (name, expected) in [("claude-lean", "lean"), ("codex-standard", "standard")] {
+        let mut status = binary();
+        status
+            .args(["run", "status", name, "--project"])
+            .arg(project.path())
+            .arg("--json");
+        let value = json_output(status);
+        assert_eq!(value["provider"]["layer"], "subscription_cli");
+        assert_eq!(value["provider"]["capability"], "coding_agent");
+        assert_eq!(value["provider"]["subscription_profile"], expected);
+    }
+}
+
+#[test]
+fn command_provider_rejects_subscription_profile() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    let mut command = binary();
+    command
+        .args(["run", "init", "bad-profile", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args([
+            "--objective",
+            "Test",
+            "--provider",
+            "command",
+            "--provider-executable",
+            "true",
+            "--subscription-profile",
+            "lean",
+        ]);
+
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only valid for claude and codex"));
+}
+
+#[test]
+fn protected_provider_arguments_fail_at_init_before_creating_a_run() {
+    for (provider, argument) in [
+        ("claude", "--resume=session"),
+        ("claude", "--from-pr=123"),
+        ("claude", "--plugin-url=https://example.invalid/plugin"),
+        ("claude", "-rsession"),
+        ("claude", "--system-prompt=replace"),
+        ("claude", "--append-system-prompt=extra"),
+        ("claude", "--chrome"),
+        ("claude", "--output-format=text"),
+        ("codex", "-cmodel_instructions_file=replace.md"),
+        ("codex", "--config=developer_instructions=replace"),
+        ("codex", "-ooutput.json"),
+        ("codex", "--thread-id=previous"),
+    ] {
+        let project = TempDir::new().unwrap();
+        let skill = workflow(project.path());
+        binary()
+            .args(["run", "init", "protected", "--project"])
+            .arg(project.path())
+            .arg("--skill")
+            .arg(skill)
+            .args(["--objective", "Test", "--provider", provider])
+            .arg(format!("--provider-arg={argument}"))
+            .assert()
+            .failure();
+        assert!(!project
+            .path()
+            .join(".codeunlimited/runs/protected")
+            .exists());
+    }
+}
+
+#[test]
+fn codex_tuning_config_remains_compatible_without_allowing_instruction_overrides() {
+    for args in [
+        vec!["-c", "model_reasoning_effort=\"high\""],
+        vec!["--config", "model_verbosity=\"low\""],
+        vec!["-cmodel_reasoning_effort=high"],
+        vec!["--config=model_reasoning_effort=high"],
+    ] {
+        let project = TempDir::new().unwrap();
+        let skill = workflow(project.path());
+        let mut init = binary();
+        init.args(["run", "init", "tuning", "--project"])
+            .arg(project.path())
+            .arg("--skill")
+            .arg(skill)
+            .args(["--objective", "Test", "--provider", "codex"]);
+        for arg in args {
+            init.arg(format!("--provider-arg={arg}"));
+        }
+        init.assert().success();
+        binary()
+            .args(["run", "status", "tuning", "--project"])
+            .arg(project.path())
+            .arg("--json")
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn legacy_run_remains_inspectable_when_new_prompt_exceeds_its_budget() {
+    let project = TempDir::new().unwrap();
+    init_command(project.path(), "legacy", "success", &[])
+        .assert()
+        .success();
+    let run = project.path().join(".codeunlimited/runs/legacy");
+    fs::remove_file(run.join("provider-instructions.md")).unwrap();
+    let mut manifest: Value =
+        serde_json::from_slice(&fs::read(run.join("manifest.json")).unwrap()).unwrap();
+    manifest["prompt_budget_bytes"] = serde_json::json!(1);
+    fs::write(
+        run.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let before = fs::read(run.join("manifest.json")).unwrap();
+    binary()
+        .args(["run", "status", "legacy", "--project"])
+        .arg(project.path())
+        .arg("--json")
+        .assert()
+        .success();
+    binary()
+        .args(["run", "prompt", "legacy", "--project"])
+        .arg(project.path())
+        .assert()
+        .success();
+    assert!(!run.join("provider-instructions.md").exists());
+    assert_eq!(fs::read(run.join("manifest.json")).unwrap(), before);
+    binary()
+        .args(["run", "step", "legacy", "--project"])
+        .arg(project.path())
+        .assert()
+        .code(6);
+    assert_eq!(fs::read_dir(run.join("attempts")).unwrap().count(), 0);
+}
+
+#[test]
+fn api_lifecycle_uses_mock_transport_and_keeps_failed_usage_separate_from_probe() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+    for provider in ["openai-api", "anthropic-api"] {
+        let anthropic = provider == "anthropic-api";
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for index in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 8192];
+                let body = loop {
+                    let count = stream.read(&mut buffer).unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&buffer[..count]);
+                    if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                        let length: usize = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length:"))
+                            .unwrap()
+                            .trim()
+                            .parse()
+                            .unwrap();
+                        assert!(headers.contains(if anthropic {
+                            "x-api-key: fixture-only-key"
+                        } else {
+                            "authorization: bearer fixture-only-key"
+                        }));
+                        if anthropic {
+                            assert!(headers.contains("anthropic-version: 2023-06-01"));
+                        }
+                        if request.len() >= end + 4 + length {
+                            break serde_json::from_slice::<Value>(
+                                &request[end + 4..end + 4 + length],
+                            )
+                            .unwrap();
+                        }
+                    }
+                };
+                bodies.push(body);
+                let text = if index == 3 {
+                    "PRIVATE_INVALID_RESPONSE".into()
+                } else {
+                    serde_json::json!({"schema_version":1,"base_revision":0,"outcome":"continue","summary":"mock step","delta":{}}).to_string()
+                };
+                let response = if anthropic {
+                    serde_json::json!({"content":[{"type":"text","text":text}],"stop_reason":"end_turn",
+                        "usage":{"input_tokens":100,"cache_read_input_tokens":80,"cache_creation_input_tokens":20,"output_tokens":3}})
+                } else {
+                    serde_json::json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":text}]}],
+                        "usage":{"input_tokens":200,"input_tokens_details":{"cached_tokens":80,"cache_write_tokens":20},"output_tokens":3}})
+                }.to_string();
+                write!(stream,"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{response}",response.len()).unwrap();
+            }
+            bodies
+        });
+        let project = TempDir::new().unwrap();
+        let skill = workflow(project.path());
+        fs::write(project.path().join(".gitignore"), ".codeunlimited/runs/\n").unwrap();
+        initialize_git(project.path());
+        binary()
+            .args(["run", "init", "api", "--project"])
+            .arg(project.path())
+            .arg("--skill")
+            .arg(skill)
+            .args([
+                "--objective",
+                "Mock API step",
+                "--provider",
+                provider,
+                "--api-model",
+                "fixture-model",
+                "--api-key-env",
+                "CODEUNLIMITED_FIXTURE_API_KEY",
+                "--api-endpoint",
+            ])
+            .arg(format!("http://{address}/endpoint"))
+            .assert()
+            .success();
+        let invoke = |action: &str| {
+            let mut command = binary();
+            command
+                .args(["run", action, "api", "--project"])
+                .arg(project.path())
+                .arg("--json")
+                .env("CODEUNLIMITED_FIXTURE_API_KEY", "fixture-only-key");
+            command
+        };
+        let step = json_output(invoke("step"));
+        assert_eq!(step["revision"], 1);
+        assert_eq!(step["transported_input_tokens"], 200);
+        assert_eq!(step["cache_read_ratio_basis_points"], 4000);
+        let probe = json_output(invoke("cache-probe"));
+        assert_eq!(probe["cache_hit_reported"], true);
+        let after_probe = json_output(invoke("status"));
+        assert_eq!(after_probe["attempts"], 1);
+        assert_eq!(after_probe["transported_input_tokens"], 200);
+        invoke("step")
+            .assert()
+            .code(7)
+            .stderr(predicate::str::contains("PRIVATE_INVALID_RESPONSE").not());
+        let status = json_output(invoke("status"));
+        assert_eq!(status["revision"], 1);
+        assert_eq!(status["attempts"], 2);
+        assert_eq!(status["transported_input_tokens"], 400);
+        assert_eq!(status["usage"]["cache_read_input_tokens"], 160);
+        let manifest =
+            fs::read_to_string(project.path().join(".codeunlimited/runs/api/manifest.json"))
+                .unwrap();
+        assert!(!manifest.contains("fixture-only-key"));
+        let bodies = server.join().unwrap();
+        let stable = |body: &Value| {
+            if anthropic {
+                body["system"].clone()
+            } else {
+                body["input"][0].clone()
+            }
+        };
+        assert_eq!(stable(&bodies[0]), stable(&bodies[3]));
+        assert_eq!(stable(&bodies[1]), stable(&bodies[2]));
+        assert_ne!(bodies[1], bodies[2]);
+    }
+}
+
+#[test]
+fn legacy_subscription_manifest_defaults_without_rewriting_on_inspection() {
+    let project = TempDir::new().unwrap();
+    let skill = workflow(project.path());
+    binary()
+        .args(["run", "init", "legacy", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(skill)
+        .args(["--objective", "Legacy", "--provider", "claude"])
+        .assert()
+        .success();
+    let run = project.path().join(".codeunlimited/runs/legacy");
+    let path = run.join("manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest["provider"]
+        .as_object_mut()
+        .unwrap()
+        .remove("subscription_profile");
+    fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    fs::remove_file(run.join("provider-instructions.md")).unwrap();
+    let before = fs::read(&path).unwrap();
+    let mut command = binary();
+    command
+        .args(["run", "status", "legacy", "--project"])
+        .arg(project.path())
+        .arg("--json");
+    let status = json_output(command);
+    assert_eq!(status["provider"]["subscription_profile"], "standard");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(!run.join("provider-instructions.md").exists());
+}
+
+#[test]
+fn api_provider_is_a_separate_keyless_init_layer() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    let mut command = binary();
+    command
+        .args(["run", "init", "api-plan", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&workflow)
+        .args([
+            "--objective",
+            "Plan one step",
+            "--provider",
+            "openai-api",
+            "--api-model",
+            "gpt-5.6",
+            "--api-key-env",
+            "PRIVATE_OPENAI_TOKEN",
+        ]);
+    command.assert().success();
+
+    let mut status = binary();
+    status
+        .args(["run", "status", "api-plan", "--project"])
+        .arg(project.path())
+        .arg("--json");
+    let value = json_output(status);
+    assert_eq!(value["provider"]["kind"], "openai_api");
+    assert_eq!(value["provider"]["layer"], "external_api");
+    assert_eq!(
+        value["provider"]["capability"],
+        "single_turn_no_local_tools"
+    );
+    assert!(!value.to_string().contains("PRIVATE_OPENAI_TOKEN"));
+}
+
+#[test]
+fn api_provider_rejects_remote_plain_http_and_wrong_ttl() {
+    let project = TempDir::new().expect("project");
+    let workflow = project.path().join("workflow.md");
+    fs::write(&workflow, "# Workflow\n").unwrap();
+    for extra in [
+        vec!["--api-endpoint", "http://example.com/v1/responses"],
+        vec!["--cache-ttl", "1h"],
+    ] {
+        let mut command = binary();
+        command
+            .args(["run", "init", "bad-api", "--project"])
+            .arg(project.path())
+            .arg("--skill")
+            .arg(&workflow)
+            .args([
+                "--objective",
+                "Test",
+                "--provider",
+                "openai-api",
+                "--api-model",
+                "gpt-5.6",
+            ])
+            .args(extra);
+        command.assert().failure();
+    }
 }
 
 #[test]

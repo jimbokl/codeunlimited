@@ -72,29 +72,76 @@ impl Manifest {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubscriptionProfile {
+    #[default]
+    Standard,
+    Lean,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiCacheTtl {
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    #[serde(rename = "30m")]
+    ThirtyMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+impl ApiCacheTtl {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FiveMinutes => "5m",
+            Self::ThirtyMinutes => "30m",
+            Self::OneHour => "1h",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ProviderConfig {
     Claude {
         executable: PathBuf,
         args: Vec<String>,
+        #[serde(default)]
+        subscription_profile: SubscriptionProfile,
     },
     Codex {
         executable: PathBuf,
         args: Vec<String>,
+        #[serde(default)]
+        subscription_profile: SubscriptionProfile,
     },
     Command {
         executable: PathBuf,
         args: Vec<String>,
     },
+    #[serde(rename = "openai_api")]
+    OpenAiApi {
+        endpoint: String,
+        model: String,
+        api_key_env: String,
+        cache_ttl: ApiCacheTtl,
+    },
+    #[serde(rename = "anthropic_api")]
+    AnthropicApi {
+        endpoint: String,
+        model: String,
+        api_key_env: String,
+        cache_ttl: ApiCacheTtl,
+    },
 }
 
 impl ProviderConfig {
-    pub fn executable(&self) -> &PathBuf {
+    pub fn executable(&self) -> Option<&PathBuf> {
         match self {
             Self::Claude { executable, .. }
             | Self::Codex { executable, .. }
-            | Self::Command { executable, .. } => executable,
+            | Self::Command { executable, .. } => Some(executable),
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => None,
         }
     }
 
@@ -103,7 +150,43 @@ impl ProviderConfig {
             Self::Claude { args, .. } | Self::Codex { args, .. } | Self::Command { args, .. } => {
                 args
             }
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => &[],
         }
+    }
+
+    pub fn subscription_profile(&self) -> Option<SubscriptionProfile> {
+        match self {
+            Self::Claude {
+                subscription_profile,
+                ..
+            }
+            | Self::Codex {
+                subscription_profile,
+                ..
+            } => Some(*subscription_profile),
+            Self::Command { .. } => None,
+            Self::OpenAiApi { .. } | Self::AnthropicApi { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod provider_config_tests {
+    use super::{ProviderConfig, SubscriptionProfile};
+
+    #[test]
+    fn legacy_subscription_provider_defaults_to_standard_profile() {
+        let claude: ProviderConfig = serde_json::from_value(serde_json::json!({
+            "kind": "claude",
+            "executable": "claude",
+            "args": []
+        }))
+        .expect("v2.0 manifest provider");
+
+        assert_eq!(
+            claude.subscription_profile(),
+            Some(SubscriptionProfile::Standard)
+        );
     }
 }
 
@@ -394,6 +477,7 @@ pub enum RuntimeError {
     UnsafeStorePath,
     InvalidStoredData(&'static str),
     WorkflowHashMismatch,
+    InstructionHashMismatch,
     Io(String),
     ProviderFailed(String),
     RecoveryRequired,
@@ -457,6 +541,9 @@ impl fmt::Display for RuntimeError {
             Self::UnsafeStorePath => write!(f, "runtime store contains an unsafe path"),
             Self::InvalidStoredData(name) => write!(f, "invalid stored runtime data: {name}"),
             Self::WorkflowHashMismatch => write!(f, "workflow snapshot hash mismatch"),
+            Self::InstructionHashMismatch => {
+                write!(f, "provider instruction snapshot hash mismatch")
+            }
             Self::Io(operation) => write!(f, "runtime I/O failed during {operation}"),
             Self::ProviderFailed(category) => write!(f, "provider failed: {category}"),
             Self::RecoveryRequired => write!(f, "run requires explicit recovery"),

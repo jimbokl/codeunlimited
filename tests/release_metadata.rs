@@ -1,10 +1,10 @@
 use std::path::Path;
 
 #[test]
-fn package_declares_v2_0_msrv_and_license() {
+fn package_declares_v2_1_msrv_and_license() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml");
-    assert!(manifest.contains("version = \"2.0.0\""));
+    assert!(manifest.contains("version = \"2.1.0\""));
     assert!(manifest.contains("rust-version = \"1.82\""));
 
     let license = std::fs::read_to_string(root.join("LICENSE")).expect("LICENSE");

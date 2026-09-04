@@ -7,14 +7,14 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::runtime::engine::{
-    init_run, recover, render_next_prompt, run_steps, status, step, InitRequest, RunRef,
-    RunStatusView,
+    cache_probe, init_run, recover, render_next_prompt, run_steps, status, step, InitRequest,
+    RunRef, RunStatusView,
 };
 use crate::runtime::model::{
-    ProviderConfig, RuntimeError, VerificationCommand, DEFAULT_MAX_ATTEMPTS_PER_REVISION,
-    DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES, DEFAULT_PROMPT_BUDGET_BYTES,
-    DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES, DEFAULT_WORKFLOW_BUDGET_BYTES,
-    MAX_OBSERVATION_BUDGET_BYTES,
+    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand,
+    DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
+    DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
+    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES,
 };
 use crate::runtime::provider::ProcessProvider;
 
@@ -43,6 +43,43 @@ pub enum ProviderKind {
     Claude,
     Codex,
     Command,
+    OpenaiApi,
+    AnthropicApi,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CacheTtlArg {
+    #[value(name = "5m")]
+    FiveMinutes,
+    #[value(name = "30m")]
+    ThirtyMinutes,
+    #[value(name = "1h")]
+    OneHour,
+}
+
+impl From<CacheTtlArg> for ApiCacheTtl {
+    fn from(value: CacheTtlArg) -> Self {
+        match value {
+            CacheTtlArg::FiveMinutes => Self::FiveMinutes,
+            CacheTtlArg::ThirtyMinutes => Self::ThirtyMinutes,
+            CacheTtlArg::OneHour => Self::OneHour,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SubscriptionProfileArg {
+    Standard,
+    Lean,
+}
+
+impl From<SubscriptionProfileArg> for SubscriptionProfile {
+    fn from(value: SubscriptionProfileArg) -> Self {
+        match value {
+            SubscriptionProfileArg::Standard => Self::Standard,
+            SubscriptionProfileArg::Lean => Self::Lean,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -55,6 +92,9 @@ pub struct TargetArgs {
 }
 
 #[derive(Debug, Subcommand)]
+// Clap parses one command per process; boxing individual CLI fields adds no
+// useful memory saving and complicates the public argument grammar.
+#[allow(clippy::large_enum_variant)]
 pub enum RunCmd {
     /// Create durable state without invoking a provider
     Init {
@@ -78,6 +118,21 @@ pub enum RunCmd {
         /// Exact provider argument; repeat to preserve argv boundaries
         #[arg(long, value_name = "ARG")]
         provider_arg: Vec<String>,
+        /// Subscription CLI surface: standard preserves integrations; lean minimizes them
+        #[arg(long, value_enum)]
+        subscription_profile: Option<SubscriptionProfileArg>,
+        /// Model id for an external API provider
+        #[arg(long, value_name = "MODEL")]
+        api_model: Option<String>,
+        /// Full API endpoint; remote endpoints must use HTTPS
+        #[arg(long, value_name = "URL")]
+        api_endpoint: Option<String>,
+        /// Environment variable containing the API key (the value is never stored)
+        #[arg(long, value_name = "NAME")]
+        api_key_env: Option<String>,
+        /// Provider prompt-cache TTL
+        #[arg(long, value_enum)]
+        cache_ttl: Option<CacheTtlArg>,
         /// Verification executable (no shell)
         #[arg(long, value_name = "PROGRAM")]
         verify_program: Option<PathBuf>,
@@ -144,6 +199,14 @@ pub enum RunCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Make two no-op provider calls (consumes usage) and report cache counters
+    CacheProbe {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
     /// Acknowledge an ambiguous attempt with a bounded observation
     Recover {
         #[command(flatten)]
@@ -175,6 +238,11 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             provider,
             provider_executable,
             provider_arg,
+            subscription_profile,
+            api_model,
+            api_endpoint,
+            api_key_env,
+            cache_ttl,
             verify_program,
             verify_arg,
             verify_every_step,
@@ -188,28 +256,69 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             prompt_budget_bytes,
         } => {
             let project = resolve_project(&project)?;
-            let executable = match (provider, provider_executable) {
-                (ProviderKind::Claude, value) => value.unwrap_or_else(|| "claude".into()),
-                (ProviderKind::Codex, value) => value.unwrap_or_else(|| "codex".into()),
-                (ProviderKind::Command, Some(value)) => value,
-                (ProviderKind::Command, None) => {
-                    return Err(RunCliError::Input(
-                        "--provider-executable is required for command providers",
-                    ))
-                }
-            };
+            let api_provider = matches!(
+                provider,
+                ProviderKind::OpenaiApi | ProviderKind::AnthropicApi
+            );
+            if api_provider {
+                reject_non_api_options(&provider_executable, &provider_arg, subscription_profile)?;
+            } else if api_model.is_some()
+                || api_endpoint.is_some()
+                || api_key_env.is_some()
+                || cache_ttl.is_some()
+            {
+                return Err(RunCliError::Input(
+                    "API options are only valid for openai-api and anthropic-api",
+                ));
+            }
             let provider = match provider {
                 ProviderKind::Claude => ProviderConfig::Claude {
-                    executable,
+                    executable: provider_executable.unwrap_or_else(|| "claude".into()),
                     args: provider_arg,
+                    subscription_profile: subscription_profile
+                        .map(Into::into)
+                        .unwrap_or(SubscriptionProfile::Standard),
                 },
                 ProviderKind::Codex => ProviderConfig::Codex {
-                    executable,
+                    executable: provider_executable.unwrap_or_else(|| "codex".into()),
                     args: provider_arg,
+                    subscription_profile: subscription_profile
+                        .map(Into::into)
+                        .unwrap_or(SubscriptionProfile::Standard),
                 },
                 ProviderKind::Command => ProviderConfig::Command {
-                    executable,
+                    executable: if subscription_profile.is_some() {
+                        return Err(RunCliError::Input(
+                            "--subscription-profile is only valid for claude and codex",
+                        ));
+                    } else {
+                        provider_executable.ok_or(RunCliError::Input(
+                            "--provider-executable is required for command providers",
+                        ))?
+                    },
                     args: provider_arg,
+                },
+                ProviderKind::OpenaiApi => ProviderConfig::OpenAiApi {
+                    endpoint: api_endpoint
+                        .unwrap_or_else(|| "https://api.openai.com/v1/responses".into()),
+                    model: api_model.ok_or(RunCliError::Input(
+                        "--api-model is required for API providers",
+                    ))?,
+                    api_key_env: api_key_env.unwrap_or_else(|| "OPENAI_API_KEY".into()),
+                    cache_ttl: cache_ttl
+                        .map(Into::into)
+                        .unwrap_or(ApiCacheTtl::ThirtyMinutes),
+                },
+                ProviderKind::AnthropicApi => ProviderConfig::AnthropicApi {
+                    endpoint: api_endpoint
+                        .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".into()),
+                    model: api_model.ok_or(RunCliError::Input(
+                        "--api-model is required for API providers",
+                    ))?,
+                    api_key_env: api_key_env.unwrap_or_else(|| "ANTHROPIC_API_KEY".into()),
+                    cache_ttl: cache_ttl
+                        .map(Into::into)
+                        .unwrap_or(ApiCacheTtl::FiveMinutes),
                 },
             };
             let verification_command = verify_program.map(|program| VerificationCommand {
@@ -281,6 +390,28 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 );
             }
         }
+        RunCmd::CacheProbe { target, json } => {
+            let report = cache_probe(&reference(target)?, &ProcessProvider)?;
+            if json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "run={} provider={} cache_hit_reported={} second_cache_read_tokens={} stable_sha256={}",
+                    report.run_name,
+                    report.provider,
+                    report
+                        .cache_hit_reported
+                        .map_or("unknown", |hit| if hit { "true" } else { "false" }),
+                    report
+                        .second
+                        .usage
+                        .cache_read_input_tokens
+                        .map_or_else(|| "unknown".into(), |value| value.to_string()),
+                    report.stable_prompt_sha256
+                );
+                println!("scope={}", report.evidence_scope);
+            }
+        }
         RunCmd::Recover {
             target,
             observation,
@@ -298,6 +429,20 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
 
 fn reference(target: TargetArgs) -> Result<RunRef, RunCliError> {
     Ok(RunRef::new(resolve_project(&target.project)?, target.name))
+}
+
+fn reject_non_api_options(
+    provider_executable: &Option<PathBuf>,
+    provider_args: &[String],
+    subscription_profile: Option<SubscriptionProfileArg>,
+) -> Result<(), RunCliError> {
+    if provider_executable.is_some() || !provider_args.is_empty() || subscription_profile.is_some()
+    {
+        return Err(RunCliError::Input(
+            "provider executable, provider args, and subscription profile are not valid for API providers",
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_project(path: &Path) -> Result<PathBuf, RunCliError> {
@@ -337,10 +482,27 @@ fn print_status(view: &RunStatusView) {
         view.prompt_bytes, view.stable_prompt_bytes, view.dynamic_prompt_bytes, view.attempts
     );
     println!(
-        "provider={} executable={} isolation={}",
-        view.provider.kind, view.provider.executable, view.provider.isolation
+        "provider={} layer={} capability={} profile={} executable={} isolation={}",
+        view.provider.kind,
+        view.provider.layer,
+        view.provider.capability,
+        view.provider
+            .subscription_profile
+            .as_deref()
+            .unwrap_or("n/a"),
+        view.provider.executable,
+        view.provider.isolation
     );
     println!("provider_args={:?}", view.provider.args);
+    println!(
+        "transported_input_tokens={} cache_read_ratio={}",
+        view.transported_input_tokens
+            .map_or_else(|| "unknown".into(), |value| value.to_string()),
+        view.cache_read_ratio_basis_points.map_or_else(
+            || "unknown".into(),
+            |value| format!("{}.{:02}%", value / 100, value % 100)
+        )
+    );
 }
 
 fn redact_secret_arguments(args: &mut [String]) {

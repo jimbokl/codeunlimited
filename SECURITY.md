@@ -3,7 +3,7 @@
 ## Observation plane
 
 The audit, delta, report, forecast, doctor, and experiment-accounting commands
-have no network client and make no network requests. This observation plane
+make no network requests. This observation plane
 reads Claude Code logs from `~/.claude/projects/**/*.jsonl` and Codex logs from
 `~/.codex/sessions/**/*.jsonl`. JSON records are decoded locally, but the tool
 extracts only:
@@ -19,9 +19,9 @@ printed, or transmitted. Reports can contain project names unless
 ## Execution plane and provider process
 
 `run init`, `run status`, and `run prompt` operate on local runtime control
-files without invoking a model. `run step` and `run auto` form a separate
-execution plane: they launch the explicitly configured provider process in the
-selected project directory.
+files without invoking a model. `run step`, `run auto`, and the opt-in
+`run cache-probe` form a separate execution plane: they invoke the configured
+subscription process or external API transport. Probes consume usage too.
 
 The provider process is not inside the observation plane's privacy boundary.
 It inherits the user's environment and provider configuration, can read or
@@ -35,6 +35,21 @@ are redacted from `run status`, and known token/password arguments are rejected
 at initialization, but secrets should never be placed on a command line. The
 custom `command` adapter executes the exact program and argv supplied by the
 user without a shell; its behavior and network access belong to that program.
+
+The optional API adapters send the workflow, objective, current state, and
+latest observation to the configured endpoint. They expose no local coding
+tools. API key values are read from environment variables at invocation and
+never stored in manifests, printed, or passed in argv. Remote endpoints require
+HTTPS; loopback HTTP is allowed for tests. HTTP redirects are disabled, response
+bodies are capped, and errors omit remote bodies and credentials.
+
+Cache probes disable integrations regardless of the normal run profile. Claude
+uses no built-in tools/MCP/Chrome/slash commands/hooks; Codex ignores user
+configuration and uses a read-only filesystem sandbox. Those are provider
+controls; both CLI samples run in a temporary directory with the stable
+instruction copy instead of loading the target project's configuration. This
+is not an OS sandbox for an arbitrary replacement executable. Probe
+results report any provider cache read, not attribution to our stable file.
 
 ## Files and system state it can change
 
@@ -70,7 +85,7 @@ Commands write only when their documented behavior requires it:
   counters, and non-identifying platform fields; it excludes audit findings,
   token totals, models, projects, paths, prompts, and responses.
 - `run init` creates `.codeunlimited/runs/<name>/` with a manifest, immutable
-  workflow snapshot, bounded state and latest observation, exclusive lock,
+  workflow and provider-instruction snapshots, bounded state and latest observation, exclusive lock,
   immutable attempt records, compacted state archives, and an optional recovery
   record. `run step`, `run auto`, and `run recover` update only that run's
   control files, apart from changes made independently by the provider process

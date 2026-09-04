@@ -12,6 +12,7 @@ use crate::safeio::{atomic_create, atomic_write, reject_symlink};
 use super::model::{
     ArchiveBatch, CodingState, Manifest, RecoveryRecord, RuntimeError, RUNTIME_SCHEMA_VERSION,
 };
+use super::prompt::{compile_prompt, inspect_prompt};
 use super::validate::{validate_manifest, validate_run_name, validate_state};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,7 @@ pub struct RunPaths {
     pub run: PathBuf,
     pub manifest: PathBuf,
     pub workflow: PathBuf,
+    pub provider_instructions: PathBuf,
     pub state: PathBuf,
     pub observation: PathBuf,
     pub lock: PathBuf,
@@ -43,6 +45,7 @@ impl RunPaths {
             runs_root,
             manifest: run.join("manifest.json"),
             workflow: run.join("workflow.md"),
+            provider_instructions: run.join("provider-instructions.md"),
             state: run.join("state.json"),
             observation: run.join("observation.txt"),
             lock: run.join("lock"),
@@ -63,6 +66,7 @@ pub struct RunStore {
 pub struct LoadedRun {
     pub manifest: Manifest,
     pub workflow: Vec<u8>,
+    pub provider_instructions: Vec<u8>,
     pub state: CodingState,
     pub observation: Vec<u8>,
     pub recovery: Option<RecoveryRecord>,
@@ -123,6 +127,9 @@ impl RunStore {
             ensure_directory(&paths.attempts)?;
             ensure_directory(&paths.archive)?;
             atomic_create(&paths.workflow, workflow).map_err(|_| io_error("create workflow"))?;
+            let instructions = compile_prompt(manifest, workflow, state, b"")?.stable;
+            atomic_create(&paths.provider_instructions, &instructions)
+                .map_err(|_| io_error("create provider instructions"))?;
             write_new_json(&paths.manifest, manifest, "manifest.json")?;
             write_new_json(&paths.state, state, "state.json")?;
             atomic_create(&paths.observation, b"").map_err(|_| io_error("create observation"))?;
@@ -150,6 +157,17 @@ impl RunStore {
         validate_state(&manifest, &state)?;
         let observation = read_bytes(&self.paths.observation)?;
         validate_observation(&manifest, &observation)?;
+        let expected_instructions =
+            inspect_prompt(&manifest, &workflow, &state, &observation)?.stable;
+        let provider_instructions = if self.paths.provider_instructions.exists() {
+            let bytes = read_bytes(&self.paths.provider_instructions)?;
+            if bytes != expected_instructions {
+                return Err(RuntimeError::InstructionHashMismatch);
+            }
+            bytes
+        } else {
+            expected_instructions
+        };
         let recovery = if self.paths.recovery.exists() {
             let value: RecoveryRecord = read_json(&self.paths.recovery, "recovery.json")?;
             if value.schema_version != RUNTIME_SCHEMA_VERSION {
@@ -162,6 +180,7 @@ impl RunStore {
         Ok(LoadedRun {
             manifest,
             workflow,
+            provider_instructions,
             state,
             observation,
             recovery,
@@ -245,7 +264,27 @@ impl RunStore {
             hasher.update(name.as_bytes());
             hasher.update(read_bytes(path)?);
         }
+        if self.paths.provider_instructions.exists() {
+            hasher.update(b"provider_instructions");
+            hasher.update(read_bytes(&self.paths.provider_instructions)?);
+        }
         Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    /// Materialize the v2.1 immutable instruction snapshot for a legacy v2.0
+    /// run. Read-only operations intentionally do not mutate old runs.
+    pub fn ensure_provider_instructions(&self, loaded: &LoadedRun) -> Result<(), RuntimeError> {
+        if self.paths.provider_instructions.exists() {
+            let current = read_bytes(&self.paths.provider_instructions)?;
+            return (current == loaded.provider_instructions)
+                .then_some(())
+                .ok_or(RuntimeError::InstructionHashMismatch);
+        }
+        atomic_create(
+            &self.paths.provider_instructions,
+            &loaded.provider_instructions,
+        )
+        .map_err(|_| io_error("create provider instructions"))
     }
 
     pub fn write_recovery(&self, recovery: &RecoveryRecord) -> Result<(), RuntimeError> {
@@ -325,6 +364,9 @@ fn check_run_paths(paths: &RunPaths) -> Result<(), RuntimeError> {
     ] {
         reject_symlink(file).map_err(|_| RuntimeError::UnsafeStorePath)?;
     }
+    if paths.provider_instructions.exists() {
+        reject_symlink(&paths.provider_instructions).map_err(|_| RuntimeError::UnsafeStorePath)?;
+    }
     if paths.recovery.exists() {
         reject_symlink(&paths.recovery).map_err(|_| RuntimeError::UnsafeStorePath)?;
     }
@@ -369,6 +411,7 @@ fn cleanup_partial_create(paths: &RunPaths) {
         &paths.observation,
         &paths.state,
         &paths.manifest,
+        &paths.provider_instructions,
         &paths.workflow,
     ] {
         let _ = fs::remove_file(file);
@@ -426,10 +469,46 @@ mod tests {
         assert!(loaded.observation.is_empty());
         assert!(loaded.recovery.is_none());
         assert_eq!(
+            loaded.provider_instructions,
+            crate::runtime::prompt::compile_prompt(&manifest, &workflow, &state, b"")
+                .unwrap()
+                .stable
+        );
+        assert_eq!(
             RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
                 .unwrap_err(),
             RuntimeError::RunExists
         );
+    }
+
+    #[test]
+    fn instruction_hash_drift_is_rejected() {
+        let (project, manifest, workflow, state) = fixture();
+        let store = RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
+            .expect("create run");
+        fs::write(&store.paths().provider_instructions, b"changed").unwrap();
+
+        assert_eq!(
+            store.load().unwrap_err(),
+            RuntimeError::InstructionHashMismatch
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_provider_instructions_are_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let (project, manifest, workflow, state) = fixture();
+        let store = RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
+            .expect("create run");
+        let outside = project.path().join("outside-instructions.md");
+        fs::write(&outside, b"keep").unwrap();
+        fs::remove_file(&store.paths().provider_instructions).unwrap();
+        symlink(&outside, &store.paths().provider_instructions).unwrap();
+
+        assert_eq!(store.load().unwrap_err(), RuntimeError::UnsafeStorePath);
+        assert_eq!(fs::read(outside).unwrap(), b"keep");
     }
 
     #[test]

@@ -629,13 +629,91 @@ fn validate_artifact_resolution(
 }
 
 pub fn validate_provider_config(provider: &ProviderConfig) -> Result<(), RuntimeError> {
-    validate_executable(provider.executable(), "provider executable")?;
-    let provider_name = match provider {
-        ProviderConfig::Claude { .. } => Some("claude"),
-        ProviderConfig::Codex { .. } => Some("codex"),
-        ProviderConfig::Command { .. } => None,
-    };
-    validate_args(provider.args(), provider_name)
+    match provider {
+        ProviderConfig::Claude { executable, .. } => {
+            validate_executable(executable, "provider executable")?;
+            validate_args(provider.args(), Some("claude"))?;
+            validate_runtime_args(provider.args(), "claude")
+        }
+        ProviderConfig::Codex { executable, .. } => {
+            validate_executable(executable, "provider executable")?;
+            validate_args(provider.args(), Some("codex"))?;
+            validate_runtime_args(provider.args(), "codex")
+        }
+        ProviderConfig::Command { executable, .. } => {
+            validate_executable(executable, "provider executable")?;
+            validate_args(provider.args(), None)
+        }
+        ProviderConfig::OpenAiApi {
+            endpoint,
+            model,
+            api_key_env,
+            cache_ttl,
+        } => {
+            validate_api_settings(endpoint, model, api_key_env)?;
+            if *cache_ttl != super::model::ApiCacheTtl::ThirtyMinutes {
+                return Err(RuntimeError::InvalidManifest(
+                    "OpenAI API cache TTL must be 30m".into(),
+                ));
+            }
+            Ok(())
+        }
+        ProviderConfig::AnthropicApi {
+            endpoint,
+            model,
+            api_key_env,
+            cache_ttl,
+        } => {
+            validate_api_settings(endpoint, model, api_key_env)?;
+            if !matches!(
+                cache_ttl,
+                super::model::ApiCacheTtl::FiveMinutes | super::model::ApiCacheTtl::OneHour
+            ) {
+                return Err(RuntimeError::InvalidManifest(
+                    "Anthropic API cache TTL must be 5m or 1h".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_api_settings(
+    endpoint: &str,
+    model: &str,
+    api_key_env: &str,
+) -> Result<(), RuntimeError> {
+    validate_text("API endpoint", endpoint, 2048, false)?;
+    validate_text("API model", model, 256, false)?;
+    validate_text("API key environment variable", api_key_env, 128, false)?;
+    if !api_key_env.bytes().enumerate().all(|(index, byte)| {
+        byte == b'_' || byte.is_ascii_uppercase() || (index > 0 && byte.is_ascii_digit())
+    }) || api_key_env
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_digit)
+    {
+        return Err(RuntimeError::InvalidManifest(
+            "API key environment variable must use uppercase ASCII, digits, and underscores".into(),
+        ));
+    }
+    let url = url::Url::parse(endpoint).map_err(|_| {
+        RuntimeError::InvalidManifest("API endpoint must be an absolute URL".into())
+    })?;
+    let secure = url.scheme() == "https";
+    let loopback_http = url.scheme() == "http"
+        && match url.host() {
+            Some(url::Host::Domain("localhost")) => true,
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            _ => false,
+        };
+    if (!secure && !loopback_http) || url.username() != "" || url.password().is_some() {
+        return Err(RuntimeError::InvalidManifest(
+            "API endpoint must use HTTPS; HTTP is allowed only for loopback tests".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_executable(path: &Path, field: &str) -> Result<(), RuntimeError> {
@@ -645,6 +723,111 @@ fn validate_executable(path: &Path, field: &str) -> Result<(), RuntimeError> {
         )));
     }
     Ok(())
+}
+
+fn option_matches(arg: &str, flag: &str) -> bool {
+    arg == flag
+        || arg.starts_with(&format!("{flag}="))
+        || (flag.len() == 2 && flag.starts_with('-') && flag != "--" && arg.starts_with(flag))
+}
+
+fn validate_runtime_args(args: &[String], provider: &str) -> Result<(), RuntimeError> {
+    let protected: &[&str] = if provider == "claude" {
+        &[
+            "--print",
+            "-p",
+            "--no-session-persistence",
+            "--output-format",
+            "--json-schema",
+            "--input-format",
+            "--exclude-dynamic-system-prompt-sections",
+            "--append-system-prompt-file",
+            "--append-system-prompt",
+            "--system-prompt",
+            "--system-prompt-file",
+            "--disable-slash-commands",
+            "--no-chrome",
+            "--chrome",
+            "--strict-mcp-config",
+            "--mcp-config",
+            "--tools",
+            "--bare",
+            "--agent",
+            "--agents",
+            "--settings",
+            "--setting-sources",
+            "--plugin-dir",
+            "--plugin-url",
+            "--",
+        ]
+    } else {
+        &[
+            "exec",
+            "resume",
+            "fork",
+            "--ephemeral",
+            "--output-schema",
+            "--output-last-message",
+            "-o",
+            "--cd",
+            "-c",
+            "--json",
+            "--ignore-user-config",
+            "--config",
+            "--profile",
+            "-p",
+            "--",
+        ]
+    };
+    let invalid = || {
+        RuntimeError::InvalidManifest(
+            "provider argument overrides required runtime configuration".into(),
+        )
+    };
+    let mut arguments = args.iter();
+    while let Some(arg) = arguments.next() {
+        if provider == "codex" {
+            let setting = if arg == "-c" || arg == "--config" {
+                Some(arguments.next().ok_or_else(invalid)?.as_str())
+            } else {
+                arg.strip_prefix("--config=")
+                    .or_else(|| arg.strip_prefix("-c"))
+            };
+            if let Some(setting) = setting {
+                if !safe_codex_tuning(setting) {
+                    return Err(invalid());
+                }
+                continue;
+            }
+        }
+        if protected
+            .iter()
+            .any(|flag| option_matches(&arg.to_ascii_lowercase(), flag))
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
+fn safe_codex_tuning(setting: &str) -> bool {
+    let Some((key, value)) = setting.split_once('=') else {
+        return false;
+    };
+    let value = value.trim();
+    let value = value
+        .strip_prefix('"')
+        .and_then(|v| v.strip_suffix('"'))
+        .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+        .unwrap_or(value);
+    match key.trim() {
+        "model_reasoning_effort" => [
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ]
+        .contains(&value),
+        "model_verbosity" => ["low", "medium", "high"].contains(&value),
+        _ => false,
+    }
 }
 
 fn validate_args(args: &[String], provider: Option<&str>) -> Result<(), RuntimeError> {
@@ -663,14 +846,16 @@ fn validate_args(args: &[String], provider: Option<&str>) -> Result<(), RuntimeE
                 "--continue",
                 "-c",
                 "--resume",
+                "--from-pr",
                 "-r",
                 "--fork-session",
                 "--session-id",
             ]
-            .contains(&lower.as_str()),
-            Some("codex") => {
-                ["resume", "fork", "--session-id", "--thread-id"].contains(&lower.as_str())
-            }
+            .iter()
+            .any(|flag| option_matches(&lower, flag)),
+            Some("codex") => ["resume", "fork", "--session-id", "--thread-id"]
+                .iter()
+                .any(|flag| option_matches(&lower, flag)),
             _ => false,
         };
         if continuation {

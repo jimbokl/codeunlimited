@@ -14,8 +14,11 @@ use super::model::{
     DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES, DEFAULT_WORKFLOW_BUDGET_BYTES,
     RUNTIME_SCHEMA_VERSION,
 };
-use super::prompt::{compile_prompt, CompiledPrompt};
-use super::provider::{capture_process, CommandSpec, Provider, ProviderFailure, ProviderUsage};
+use super::prompt::{compile_prompt, inspect_prompt, CompiledPrompt};
+use super::provider::{
+    capture_process, CommandSpec, InputTokenSemantics, Provider, ProviderFailure,
+    ProviderProbeSample, ProviderUsage,
+};
 use super::store::RunStore;
 use super::validate::{apply_delta, validate_manifest};
 
@@ -94,12 +97,17 @@ pub struct RunStatusView {
     pub stable_prompt_bytes: usize,
     pub dynamic_prompt_bytes: usize,
     pub usage: ProviderUsage,
+    pub transported_input_tokens: Option<u64>,
+    pub cache_read_ratio_basis_points: Option<u64>,
     pub provider: ProviderStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProviderStatus {
     pub kind: String,
+    pub layer: String,
+    pub capability: String,
+    pub subscription_profile: Option<String>,
     pub executable: String,
     pub args: Vec<String>,
     pub isolation: String,
@@ -116,6 +124,8 @@ pub struct StepReport {
     pub stable_prompt_bytes: usize,
     pub dynamic_prompt_bytes: usize,
     pub usage: ProviderUsage,
+    pub transported_input_tokens: Option<u64>,
+    pub cache_read_ratio_basis_points: Option<u64>,
     pub verification_passed: Option<bool>,
 }
 
@@ -124,6 +134,19 @@ pub struct AutoReport {
     pub schema_version: u64,
     pub run_name: String,
     pub steps: Vec<StepReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CacheProbeReport {
+    pub schema_version: u64,
+    pub run_name: String,
+    pub provider: String,
+    pub stable_prompt_sha256: String,
+    pub stable_prompt_bytes: usize,
+    pub first: ProviderProbeSample,
+    pub second: ProviderProbeSample,
+    pub cache_hit_reported: Option<bool>,
+    pub evidence_scope: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,7 +239,7 @@ pub fn status(reference: &RunRef) -> Result<RunStatusView, RuntimeError> {
 pub fn render_next_prompt(reference: &RunRef) -> Result<CompiledPrompt, RuntimeError> {
     let store = RunStore::open(&reference.project_root, &reference.run_name)?;
     let loaded = store.load()?;
-    compile_prompt(
+    inspect_prompt(
         &loaded.manifest,
         &loaded.workflow,
         &loaded.state,
@@ -228,6 +251,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     let store = RunStore::open(&reference.project_root, &reference.run_name)?;
     let _lock = store.try_lock()?;
     let loaded = store.load()?;
+    store.ensure_provider_instructions(&loaded)?;
     if loaded.recovery.is_some() {
         return Err(RuntimeError::RecoveryRequired);
     }
@@ -274,7 +298,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
             } else {
                 AttemptOutcome::ProviderFailed
             };
-            let record = failed_attempt(
+            let mut record = failed_attempt(
                 &loaded.manifest,
                 &loaded.state,
                 &prompt,
@@ -285,6 +309,9 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
                 before_git.clone(),
                 after_git.clone(),
             );
+            if let ProviderFailure::InvalidOutputWithUsage(usage) = &error {
+                record.usage = usage.as_ref().clone();
+            }
             store.write_attempt(attempt, &record)?;
             if changed {
                 store.write_recovery(&RecoveryRecord {
@@ -466,6 +493,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         after_git,
     );
     store.write_attempt(attempt, &record)?;
+    let transported_input_tokens = result.usage.transported_input_tokens();
+    let cache_read_ratio_basis_points = result.usage.cache_read_ratio_basis_points();
     Ok(StepReport {
         schema_version: RUNTIME_SCHEMA_VERSION,
         run_name: loaded.manifest.run_name,
@@ -476,6 +505,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         stable_prompt_bytes: prompt.stable_bytes,
         dynamic_prompt_bytes: prompt.dynamic_bytes,
         usage: result.usage,
+        transported_input_tokens,
+        cache_read_ratio_basis_points,
         verification_passed,
     })
 }
@@ -502,6 +533,64 @@ pub fn run_steps(
         schema_version: RUNTIME_SCHEMA_VERSION,
         run_name: reference.run_name.clone(),
         steps: reports,
+    })
+}
+
+pub fn cache_probe(
+    reference: &RunRef,
+    provider: &dyn Provider,
+) -> Result<CacheProbeReport, RuntimeError> {
+    let store = RunStore::open(&reference.project_root, &reference.run_name)?;
+    let _lock = store.try_lock()?;
+    let loaded = store.load()?;
+    if loaded.recovery.is_some() {
+        return Err(RuntimeError::RecoveryRequired);
+    }
+    store.ensure_provider_instructions(&loaded)?;
+    let prompt = compile_prompt(
+        &loaded.manifest,
+        &loaded.workflow,
+        &loaded.state,
+        &loaded.observation,
+    )?;
+    let before_git = git_snapshot(&loaded.manifest.project_root);
+    let before_control = store.control_hash()?;
+    let result = provider.probe(
+        &loaded.manifest.provider,
+        &prompt,
+        &loaded.manifest.project_root,
+        Duration::from_secs(loaded.manifest.provider_timeout_seconds),
+    );
+    let after_git = git_snapshot(&loaded.manifest.project_root);
+    let observable_git_change =
+        before_git.available && after_git.available && before_git != after_git;
+    if !store
+        .control_hash()
+        .is_ok_and(|hash| hash == before_control)
+        || observable_git_change
+    {
+        store.write_recovery(&RecoveryRecord {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            attempt: 0, // Probe diagnostics are outside the work-attempt ledger.
+            base_revision: loaded.state.revision,
+            reason: "cache_probe_changed_workspace".into(),
+            before_git,
+            after_git,
+        })?;
+        return Err(RuntimeError::RecoveryRequired);
+    }
+    let result =
+        result.map_err(|error| RuntimeError::ProviderFailed(provider_failure_category(&error)))?;
+    Ok(CacheProbeReport {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        run_name: loaded.manifest.run_name,
+        provider: provider_name(&loaded.manifest.provider).into(),
+        stable_prompt_sha256: prompt.stable_sha256,
+        stable_prompt_bytes: prompt.stable_bytes,
+        first: result.first,
+        second: result.second,
+        cache_hit_reported: result.cache_hit_reported,
+        evidence_scope: "two immediate no-op calls with integration-free probe controls; cache reads may include the provider system prompt, not necessarily this workflow; not a production-profile or savings benchmark; probe usage is separate from step totals".into(),
     })
 }
 
@@ -581,12 +670,15 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
     };
     let loaded = store.load()?;
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
-    let prompt = compile_prompt(
+    let prompt = inspect_prompt(
         &loaded.manifest,
         &loaded.workflow,
         &loaded.state,
         &loaded.observation,
     )?;
+    let usage = aggregate_usage(&attempts);
+    let transported_input_tokens = usage.transported_input_tokens();
+    let cache_read_ratio_basis_points = usage.cache_read_ratio_basis_points();
     Ok(RunStatusView {
         schema_version: RUNTIME_SCHEMA_VERSION,
         run_name: loaded.manifest.run_name,
@@ -598,20 +690,60 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
         prompt_bytes: prompt.bytes.len(),
         stable_prompt_bytes: prompt.stable_bytes,
         dynamic_prompt_bytes: prompt.dynamic_bytes,
-        usage: aggregate_usage(&attempts),
+        usage,
+        transported_input_tokens,
+        cache_read_ratio_basis_points,
         provider: provider_status(&loaded.manifest.provider),
     })
 }
 
 fn provider_status(provider: &ProviderConfig) -> ProviderStatus {
-    let (kind, isolation) = match provider {
-        ProviderConfig::Claude { .. } => ("claude", "ephemeral provider process"),
-        ProviderConfig::Codex { .. } => ("codex", "ephemeral provider process"),
-        ProviderConfig::Command { .. } => ("command", "external-process isolation"),
+    let (kind, layer, capability, isolation) = match provider {
+        ProviderConfig::Claude { .. } => (
+            "claude",
+            "subscription_cli",
+            "coding_agent",
+            "ephemeral provider process",
+        ),
+        ProviderConfig::Codex { .. } => (
+            "codex",
+            "subscription_cli",
+            "coding_agent",
+            "ephemeral provider process",
+        ),
+        ProviderConfig::Command { .. } => (
+            "command",
+            "external_command",
+            "provider_defined",
+            "external-process isolation",
+        ),
+        ProviderConfig::OpenAiApi { .. } => (
+            "openai_api",
+            "external_api",
+            "single_turn_no_local_tools",
+            "stateless HTTPS request",
+        ),
+        ProviderConfig::AnthropicApi { .. } => (
+            "anthropic_api",
+            "external_api",
+            "single_turn_no_local_tools",
+            "stateless HTTPS request",
+        ),
     };
     ProviderStatus {
         kind: kind.into(),
-        executable: provider.executable().to_string_lossy().into_owned(),
+        layer: layer.into(),
+        capability: capability.into(),
+        subscription_profile: provider
+            .subscription_profile()
+            .map(|profile| match profile {
+                super::model::SubscriptionProfile::Standard => "standard".into(),
+                super::model::SubscriptionProfile::Lean => "lean".into(),
+            }),
+        executable: provider
+            .executable()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "<api>".into()),
         args: provider.args().to_vec(),
         isolation: isolation.into(),
     }
@@ -853,10 +985,27 @@ fn aggregate_usage(attempts: &[AttemptRecord]) -> ProviderUsage {
             get(&attempt.usage).map(|value| sum.saturating_add(value))
         })
     }
+    let input_token_semantics = attempts
+        .first()
+        .map(|attempt| attempt.usage.input_token_semantics)
+        .filter(|first| {
+            attempts
+                .iter()
+                .all(|attempt| attempt.usage.input_token_semantics == *first)
+        })
+        .unwrap_or(InputTokenSemantics::Unknown);
     ProviderUsage {
+        input_token_semantics,
         input_tokens: sum_if_complete(attempts, |usage| usage.input_tokens),
+        uncached_input_tokens: sum_if_complete(attempts, |usage| usage.uncached_input_tokens),
         cache_read_input_tokens: sum_if_complete(attempts, |usage| usage.cache_read_input_tokens),
         cache_write_input_tokens: sum_if_complete(attempts, |usage| usage.cache_write_input_tokens),
+        cache_write_5m_input_tokens: sum_if_complete(attempts, |usage| {
+            usage.cache_write_5m_input_tokens
+        }),
+        cache_write_1h_input_tokens: sum_if_complete(attempts, |usage| {
+            usage.cache_write_1h_input_tokens
+        }),
         output_tokens: sum_if_complete(attempts, |usage| usage.output_tokens),
     }
 }
@@ -878,6 +1027,8 @@ fn provider_name(provider: &ProviderConfig) -> &'static str {
         ProviderConfig::Claude { .. } => "claude",
         ProviderConfig::Codex { .. } => "codex",
         ProviderConfig::Command { .. } => "command",
+        ProviderConfig::OpenAiApi { .. } => "openai_api",
+        ProviderConfig::AnthropicApi { .. } => "anthropic_api",
     }
 }
 
@@ -889,9 +1040,14 @@ fn provider_failure_category(error: &ProviderFailure) -> String {
         ProviderFailure::Timeout => "timeout",
         ProviderFailure::Exit(_) => "exit",
         ProviderFailure::OutputTooLarge => "output_too_large",
-        ProviderFailure::InvalidOutput => "invalid_output",
+        ProviderFailure::InvalidOutput | ProviderFailure::InvalidOutputWithUsage(_) => {
+            "invalid_output"
+        }
         ProviderFailure::InvalidConfiguration(_) => "invalid_configuration",
         ProviderFailure::TemporaryFile => "temporary_file",
+        ProviderFailure::MissingCredential => "missing_credential",
+        ProviderFailure::Http => "http",
+        ProviderFailure::ProbeUnsupported => "probe_unsupported",
     }
     .into()
 }
@@ -921,8 +1077,8 @@ mod tests {
     use crate::runtime::provider::ProcessProvider;
 
     use super::{
-        git_snapshot, init_run, recover, render_next_prompt, run_steps, status, step, InitRequest,
-        RunRef,
+        cache_probe, git_snapshot, init_run, recover, render_next_prompt, run_steps, status, step,
+        InitRequest, RunRef,
     };
 
     fn python() -> PathBuf {
@@ -1003,6 +1159,77 @@ mod tests {
         let view = status(&reference).unwrap();
         assert_eq!(view.revision, 1);
         assert_eq!(view.attempts, 1);
+    }
+
+    #[test]
+    fn cache_probe_reports_provider_counters_without_advancing_state() {
+        struct ProbeOnly(Option<PathBuf>);
+        impl crate::runtime::provider::Provider for ProbeOnly {
+            fn run(
+                &self,
+                _config: &ProviderConfig,
+                _prompt: &crate::runtime::prompt::CompiledPrompt,
+                _project_root: &Path,
+                _timeout: std::time::Duration,
+            ) -> Result<
+                crate::runtime::provider::ProviderResult,
+                crate::runtime::provider::ProviderFailure,
+            > {
+                unreachable!("cache probe must not execute a state step")
+            }
+
+            fn probe(
+                &self,
+                _config: &ProviderConfig,
+                _prompt: &crate::runtime::prompt::CompiledPrompt,
+                _project_root: &Path,
+                _timeout: std::time::Duration,
+            ) -> Result<
+                crate::runtime::provider::ProviderProbeResult,
+                crate::runtime::provider::ProviderFailure,
+            > {
+                if let Some(path) = &self.0 {
+                    fs::write(path, "changed by failed probe").unwrap();
+                    return Err(crate::runtime::provider::ProviderFailure::InvalidOutput);
+                }
+                let sample = |cached| crate::runtime::provider::ProviderProbeSample {
+                    usage: crate::runtime::provider::ProviderUsage {
+                        input_token_semantics:
+                            crate::runtime::provider::InputTokenSemantics::TotalIncludesCache,
+                        input_tokens: Some(100),
+                        cache_read_input_tokens: Some(cached),
+                        ..Default::default()
+                    },
+                    duration_ms: 1,
+                };
+                Ok(crate::runtime::provider::ProviderProbeResult::new(
+                    sample(0),
+                    sample(80),
+                ))
+            }
+        }
+        let (_project, reference) = setup("success");
+
+        let report = cache_probe(&reference, &ProbeOnly(None)).expect("probe report");
+
+        assert_eq!(report.cache_hit_reported, Some(true));
+        assert_eq!(report.second.usage.cache_read_input_tokens, Some(80));
+        assert_eq!(status(&reference).unwrap().revision, 0);
+        assert_eq!(status(&reference).unwrap().attempts, 0);
+        let observation = reference
+            .project_root
+            .join(".codeunlimited/runs")
+            .join(&reference.run_name)
+            .join("observation.txt");
+        assert_eq!(
+            cache_probe(&reference, &ProbeOnly(Some(observation))),
+            Err(RuntimeError::RecoveryRequired)
+        );
+        assert!(status(&reference).unwrap().recovery_required);
+        assert_eq!(
+            step(&reference, &ProcessProvider),
+            Err(RuntimeError::RecoveryRequired)
+        );
     }
 
     #[test]
