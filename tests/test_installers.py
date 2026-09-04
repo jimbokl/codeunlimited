@@ -37,7 +37,7 @@ class UnixInstallerTests(unittest.TestCase):
         self.destination = self.root / "bin"
         self.release.mkdir()
         self.asset = self.release / str(asset_name())
-        self.write_asset("#!/bin/sh\necho 'codeunlimited 1.9.0'\n")
+        self.write_asset("#!/bin/sh\necho 'codeunlimited 2.0.0'\n")
         self.write_checksum()
         handler = functools.partial(QuietHandler, directory=str(self.release))
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -95,7 +95,7 @@ class UnixInstallerTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
-        self.assertIn("codeunlimited 1.9.0", first.stdout)
+        self.assertIn("codeunlimited 2.0.0", first.stdout)
         self.assertIn("add it to PATH", first.stdout)
 
     def test_missing_checksum_preserves_existing_binary(self) -> None:
@@ -141,7 +141,7 @@ class UnixInstallerTests(unittest.TestCase):
             "#!/bin/sh\n"
             'if [ -e "$CODEUNLIMITED_SMOKE_MARKER" ]; then exit 23; fi\n'
             'touch "$CODEUNLIMITED_SMOKE_MARKER"\n'
-            "echo 'codeunlimited 1.9.0'\n"
+            "echo 'codeunlimited 2.0.0'\n"
         )
         self.write_checksum()
 
@@ -151,7 +151,7 @@ class UnixInstallerTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
-        self.assertIn("codeunlimited 1.9.0", result.stdout)
+        self.assertIn("codeunlimited 2.0.0", result.stdout)
 
 
 class PowerShellInstallerStructureTests(unittest.TestCase):

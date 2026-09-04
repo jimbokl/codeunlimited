@@ -134,3 +134,51 @@ cache-read ratio, context growth, and retry rate. Report the raw before and
 after values, workload changes, and uncertainty. A before/after movement is an
 observation, not proof that codeunlimited caused it; stronger causal evidence
 requires a contemporaneous control or randomized task assignment.
+
+## 2.0 stateful-runtime causal protocol
+
+Do not spend provider tokens on an unregistered demonstration. Before the
+first paid call, commit the task corpus, expected artifacts, acceptance suite,
+quality rubric, model and tool configuration, randomization seed, exclusion
+rules, maximum attempts, stopping rule, and analysis script.
+
+Use paired task blocks with the same provider and two primary arms:
+
+- **full history:** the normal agent continues with its complete orchestration
+  conversation;
+- **stateful 2.0:** every increment starts in a fresh provider process from the
+  immutable workflow, current typed state, and latest observation.
+
+Stratify blocks by planned horizon (for example 2, 5, 10, and 20 increments).
+The important prediction is not one favorable percentage: full-history input
+should grow with horizon while bounded-state transport should approach a
+stable per-step range, provided the state remains a sufficient statistic.
+
+For every assigned task and every step, retain machine-readable:
+
+- acceptance and independently scored quality results;
+- exact visible prompt, stable-prefix, dynamic-suffix, and serialized-state
+  bytes;
+- provider-reported input, output, cache-read, and cache-write token fields
+  without normalizing away source-specific semantics;
+- provider/model version, duration, attempts, verification result, and every
+  exclusion.
+
+Primary outcome is accepted tasks per million provider-reported input tokens.
+Secondary outcomes are input tokens per accepted task, slope versus horizon,
+wall time, failure/recovery rate, cache-read share, and epistemic losses found
+by a blinded reviewer. A task that passes fewer or different checks is not an
+efficiency win.
+
+Run these ablations only after the primary comparison is powered:
+
+1. bounded state with an intentionally unstable prefix;
+2. stable prefix without epistemic retention;
+3. bounded summary without evidence-gated claims;
+4. full 2.0 runtime.
+
+The ablations estimate interaction, but their savings percentages must not be
+added: transcript exclusion, smaller dynamic state, and cache reuse act on
+overlapping input tokens. Use direct arm ratios and confidence intervals. A
+cache miss is data, not a reason to pad prompts or silently change the
+registered protocol.

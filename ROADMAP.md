@@ -4,6 +4,21 @@ Mission: **fit more useful agent work into the subscription limits people
 already pay for.** The Rust CLI is the product. The Python package remains a
 legacy detector prototype and has a separate distribution name.
 
+## Sprint v2.0 (Sep 4, 2026) — stateful orchestration
+
+- [x] Durable `P + state + observation` runtime with no prior-transcript input
+      channel between orchestration steps.
+- [x] Fresh-process Claude, Codex, and custom command adapters with strict
+      structured output and provider usage-counter capture.
+- [x] Bounded epistemic memory with evidence-gated promotion, monotonic status,
+      dispute-before-retire, and hash-chained archives.
+- [x] Revisioned state deltas, verification-gated completion, hard resource
+      budgets, exclusive locks, immutable attempts, and explicit recovery.
+- [x] Observation/execution-plane security boundary and evidence-safe product
+      claims.
+- [ ] Run a paid, pre-registered, matched-quality increasing-horizon benchmark
+      against full-history orchestration.
+
 ## Sprint v1.9 (Sep 4, 2026) — trust release
 
 - [x] Thirteen named, toggleable techniques with opt-in quality-sensitive
@@ -18,7 +33,7 @@ legacy detector prototype and has a separate distribution name.
       artifact smoke tests.
 - [ ] Tag v1.9.0, wait for all release jobs, and verify both live installers.
 
-## Shipped through 1.9
+## Shipped through 2.0
 
 - Fast local parsing for Claude Code and Codex logs, project-scoped audit,
   bounded time windows, and versioned JSON output.
@@ -44,9 +59,17 @@ legacy detector prototype and has a separate distribution name.
 - Evidence-safe benchmark vocabulary, paired-task inference, fail-closed
   instruction migrations, and verified installers that preserve the prior
   binary on failure.
+- Bounded stateful execution, deterministic cache-friendly prompt prefixes,
+  strict epistemic retention, and per-attempt transport/cache telemetry.
 
 ## Next: measurement depth
 
+- Compare full-history and 2.0 stateful arms at matched task quality over
+  increasing horizons, publishing exact prompt bytes and provider counters.
+- Separate the contribution of transcript exclusion, epistemic state, stable
+  prefix caching, and session boot cost without double-counting overlap.
+- Add domain-specific state profiles only after ablations show which fields are
+  necessary sufficient statistics for each class of coding task.
 - Per-model limit weights once provider behavior can be measured reliably.
 - Claude five-hour/weekly-window ingestion when the local logs expose enough
   evidence to reconstruct those windows.
@@ -58,7 +81,7 @@ legacy detector prototype and has a separate distribution name.
 
 ## Distribution and reach
 
-- Publish and independently verify v1.9.0 from its reviewed commit.
+- Publish and independently verify v2.0.0 from its reviewed commit.
 - Homebrew, Scoop, and winget packages driven from the checksummed GitHub
   artifacts.
 - A small documentation site and verified installation guides for each

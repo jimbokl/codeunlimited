@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.0.0 - 2026-09-04
+
+- Added `codeunlimited run init|status|prompt|step|auto|recover`, a durable
+  stateful orchestration runtime that starts a fresh Claude Code, Codex, or
+  explicit command process for every bounded increment.
+- Compiled every orchestration prompt from an immutable workflow/objective,
+  current validated state, and latest observation only. The stable prefix is
+  deterministic and separately hashed and measured; prior prompts, reasoning,
+  responses, tool transcripts, and provider session IDs have no next-step
+  input channel.
+- Added typed epistemic memory. Agents can promote bounded claims from
+  hypothesis to observed or verified only with resolvable observation, check,
+  or content-addressed artifact evidence. Verified claims must be disputed
+  before retirement, and retired claims enter the hash-chained archive.
+- Added strict revisioned deltas, hard byte/item/attempt/time/output limits,
+  exclusive run locks, atomic control-state persistence, immutable attempt
+  records, external verification, and explicit recovery after ambiguous
+  repository mutations.
+- Added provider adapters that enforce non-resumable structured execution:
+  Claude print mode with session persistence disabled and dynamic system-prompt
+  sections excluded, and `codex exec --ephemeral` with an output schema.
+  Provider cache read/write counters are retained when the CLI reports them.
+- Split the public privacy model into an offline observation plane and an
+  execution plane whose configured provider process may modify project files,
+  use existing authentication, and access the network.
+- Local tests prove the transport and state invariants, including a two-process
+  hypothesis-to-verified scenario. They do not establish realized token
+  savings; a matched-quality, increasing-horizon comparison remains required.
+
 ## 1.9.0 - 2026-09-04
 
 - Added 13 named, individually toggleable techniques and versioned v2

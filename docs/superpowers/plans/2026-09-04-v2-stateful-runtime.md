@@ -537,33 +537,33 @@
 - Public distinction: observation plane / execution plane / provider network boundary
 - Evidence claim: locally proven bounded context transport, no realized savings claim yet
 
-- [ ] **Step 1: Add failing release metadata and claim tests**
+- [x] **Step 1: Add failing release metadata and claim tests**
 
   Expect version `2.0.0`, a runtime documentation link, the execution-plane
   privacy disclosure, and absence of universal `5x`, fixed-percent, or
   per-tool-action bounded-context claims.
 
-- [ ] **Step 2: Witness RED**
+- [x] **Step 2: Witness RED**
 
   Run: `cargo test --test release_metadata -- --nocapture && python3 -m unittest -v tests.test_release_tooling`
 
   Expected: version and documentation assertions fail against 1.9 metadata.
 
-- [ ] **Step 3: Update version and documentation**
+- [x] **Step 3: Update version and documentation**
 
   Bump Cargo manifest/lock and release checker to `2.0.0`. Document exact CLI
   workflows, state format, provider isolation levels, budgets, verification,
   recovery, `.gitignore` guidance, and the fact that provider commands may use
   network/auth while legacy audit commands remain offline.
 
-- [ ] **Step 4: Preserve evidence honesty**
+- [x] **Step 4: Preserve evidence honesty**
 
   State that local tests prove prompt construction and history exclusion at
   orchestration boundaries, not token savings. Keep the paid experiment
   postponed and describe the future comparison as full-history versus the 2.0
   runtime at matched task quality and increasing horizons.
 
-- [ ] **Step 5: Run release checks and commit**
+- [x] **Step 5: Run release checks and commit**
 
   Run: `python3 scripts/check_release.py --expected 2.0.0`
 

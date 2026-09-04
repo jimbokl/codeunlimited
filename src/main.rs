@@ -22,8 +22,8 @@ fn parse_days(value: &str) -> Result<u64, String> {
 #[command(
     name = "codeunlimited",
     version,
-    about = "Offline estimates of token-leak opportunities, one-command fixes, and \
-             before/after tracking for Claude Code and Codex CLI."
+    about = "Local token-efficiency auditing and bounded stateful orchestration for \
+             Claude Code and Codex CLI."
 )]
 struct Cli {
     #[command(subcommand)]

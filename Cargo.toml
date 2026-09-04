@@ -1,9 +1,9 @@
 [package]
 name = "codeunlimited"
-version = "1.9.0"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.82"
-description = "Offline estimates of token-leak opportunities, one-command fixes, and before/after tracking for Claude Code and Codex CLI."
+description = "Local token-efficiency auditing and bounded stateful orchestration for Claude Code and Codex CLI."
 license = "MIT"
 repository = "https://github.com/jimbokl/codeunlimited"
 readme = "README.md"

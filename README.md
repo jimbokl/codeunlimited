@@ -1,15 +1,17 @@
 # codeunlimited
 
-**Set up once — more work from the same subscription limits.**
+**Measure token waste, then run long coding work with bounded state instead of
+an ever-growing orchestration transcript.**
 
 ![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 
-`codeunlimited` separates what was **observed** from what is **modeled**. It
-sums local log counters exactly, estimates reclaimable opportunities with
-documented ranges, and measures the outcome in input tokens per comparable
-completed task. It does not promise a fixed savings percentage. A historical
-selected-session snapshot reported an x6.8 observed/model ratio; version 1.9
-labels that number as counterfactual exposure, not realized savings
+`codeunlimited` has two product surfaces. Its local auditor separates what was
+**observed** from what is **modeled**, sums local log counters exactly, and
+measures input tokens per comparable completed task. Its 2.0 stateful runtime
+executes long work as fresh provider processes connected by a bounded,
+validated state. Neither surface promises a fixed savings percentage. A
+historical selected-session snapshot reported an x6.8 observed/model ratio;
+that number remains counterfactual exposure, not realized savings
 ([methodology](docs/BENCHMARK.md)).
 
 You hit the weekly limit of Claude Code or Codex CLI mid-task. The limit is
@@ -92,6 +94,35 @@ could trade output quality for tokens are marked, phrased with explicit
 limits, and the aggressive ones default to off — built for smart,
 token-hungry next-gen models.
 
+## Stateful runtime (2.0)
+
+For work that spans many agent increments, `codeunlimited run` holds only an
+immutable workflow, the current structured state, and the latest observation
+at each orchestration boundary. It never inserts earlier orchestration prompts,
+reasoning, responses, or tool transcripts into the next prompt, and it starts a
+fresh Claude Code, Codex, or explicit command process for every step.
+
+```bash
+codeunlimited run init sprint-2 --skill workflow.md \
+  --objective "Implement and verify the next planned increment" \
+  --provider codex --verify-program cargo --verify-arg test
+codeunlimited run status sprint-2 --json
+codeunlimited run prompt sprint-2
+codeunlimited run step sprint-2 --json
+codeunlimited run auto sprint-2 --steps 4 --json
+```
+
+State, prompt, observation, output, timeout, and attempt budgets are hard
+limits. Structured transitions are revision-checked; terminal completion can
+require an external verification command; ambiguous repository mutations stop
+for explicit recovery instead of being retried blindly. See the complete
+[runtime contract, storage layout, caching semantics, and recovery guide](docs/RUNTIME.md).
+
+This proves bounded context transport at orchestration-step boundaries, not at
+every tool action inside the provider and not yet as realized token savings.
+The next evidence milestone is a matched-quality, increasing-horizon comparison
+against a full-history agent.
+
 ## Install (one command)
 
 macOS / Linux:
@@ -134,6 +165,7 @@ codeunlimited doctor              # parsers still understand your log formats?
 codeunlimited compare             # last 7 days vs the 7 before
 codeunlimited schedule            # installs on Windows; prints a cron line elsewhere
 codeunlimited skill               # /codeunlimited inside Claude Code sessions
+codeunlimited run --help           # bounded stateful orchestration (may invoke a provider)
 ```
 
 Thresholds and ignored projects are tunable via `.codeunlimited.toml`.
@@ -198,11 +230,15 @@ protocol, see [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 
 ## Privacy
 
-The runtime has no network client. It extracts token counts, model names,
-timestamps and project identifiers from local logs. Prompt and response text
-is not extracted, retained, printed, or transmitted. The files written by
-`init`, `fix`, `report`, `experiment`, `skill`, and `schedule` are listed in
-[SECURITY.md](SECURITY.md).
+The **observation plane** has no network client. It extracts token counts,
+model names, timestamps and project identifiers from local logs; prompt and
+response text is not extracted, retained, printed, or transmitted.
+
+The **execution plane** is explicitly different: `run step` and `run auto`
+launch the configured provider process in the project. That provider may read
+or change files and may use the network and existing authentication. The exact
+boundary and all files written under `.codeunlimited/runs/` are documented in
+[SECURITY.md](SECURITY.md) and [docs/RUNTIME.md](docs/RUNTIME.md).
 
 ## Supported sources
 

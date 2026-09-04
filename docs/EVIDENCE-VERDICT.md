@@ -1,8 +1,49 @@
 # Token-savings evidence verdict
 
-Audited commit: `3a3a3d757d24a49f21debc75c13cffafdc21607b`
+Historical experiment commit audited: `3a3a3d757d24a49f21debc75c13cffafdc21607b`
 
 Audit date: 2026-09-04
+
+## 2.0 architecture verdict
+
+Version 2.0 changes the product from advice plus measurement into a two-plane
+system: the existing observation plane diagnoses local counters, while the new
+execution plane runs each coding increment in a fresh provider process from an
+immutable workflow, current bounded state, and latest bounded observation.
+Prior orchestration prompts, responses, reasoning, and tool transcripts have
+no next-step input channel.
+
+The implementation now matches the central SKILL.state architecture at the
+orchestration boundary. It also adds repository-oriented controls beyond the
+paper's abstract transition loop: typed deltas, external verification,
+content-addressed artifacts, immutable attempts, Git change detection, atomic
+control state, and explicit recovery. A bounded epistemic ledger lets the
+agent choose which claims survive while the runtime enforces evidence-gated
+`hypothesis -> observed -> verified/disputed` transitions and prevents silent
+deletion of verified knowledge.
+
+This is structural proof, not an outcome measurement. Local tests establish
+deterministic bounded prompt construction and a two-fresh-process promotion
+from hypothesis to verification. They do not establish how many billed or
+limit-weighted tokens a real provider will save, whether provider-side prompt
+caching will hit, or whether a generic coding state is sufficient for every
+task.
+
+The paper's reported results explain why the architecture is worth testing,
+but they do not transfer as a codeunlimited claim. In its warehouse experiment
+at horizon 100, SKILL.state used 65,408 total tokens versus 1,062,387 for its
+stateful LangGraph baseline (about 16.2x lower) while reporting comparable task
+accuracy. Its public CTF and airline experiments reported 40.5%-65.9% fewer
+tokens than selected baselines. Those figures depend on the paper's domains,
+schemas, models, tools, action granularity, and accounting.
+
+The paper also states the central failure condition: state must be a sufficient
+statistic. A fact omitted before an observation disappears cannot be recovered
+from the runtime transcript, and tasks whose goal is historical trajectory or
+provenance need another representation. In codeunlimited, a provider process
+may also accumulate context across several tool actions inside one increment;
+therefore the bounded-context claim applies between orchestration steps, not to
+every internal tool action.
 
 ## Verdict
 
@@ -69,16 +110,16 @@ restart” is a defensible universal policy.
 
 ## Product positioning
 
-Position codeunlimited as:
+Position codeunlimited 2.0 as:
 
-> A local token-efficiency auditor and adaptive experiment harness for coding
-> agents. It finds waste, recommends context-aware session boundaries, and
-> measures whether those changes save tokens on comparable work in your own
-> project.
+> A local token-efficiency auditor and bounded stateful orchestration runtime
+> for coding agents. It finds measured waste, replaces growing cross-step
+> transcripts with evidence-backed state, and records whether the change saves
+> tokens on comparable work in your own project.
 
 A compact promise is:
 
-> Measure first. Batch related work. Restart at the break-even point.
+> Measure first. Carry forward state, not conversation. Verify what survives.
 
 The current result may be described as an explicitly qualified case study:
 
@@ -87,8 +128,10 @@ The current result may be described as an explicitly qualified case study:
 > than restarting for every task. The result has not yet been independently
 > reproduced.
 
-Do not claim that codeunlimited guarantees 30-50% savings. The defensible value
-of the product is measurement, diagnosis, and project-specific optimization.
+Do not claim that codeunlimited guarantees 30-50% savings, 5x savings, or the
+paper's 16.2x result. The defensible value is local measurement plus a runtime
+that removes the architectural cause of cross-step transcript growth while
+guarding the knowledge that replaces it.
 
 ## Evidence required for a causal savings claim
 
@@ -104,3 +147,13 @@ paired differences rather than treating requests as independent observations.
 
 Only that pre-registered, machine-readable, reproducible dataset can upgrade
 the claim from a promising case study to measured causal savings.
+
+For 2.0, the primary arms must be the same agent and tasks under (A) normal
+full-history continuation and (B) fresh-process stateful orchestration. Run
+matched blocks at increasing horizons so the expected complexity difference
+is visible, use one acceptance suite and independent quality rubric, and
+retain exact per-step prompt bytes plus provider-reported input, output,
+cache-read, and cache-write counters. Add ablations for bounded state without a
+stable cache prefix and for the stable prefix without epistemic retention.
+Because these mechanisms overlap, report each arm directly rather than adding
+their percentage savings.
