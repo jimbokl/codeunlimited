@@ -166,6 +166,8 @@ class PowerShellInstallerStructureTests(unittest.TestCase):
         self.assertIn(
             "SetEnvironmentVariable('Path', $originalUserPath, 'User')", script
         )
+        self.assertIn("[IO.File]::Replace($staged, $exe, $backup)", script)
+        self.assertNotIn("[IO.File]::Replace($staged, $exe, $null)", script)
 
     def test_native_harness_exercises_path_rollback(self) -> None:
         harness = (ROOT / "tests" / "test_install_ps1.ps1").read_text(

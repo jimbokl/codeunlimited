@@ -18,6 +18,7 @@ $temp = Join-Path $dest ('.codeunlimited-download-' + [Guid]::NewGuid())
 $download = Join-Path $temp $asset
 $sumFile = "$download.sha256"
 $staged = Join-Path $dest ('.codeunlimited-install-' + [Guid]::NewGuid() + '.exe')
+$backup = Join-Path $dest ('.codeunlimited-backup-' + [Guid]::NewGuid() + '.exe')
 $originalUserPath = $null
 $originalProcessPath = $env:Path
 $pathChanged = $false
@@ -66,7 +67,7 @@ try {
     }
 
     if (Test-Path -LiteralPath $exe -PathType Leaf) {
-        [IO.File]::Replace($staged, $exe, $null)
+        [IO.File]::Replace($staged, $exe, $backup)
     } else {
         [IO.File]::Move($staged, $exe)
     }
@@ -87,6 +88,7 @@ try {
     }
     throw $failure
 } finally {
+    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
