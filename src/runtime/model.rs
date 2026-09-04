@@ -394,6 +394,7 @@ pub enum RuntimeError {
     UnsafeStorePath,
     InvalidStoredData(&'static str),
     WorkflowHashMismatch,
+    InstructionHashMismatch,
     Io(String),
     ProviderFailed(String),
     RecoveryRequired,
@@ -457,6 +458,9 @@ impl fmt::Display for RuntimeError {
             Self::UnsafeStorePath => write!(f, "runtime store contains an unsafe path"),
             Self::InvalidStoredData(name) => write!(f, "invalid stored runtime data: {name}"),
             Self::WorkflowHashMismatch => write!(f, "workflow snapshot hash mismatch"),
+            Self::InstructionHashMismatch => {
+                write!(f, "provider instruction snapshot hash mismatch")
+            }
             Self::Io(operation) => write!(f, "runtime I/O failed during {operation}"),
             Self::ProviderFailed(category) => write!(f, "provider failed: {category}"),
             Self::RecoveryRequired => write!(f, "run requires explicit recovery"),

@@ -16,10 +16,16 @@ Do not claim checks you did not run. Return exactly one JSON object matching STE
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledPrompt {
+    /// Self-contained prompt for generic command providers.
     pub bytes: Vec<u8>,
+    /// Immutable provider instructions for cache-aligned transports.
+    pub stable: Vec<u8>,
+    /// Revision-specific state and observation.
+    pub dynamic: Vec<u8>,
     pub stable_bytes: usize,
     pub dynamic_bytes: usize,
     pub stable_sha256: String,
+    pub dynamic_sha256: String,
     pub prompt_sha256: String,
 }
 
@@ -56,7 +62,7 @@ pub fn compile_prompt(
         serde_json::to_string(state).map_err(|_| RuntimeError::InvalidStoredData("state.json"))?;
 
     let stable = format!(
-        "{RUNTIME_CONTRACT}\nSTEP_ENVELOPE_SCHEMA\n{STEP_ENVELOPE_SCHEMA_JSON}\n\nIMMUTABLE_WORKFLOW sha256={}\n{}\nEND_IMMUTABLE_WORKFLOW\n\nIMMUTABLE_OBJECTIVE\n{}\nEND_IMMUTABLE_OBJECTIVE\n\n",
+        "{RUNTIME_CONTRACT}\nThe provider-specific structured-output schema is authoritative and is supplied out of band.\n\nIMMUTABLE_WORKFLOW sha256={}\n{}\nEND_IMMUTABLE_WORKFLOW\n\nIMMUTABLE_OBJECTIVE\n{}\nEND_IMMUTABLE_OBJECTIVE\n",
         manifest.workflow_sha256, workflow, objective
     );
     let dynamic = format!(
@@ -64,10 +70,15 @@ pub fn compile_prompt(
         Sha256::digest(observation.as_bytes()),
         state.revision
     );
+    let stable = stable.into_bytes();
+    let dynamic = dynamic.into_bytes();
     let stable_bytes = stable.len();
     let dynamic_bytes = dynamic.len();
-    let mut bytes = stable.into_bytes();
-    bytes.extend_from_slice(dynamic.as_bytes());
+    let mut bytes = stable.clone();
+    bytes.extend_from_slice(b"\nSTEP_ENVELOPE_SCHEMA\n");
+    bytes.extend_from_slice(STEP_ENVELOPE_SCHEMA_JSON.as_bytes());
+    bytes.extend_from_slice(b"\n\n");
+    bytes.extend_from_slice(&dynamic);
     if bytes.len() > manifest.prompt_budget_bytes {
         return Err(RuntimeError::FieldTooLarge {
             field: "prompt",
@@ -75,13 +86,17 @@ pub fn compile_prompt(
             allowed: manifest.prompt_budget_bytes,
         });
     }
-    let stable_sha256 = format!("{:x}", Sha256::digest(&bytes[..stable_bytes]));
+    let stable_sha256 = format!("{:x}", Sha256::digest(&stable));
+    let dynamic_sha256 = format!("{:x}", Sha256::digest(&dynamic));
     let prompt_sha256 = format!("{:x}", Sha256::digest(&bytes));
     Ok(CompiledPrompt {
         bytes,
+        stable,
+        dynamic,
         stable_bytes,
         dynamic_bytes,
         stable_sha256,
+        dynamic_sha256,
         prompt_sha256,
     })
 }
@@ -173,6 +188,42 @@ mod tests {
         assert_eq!(first.stable_bytes, second.stable_bytes);
         assert_ne!(first.prompt_sha256, second.prompt_sha256);
         assert_ne!(first.bytes, second.bytes);
+    }
+
+    #[test]
+    fn channels_keep_stable_workflow_out_of_dynamic_input() {
+        let prompt = compile_prompt(&manifest(), WORKFLOW, &CodingState::initial(), b"latest")
+            .expect("split prompt");
+        let stable = String::from_utf8(prompt.stable.clone()).unwrap();
+        let dynamic = String::from_utf8(prompt.dynamic.clone()).unwrap();
+        let combined = String::from_utf8(prompt.bytes.clone()).unwrap();
+
+        assert!(stable.contains("# Workflow\nDo one bounded task."));
+        assert!(stable.contains("Implement feature X"));
+        assert!(!stable.contains("STEP_ENVELOPE_SCHEMA\n{"));
+        assert!(!dynamic.contains("# Workflow"));
+        assert!(!dynamic.contains("Implement feature X"));
+        assert!(!dynamic.contains("STEP_ENVELOPE_SCHEMA"));
+        assert!(dynamic.contains("\"revision\":0"));
+        assert!(combined.contains("STEP_ENVELOPE_SCHEMA\n{"));
+        assert!(combined.ends_with(&dynamic));
+    }
+
+    #[test]
+    fn stable_and_dynamic_hashes_describe_exact_channel_bytes() {
+        let prompt = compile_prompt(&manifest(), WORKFLOW, &CodingState::initial(), b"latest")
+            .expect("split prompt");
+
+        assert_eq!(prompt.stable_bytes, prompt.stable.len());
+        assert_eq!(prompt.dynamic_bytes, prompt.dynamic.len());
+        assert_eq!(
+            prompt.stable_sha256,
+            format!("{:x}", Sha256::digest(&prompt.stable))
+        );
+        assert_eq!(
+            prompt.dynamic_sha256,
+            format!("{:x}", Sha256::digest(&prompt.dynamic))
+        );
     }
 
     #[test]

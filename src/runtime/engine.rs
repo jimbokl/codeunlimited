@@ -228,6 +228,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     let store = RunStore::open(&reference.project_root, &reference.run_name)?;
     let _lock = store.try_lock()?;
     let loaded = store.load()?;
+    store.ensure_provider_instructions(&loaded)?;
     if loaded.recovery.is_some() {
         return Err(RuntimeError::RecoveryRequired);
     }

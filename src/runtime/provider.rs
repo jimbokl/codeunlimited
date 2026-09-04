@@ -458,9 +458,12 @@ mod tests {
     fn prompt() -> CompiledPrompt {
         CompiledPrompt {
             bytes: b"bounded prompt".to_vec(),
+            stable: b"stable".to_vec(),
+            dynamic: b"dynamic".to_vec(),
             stable_bytes: 7,
             dynamic_bytes: 7,
             stable_sha256: "11".repeat(32),
+            dynamic_sha256: "33".repeat(32),
             prompt_sha256: "22".repeat(32),
         }
     }
