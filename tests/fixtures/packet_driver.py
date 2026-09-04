@@ -42,8 +42,10 @@ def write_unit(task_id: str, wrong: bool = False) -> None:
     path.write_text("wrong\n" if wrong else contents, encoding="utf-8")
 
 
-def worker(mode: str) -> int:
+def worker(mode: str, block_attempt_record: str | None = None) -> int:
     prompt = sys.stdin.buffer.read()
+    if block_attempt_record is not None:
+        pathlib.Path(block_attempt_record).mkdir()
     packet = selected_packet(prompt)
     ids = [str(task["id"]) for task in packet]
     accepted = ids
@@ -127,12 +129,13 @@ def main() -> int:
     parser.add_argument("--mode")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--capture")
+    parser.add_argument("--block-attempt-record")
     args = parser.parse_args()
     if args.verify:
         return verify(args.capture)
     if args.mode is None:
         return 64
-    return worker(args.mode)
+    return worker(args.mode, args.block_attempt_record)
 
 
 if __name__ == "__main__":

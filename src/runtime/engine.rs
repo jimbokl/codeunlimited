@@ -858,7 +858,10 @@ pub fn recover(reference: &RunRef, observation: &[u8]) -> Result<RunStatusView, 
                 // later write fails, the intent remains for a deduplicating
                 // retry instead of losing the interrupted invocation.
                 store.write_attempt(record.attempt, &record)?;
-                apply_observation = true;
+                // State may already have committed before finalization failed.
+                // Preserve that transition (including terminal status and its
+                // verification revision), without inferring attempt accounting.
+                apply_observation |= loaded.state.revision == intent.base_revision;
             }
         }
     }

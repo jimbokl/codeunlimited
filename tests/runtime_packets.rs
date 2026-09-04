@@ -565,6 +565,157 @@ fn blocked_outcome_can_accept_a_verified_partial_prefix() {
 }
 
 #[test]
+fn recovery_preserves_committed_complete_after_final_record_write_failure() {
+    assert_committed_terminal_survives_finalization_failure("full", "complete", 4);
+}
+
+#[test]
+fn recovery_preserves_committed_blocked_after_final_record_write_failure() {
+    assert_committed_terminal_survives_finalization_failure("blocked-partial", "blocked", 2);
+}
+
+fn assert_committed_terminal_survives_finalization_failure(
+    mode: &str,
+    status: &str,
+    completed_count: usize,
+) {
+    let project = TempDir::new().unwrap();
+    let name = "final-record-failure";
+    let run = project.path().join(format!(".codeunlimited/runs/{name}"));
+    let record = run.join("attempts/00000001.json");
+    init(project.path(), name, &four_plan(4), mode)
+        .arg("--provider-arg=--block-attempt-record")
+        .arg(format!("--provider-arg={}", record.display()))
+        .assert()
+        .success();
+    initialize_git(project.path());
+
+    // The worker blocks only the immutable record destination, after dispatch.
+    // State and observation writes still use their real, writable destinations.
+    let output = step(project.path(), name);
+    assert!(!output.status.success());
+    assert!(record.is_dir(), "fixture must block the final record write");
+    let state_before = fs::read(run.join("state.json")).unwrap();
+    let observation_before = fs::read(run.join("observation.txt")).unwrap();
+    let state: Value = serde_json::from_slice(&state_before).unwrap();
+    assert_eq!(state["status"], status);
+    assert_eq!(state["revision"], 1);
+    assert_eq!(
+        state["completed"].as_array().unwrap().len(),
+        completed_count
+    );
+    assert_eq!(
+        state["queue"].as_array().unwrap().len(),
+        4 - completed_count
+    );
+    assert_eq!(state["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(state["checks"][0]["revision"], 1);
+    assert_eq!(state["checks"][0]["passed"], true);
+    if status == "complete" {
+        for (relative, contents) in [
+            ("units/a.txt", "alpha\n"),
+            ("units/b.txt", "bravo\n"),
+            ("units/c.txt", "charlie\n"),
+            ("units/d.txt", "delta\n"),
+        ] {
+            assert_eq!(
+                fs::read_to_string(project.path().join(relative)).unwrap(),
+                contents
+            );
+        }
+    } else {
+        assert_eq!(state["blockers"].as_array().unwrap().len(), 1);
+    }
+    let intent = run.join("attempt-intent.json");
+    assert!(
+        intent.is_file(),
+        "failed finalization must retain its intent"
+    );
+    fs::remove_dir(&record).unwrap(); // Remove only this test's empty blocker.
+
+    let mut pending = binary();
+    pending
+        .args(["run", "status", name, "--project"])
+        .arg(project.path())
+        .arg("--json");
+    let pending = json_output(pending);
+    assert_eq!(pending["status"], status);
+    assert_eq!(pending["recovery_required"], true);
+    assert_eq!(pending["attempts"], 0);
+
+    let observation = project.path().join("recovery.txt");
+    fs::write(
+        &observation,
+        "Operator inspected the committed terminal result\n",
+    )
+    .unwrap();
+    let mut recovery = binary();
+    recovery
+        .args(["run", "recover", name, "--project"])
+        .arg(project.path())
+        .arg("--observation")
+        .arg(&observation)
+        .assert()
+        .success();
+    let mut inspect = binary();
+    inspect
+        .args(["run", "status", name, "--project"])
+        .arg(project.path())
+        .arg("--json");
+    let recovered = json_output(inspect);
+    assert_eq!(recovered["status"], status);
+    assert_eq!(recovered["revision"], 1);
+    assert_eq!(recovered["recovery_required"], false);
+    assert!(!intent.exists());
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), state_before);
+    assert_eq!(
+        fs::read(run.join("observation.txt")).unwrap(),
+        observation_before
+    );
+    let record_before = fs::read(&record).unwrap();
+
+    for _ in 0..2 {
+        let mut inspect = binary();
+        inspect
+            .args(["run", "status", name, "--project"])
+            .arg(project.path())
+            .arg("--json");
+        assert_eq!(json_output(inspect), recovered);
+        let mut ledger = binary();
+        ledger
+            .args(["run", "ledger", name, "--project"])
+            .arg(project.path())
+            .arg("--json");
+        let ledger = json_output(ledger);
+        assert_eq!(ledger["coverage"]["attempt_count"], 1);
+        assert_eq!(ledger["coverage"]["complete_attempts"], 0);
+        assert_eq!(ledger["coverage"]["incomplete_attempts"], 1);
+        assert_eq!(ledger["coverage"]["complete"], false);
+        assert!(ledger["coverage"]["total_tokens"].is_null());
+        assert_eq!(ledger["accepted_task_count"], 0);
+        assert!(ledger["tokens_per_accepted_task"].is_null());
+        assert!(ledger["attempts"][0]["total_tokens"].is_null());
+        assert_eq!(ledger["attempts"][0]["error_category"], "interrupted");
+        assert_eq!(ledger["attempts"][0]["accepted_task_ids"], json!([]));
+        assert!(ledger["attempts"][0]["committed_revision"].is_null());
+        binary()
+            .args(["run", "recover", name, "--project"])
+            .arg(project.path())
+            .arg("--observation")
+            .arg(&observation)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("run does not require recovery"));
+    }
+    let output = step(project.path(), name);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("run is already in a terminal state"));
+    assert_eq!(fs::read_dir(run.join("attempts")).unwrap().count(), 1);
+    assert_eq!(fs::read(record).unwrap(), record_before);
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), state_before);
+}
+
+#[test]
 fn managed_runs_retain_32_checks_without_relaxing_legacy_limit() {
     let legacy = TempDir::new().unwrap();
     let workflow = legacy.path().join("workflow.md");

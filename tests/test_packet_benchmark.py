@@ -101,7 +101,11 @@ class PacketBenchmarkTests(unittest.TestCase):
             "not_available_for_caller_supplied_binary",
         )
         serialized = json.dumps(report, sort_keys=True).lower()
-        for forbidden in ("/users/", "/volumes/", "alpha\\n", "bravo\\n"):
+        for forbidden in (
+            "/users/", "/volumes/",
+            "alpha\\n", "bravo\\n", "charlie\\n", "delta\\n",
+            "units/a.txt", "units/b.txt", "units/c.txt", "units/d.txt",
+        ):
             self.assertNotIn(forbidden, serialized)
 
     def test_saved_evidence_has_reproducible_source_and_fixture_provenance(self) -> None:
@@ -125,7 +129,11 @@ class PacketBenchmarkTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(source).hexdigest(), provenance[digest_key])
 
         serialized = json.dumps(report, sort_keys=True).lower()
-        for forbidden in ("/users/", "/volumes/", "alpha\\n", "bravo\\n"):
+        for forbidden in (
+            "/users/", "/volumes/",
+            "alpha\\n", "bravo\\n", "charlie\\n", "delta\\n",
+            "units/a.txt", "units/b.txt", "units/c.txt", "units/d.txt",
+        ):
             self.assertNotIn(forbidden, serialized)
 
 

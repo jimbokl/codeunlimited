@@ -163,11 +163,11 @@ still useful, but not evidence of a breakthrough.
 
 ## Relationship to the product roadmap
 
-v2.2 delivers the ledger, work packets, freshness tracking and local helpers
-described in the adaptive-runtime design. They are the infrastructure needed
-to test DCR, not evidence that DCR works. Keep the research module experimental
-and out of the critical release path. Prototype offline first; live comparison
-requires a frozen protocol and explicit experiment budget.
+v2.2 delivers opt-in work packets and complete attempt accounting, the first
+milestone of the adaptive-runtime design. DCR remains research-only, with no
+demonstrated advantage over hand-written automation. Keep the research module
+experimental and out of the critical release path. Prototype offline first;
+live comparison requires a frozen protocol and explicit experiment budget.
 
 Possible publishable outcome: a method and held-out evidence showing when
 joint decision invalidation and context selection improves the token/quality
