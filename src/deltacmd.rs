@@ -129,10 +129,9 @@ pub fn run(path: &Path) -> i32 {
     let mut any = false;
     for b in &baselines {
         let reqs = since(&root, &b.source, created);
-        if reqs.is_empty() {
-            continue;
+        if !reqs.is_empty() {
+            any = true;
         }
-        any = true;
         print_source(b, &metrics::compute(&reqs, cfg.long_session_turns));
     }
     if !any {

@@ -36,6 +36,26 @@ fn write_delta_fixture(project: &Path, home: &Path, requests: u64) {
 }
 
 #[test]
+fn delta_with_zero_requests_reports_exact_insufficient_sample() {
+    let project = TempDir::new().expect("project");
+    let home = TempDir::new().expect("isolated homes");
+    write_delta_fixture(project.path(), home.path(), 0);
+
+    let output = binary()
+        .env("CLAUDE_HOME", home.path().join("claude"))
+        .env("CODEX_HOME", home.path().join("codex"))
+        .arg("delta")
+        .arg(project.path())
+        .output()
+        .expect("delta process");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("delta UTF-8");
+    assert!(stdout.contains("insufficient sample (0/100 requests)"));
+    assert!(!stdout.contains("VERDICT"));
+}
+
+#[test]
 fn delta_with_nine_requests_reports_insufficient_sample_without_direction() {
     let project = TempDir::new().expect("project");
     let home = TempDir::new().expect("isolated homes");

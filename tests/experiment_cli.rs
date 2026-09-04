@@ -2,6 +2,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
@@ -388,6 +389,18 @@ fn lifecycle_validation_failures_do_not_mutate_state() {
         &[
             "experiment",
             "record",
+            "fractional-time",
+            "--from",
+            "2099-01-01T00:00:00.500Z",
+            "--to",
+            TO,
+            "--tasks",
+            "1",
+            project_arg,
+        ],
+        &[
+            "experiment",
+            "record",
             "equal",
             "--from",
             FROM,
@@ -652,4 +665,133 @@ fn compare_refusals_leave_state_byte_identical() {
             "compare mutated state for {control}/{treatment}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_io_failures_abort_record_and_finish_without_mutating_state() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new().expect("isolated homes");
+    let project = TempDir::new().expect("project");
+    let project_arg = project.path().to_str().expect("UTF-8 project");
+    record_named(home.path(), project.path(), "existing", FROM, TO);
+    let state_path = project
+        .path()
+        .join(codeunlimited::experiment::EXPERIMENT_FILE);
+
+    let claude_key = codeunlimited::parsers::claude_project_key(project.path());
+    let unreadable = home
+        .path()
+        .join("claude/projects")
+        .join(claude_key)
+        .join("unreadable.jsonl");
+    fs::create_dir_all(unreadable.parent().expect("unreadable fixture parent"))
+        .expect("unreadable fixture directory");
+    fs::write(&unreadable, b"{}\n").expect("unreadable fixture");
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
+        .expect("remove read permission");
+
+    let before_record = fs::read(&state_path).expect("state before record");
+    binary(home.path())
+        .args([
+            "experiment",
+            "record",
+            "new-record",
+            "--from",
+            TREATMENT_FROM,
+            "--to",
+            TREATMENT_TO,
+            "--tasks",
+            "1",
+            project_arg,
+        ])
+        .assert()
+        .failure();
+    assert_eq!(
+        fs::read(&state_path).expect("state after record"),
+        before_record
+    );
+
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600))
+        .expect("restore read permission");
+    binary(home.path())
+        .args(["experiment", "start", "active", project_arg])
+        .assert()
+        .success();
+    let active_state = fs::read(&state_path).expect("active state");
+    let active_json: Value = serde_json::from_slice(&active_state).expect("active JSON");
+    let started = active_json["records"]["active"]["started_unix"]
+        .as_i64()
+        .expect("active timestamp");
+    while Utc::now().timestamp() <= started {
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))
+        .expect("remove read permission again");
+
+    binary(home.path())
+        .args([
+            "experiment",
+            "finish",
+            "active",
+            "--tasks",
+            "1",
+            project_arg,
+        ])
+        .assert()
+        .failure();
+    assert_eq!(
+        fs::read(&state_path).expect("state after finish"),
+        active_state
+    );
+
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o600))
+        .expect("restore fixture permission");
+}
+
+#[test]
+fn concurrent_starts_are_one_locked_transaction() {
+    const WORKERS: usize = 32;
+
+    let home = TempDir::new().expect("isolated homes");
+    let project = TempDir::new().expect("project");
+    let home = Arc::new(home.path().to_path_buf());
+    let project = Arc::new(project.path().to_path_buf());
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let mut workers = Vec::new();
+
+    for _ in 0..WORKERS {
+        let home = Arc::clone(&home);
+        let project = Arc::clone(&project);
+        let barrier = Arc::clone(&barrier);
+        workers.push(thread::spawn(move || {
+            barrier.wait();
+            binary(&home)
+                .args([
+                    "experiment",
+                    "start",
+                    "one-winner",
+                    project.to_str().expect("UTF-8 project"),
+                ])
+                .output()
+                .expect("experiment process")
+                .status
+                .success()
+        }));
+    }
+
+    let successes = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("worker"))
+        .filter(|success| *success)
+        .count();
+    assert_eq!(successes, 1, "same-name starts must have one winner");
+
+    let state: Value = serde_json::from_slice(
+        &fs::read(project.join(codeunlimited::experiment::EXPERIMENT_FILE))
+            .expect("experiment state"),
+    )
+    .expect("experiment JSON");
+    assert_eq!(state["records"].as_object().expect("records").len(), 1);
 }

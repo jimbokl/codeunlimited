@@ -110,7 +110,7 @@ codeunlimited experiment start treatment .
 # Complete the declared work without changing the measurement rule.
 codeunlimited experiment finish treatment --tasks 3 . --json
 
-# A prior RFC 3339 window can be backfilled with the same shipped parser.
+# A prior whole-second RFC 3339 window can be backfilled with the same shipped parser.
 codeunlimited experiment record control \
   --from 2026-08-01T00:00:00Z --to 2026-08-08T00:00:00Z \
   --tasks 3 . --json

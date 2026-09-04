@@ -76,7 +76,8 @@ half-open windows (`start <= request timestamp < finish`) and compares input
 tokens per declared completed task. The comparison is observational: it does
 not prove savings, and either arm with fewer than three tasks is labeled low
 confidence. Historical windows can be backfilled with `experiment record`;
-run `codeunlimited experiment --help` for the complete command set.
+their RFC 3339 boundaries must use whole-second precision. Run
+`codeunlimited experiment --help` for the complete command set.
 
 The shipped CLI is the Rust binary. A legacy Python reference lives in
 `codeunlimited/` for detector prototyping; it is not feature-equivalent and

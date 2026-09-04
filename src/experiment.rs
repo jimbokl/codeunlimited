@@ -229,6 +229,7 @@ mod tests {
         for invalid in [
             br#"{"schema_version":2,"records":{}}"#.as_slice(),
             br#"{"schema_version":1,"records":"not-a-map"}"#.as_slice(),
+            br#"{"schema_version":1,"records":{"same":{"name":"same","started_unix":1,"finished_unix":2,"completed_tasks":1,"status":"complete","complete_accounting":true,"records_without_timestamp":0,"totals":{"requests":1,"sessions":1,"uncached_input_tokens":1,"cache_read_input_tokens":0,"cache_write_5m_input_tokens":0,"cache_write_1h_input_tokens":0,"input_tokens":1,"output_tokens":0,"total_tokens":1}},"same":{"name":"same","started_unix":1,"finished_unix":2,"completed_tasks":1,"status":"complete","complete_accounting":true,"records_without_timestamp":0,"totals":{"requests":1,"sessions":1,"uncached_input_tokens":1,"cache_read_input_tokens":0,"cache_write_5m_input_tokens":0,"cache_write_1h_input_tokens":0,"input_tokens":1,"output_tokens":0,"total_tokens":1}}}}"#.as_slice(),
             br#"not-json"#.as_slice(),
         ] {
             fs::write(&path, invalid).unwrap();
@@ -240,18 +241,22 @@ mod tests {
     }
 }
 use std::collections::{BTreeMap, HashSet};
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use fs2::FileExt;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::Config;
 use crate::parsers;
-use crate::safeio::{atomic_write, read_optional_text};
+use crate::safeio::{atomic_write, read_optional_text, reject_symlink};
 use crate::types::Request;
 
 pub const EXPERIMENT_FILE: &str = ".codeunlimited.experiments.json";
+pub const EXPERIMENT_LOCK_FILE: &str = ".codeunlimited.experiments.lock";
 pub const SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,7 +297,42 @@ pub struct ExperimentRecord {
 #[serde(deny_unknown_fields)]
 pub struct ExperimentStore {
     pub schema_version: u64,
+    #[serde(deserialize_with = "deserialize_unique_records")]
     pub records: BTreeMap<String, ExperimentRecord>,
+}
+
+fn deserialize_unique_records<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, ExperimentRecord>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct UniqueRecords;
+
+    impl<'de> Visitor<'de> for UniqueRecords {
+        type Value = BTreeMap<String, ExperimentRecord>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a map with unique experiment names")
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut records = BTreeMap::new();
+            while let Some((name, record)) = map.next_entry::<String, ExperimentRecord>()? {
+                if records.insert(name.clone(), record).is_some() {
+                    return Err(de::Error::custom(format!(
+                        "duplicate experiment name: {name}"
+                    )));
+                }
+            }
+            Ok(records)
+        }
+    }
+
+    deserializer.deserialize_map(UniqueRecords)
 }
 
 impl Default for ExperimentStore {
@@ -465,6 +505,19 @@ fn experiment_path(project: &Path) -> PathBuf {
     project.join(EXPERIMENT_FILE)
 }
 
+fn lock_store(project: &Path) -> io::Result<File> {
+    let path = project.join(EXPERIMENT_LOCK_FILE);
+    reject_symlink(&path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    FileExt::lock_exclusive(&file)?;
+    Ok(file)
+}
+
 fn validate_totals(totals: &TokenTotals) -> io::Result<()> {
     if totals.sessions > totals.requests {
         return Err(invalid_data("experiment sessions exceed requests"));
@@ -566,12 +619,23 @@ fn positive_tasks(completed_tasks: u64) -> Result<(), String> {
     Ok(())
 }
 
-fn scan_project(project: &Path) -> Vec<Request> {
-    let mut requests = parsers::iter_claude(Some(project));
-    requests.extend(parsers::iter_codex(Some(project)));
+fn parse_boundary(value: &str, label: &str) -> Result<i64, String> {
+    let timestamp = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| format!("invalid RFC 3339 {label} timestamp: {value}"))?;
+    if timestamp.timestamp_subsec_nanos() != 0 {
+        return Err(format!(
+            "{label} timestamp must use whole-second precision: {value}"
+        ));
+    }
+    Ok(timestamp.timestamp())
+}
+
+fn scan_project(project: &Path) -> io::Result<Vec<Request>> {
+    let mut requests = parsers::iter_claude_checked(Some(project))?;
+    requests.extend(parsers::iter_codex_checked(Some(project))?);
     let config = Config::load_for(Some(project));
     requests.retain(|request| !config.is_ignored(&request.project));
-    requests
+    Ok(requests)
 }
 
 fn completed_record_from_scan(
@@ -645,9 +709,10 @@ fn command_result(run: impl FnOnce() -> Result<(), String>) -> i32 {
 }
 
 pub fn start(name: &str, project: &Path) -> i32 {
-    let started_unix = Utc::now().timestamp();
     command_result(|| {
         validate_name(name)?;
+        let _lock = lock_store(project).map_err(|error| error.to_string())?;
+        let started_unix = Utc::now().timestamp();
         let mut store = load_store(project).map_err(|error| error.to_string())?;
         if store.records.contains_key(name) {
             return Err(format!("experiment '{name}' already exists"));
@@ -669,10 +734,11 @@ pub fn start(name: &str, project: &Path) -> i32 {
 }
 
 pub fn finish(name: &str, completed_tasks: u64, project: &Path, json: bool) -> i32 {
-    let finished_unix = Utc::now().timestamp();
     command_result(|| {
         validate_name(name)?;
         positive_tasks(completed_tasks)?;
+        let _lock = lock_store(project).map_err(|error| error.to_string())?;
+        let finished_unix = Utc::now().timestamp();
         let mut store = load_store(project).map_err(|error| error.to_string())?;
         let existing = store
             .records
@@ -683,7 +749,8 @@ pub fn finish(name: &str, completed_tasks: u64, project: &Path, json: bool) -> i
             return print_record(&existing, json);
         }
         validate_window(existing.started_unix, finished_unix)?;
-        let requests = scan_project(project);
+        let requests = scan_project(project)
+            .map_err(|error| format!("cannot scan experiment logs: {error}"))?;
         let record = completed_record_from_scan(
             name,
             existing.started_unix,
@@ -708,18 +775,16 @@ pub fn record(
     command_result(|| {
         validate_name(name)?;
         positive_tasks(completed_tasks)?;
-        let started_unix = DateTime::parse_from_rfc3339(from)
-            .map_err(|_| format!("invalid RFC 3339 start timestamp: {from}"))?
-            .timestamp();
-        let finished_unix = DateTime::parse_from_rfc3339(to)
-            .map_err(|_| format!("invalid RFC 3339 finish timestamp: {to}"))?
-            .timestamp();
+        let started_unix = parse_boundary(from, "start")?;
+        let finished_unix = parse_boundary(to, "finish")?;
         validate_window(started_unix, finished_unix)?;
+        let _lock = lock_store(project).map_err(|error| error.to_string())?;
         let mut store = load_store(project).map_err(|error| error.to_string())?;
         if store.records.contains_key(name) {
             return Err(format!("experiment '{name}' already exists"));
         }
-        let requests = scan_project(project);
+        let requests = scan_project(project)
+            .map_err(|error| format!("cannot scan experiment logs: {error}"))?;
         let record = completed_record_from_scan(
             name,
             started_unix,

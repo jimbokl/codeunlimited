@@ -98,6 +98,12 @@ keeps uncached input, cache reads, 5-minute and 1-hour cache writes, output,
 request count, and composite `(source, project, session)` session count.
 Arithmetic saturates at the integer limit rather than wrapping.
 
+Historical RFC 3339 boundaries must use whole-second precision; fractional
+seconds are rejected rather than truncated. A missing Claude or Codex source
+root contributes zero records. Once a source root exists, traversal, open, or
+read failures abort the measurement before experiment state is changed, so an
+I/O failure cannot be mistaken for complete zero usage.
+
 A recognized project request without a usable timestamp cannot be assigned to
 either side of a boundary. Its count is retained, the record is marked
 incomplete, and comparison is refused. Active, empty, zero-token, overlapping,
