@@ -71,26 +71,21 @@ fn init_rejects_symlinked_instruction_file() {
 }
 
 #[test]
-fn fix_apply_repairs_a_partially_initialized_project() {
+fn init_rejects_a_malformed_legacy_block_without_changing_files() {
     let project = TempDir::new().expect("project tempdir");
     let state = TempDir::new().expect("state tempdir");
-    fs::write(
-        project.path().join("CLAUDE.md"),
-        "<!-- codeunlimited:v1 -->\n",
-    )
-    .expect("partial rules");
+    let claude = project.path().join("CLAUDE.md");
+    let original = "# Keep\n\n<!-- codeunlimited:v1 -->\nIMPORTANT USER CONTENT\n";
+    fs::write(&claude, original).expect("partial rules");
 
-    let mut command = Command::cargo_bin("codeunlimited").expect("binary");
-    command
-        .env("CLAUDE_HOME", state.path().join("claude"))
-        .env("CODEX_HOME", state.path().join("codex"))
-        .env("CODEUNLIMITED_HOME", state.path().join("state"))
-        .args(["fix", "--apply"])
-        .arg(project.path())
-        .assert()
-        .success();
+    cmd(project.path(), state.path()).assert().failure();
 
-    assert!(project.path().join("AGENTS.md").is_file());
+    assert_eq!(
+        fs::read_to_string(&claude).expect("original file"),
+        original
+    );
+    assert!(!project.path().join("CLAUDE.md.codeunlimited.bak").exists());
+    assert!(!project.path().join("AGENTS.md").exists());
 }
 
 #[test]
