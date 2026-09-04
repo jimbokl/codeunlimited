@@ -57,18 +57,22 @@ mix, duration, request count, tools, and operator behavior differed, so the
 comparison is low-confidence and observational. It does not attribute the
 loss to codeunlimited.
 
-## 3. Controlled short-task experiment
+## 3. Controlled short-task experiments
 
-The author also ran eight small coding tasks as one growing control session
-versus eight fresh treatment sessions. The published rounded totals are 0.92M
-control and 1.08M treatment prompt tokens: approximately **17.4% more** for
-treatment. Treatment requests were lighter by the reported median, but there
-were 39 treatment requests versus 24 control requests plus eight boot costs.
+The author ran eight small coding tasks under three session policies. The
+published rounded totals are 0.92M prompt tokens for one growing session,
+1.08M for restart-per-task, and 0.65M for context-aware 3+3+2 batching. The
+rounded values imply approximately **29.35% less** than the growing session
+and **39.81% less** than restart-per-task for the batching arm.
 
 The former request-level significance test was invalid because requests inside
-one session are correlated. Version 1.9 removes it and provides a paired-task
-sign-flip analyzer for future experiments with published task-level counters.
-See [EXPERIMENT.md](EXPERIMENT.md) and
+one session are correlated. The third-arm result is also not a causal estimate:
+the pre-run protocol and exact task-level counters are absent, policy request
+counts differ, and one aggregate observation per policy cannot quantify
+uncertainty. Version 1.9 provides a paired-task sign-flip analyzer for future
+experiments with published task-level counters. See
+[the experiment narrative](EXPERIMENT.md),
+[the evidence verdict](EVIDENCE-VERDICT.md), and
 [the paired schema](experiments/PAIRED-SCHEMA.md).
 
 ## 4. Scan performance

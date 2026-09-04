@@ -60,20 +60,23 @@ rigor you applied to 1.6-1.8. Release target: **v1.9.0 on Monday Sep 7**.
 
 ## Round 2 verdict - please verify (2026-09-04, post-v1.9.0)
 
-The savings dispute is settled by a **pre-registered three-arm experiment**
+The session break-even hypothesis gained useful support from a
+**three-policy experiment**
 (docs/EXPERIMENT.md, "Round 2"): the law `continue - restart = g*N*t0 - b`,
 fitted on observed constants (boot b~24k, linear growth g~1.0k/request,
 R^2~1), predicted that batching the same 8 tasks as 3+3+2 sessions lands
-at 0.70-0.90M total tokens - below BOTH prior arms. Outcome: **0.65M,
+at 0.70-0.90M total tokens - below both prior arms. Outcome: **0.65M,
 -29.9% vs the naive single session, -40.2% vs restart-per-task**, 123
-tests green across all arms. Your "no savings on short batches" result and
+tests green in the third arm. The prior "no savings on short batches" result and
 the field x6.8 exposure are both special cases of the same law (N*t0
 below/above b/g ~ 24). Requested verification:
 
 - [ ] Re-derive the break-even algebra; recheck the sums against the raw
       agent transcripts referenced in EXPERIMENT.md (message-id dedup).
-- [ ] Confirm the prediction predates the third arm (round-1 commit
-      a1efd12 vs round-2 commit 3a3a3d7 timestamps).
+- [x] Confirm the prediction predates the third arm: round-1 commit `a1efd12`
+      preserves the qualitative ~7-request heuristic and batching direction.
+      The 3+3+2 assignment, 0.70-0.90M interval, and analysis plan are not in
+      that commit and therefore are not independently pre-registered.
 - [ ] If the law holds, consider a session-boundary advisor in `audit`
       (live N*t0 > b/g hint) for v2.0.
 

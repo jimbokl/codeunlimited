@@ -48,7 +48,9 @@ Every rule the tool installs is a named, individually toggleable technique.
 Each states its evidence level: some map directly to detectors, while others
 are workflow policies that must be evaluated with a comparable-task
 experiment. Run `codeunlimited audit` for local findings and
-`python scripts/bench_context.py --json` for the explicit context model.
+`python scripts/bench_context.py --json` for the explicit context model. The
+[current evidence verdict](docs/EVIDENCE-VERDICT.md) separates the promising
+three-policy case study from a causal or universal savings claim.
 
 ![Historical selected-session snapshot: 3,551M exact observed prompt tokens versus 519M modeled bounded tokens, an x6.8 counterfactual exposure ratio that is not realized savings](docs/assets/chart-overall.svg)
 
@@ -61,7 +63,7 @@ the observed duplicate amount without an assumption range.
 
 | Technique | Prevents | Evidence | Default |
 |---|---|---|---|
-| `fresh-sessions` | dragging dead history through every turn | modeled exposure; short-batch A/B lost 17.4% | on |
+| `fresh-sessions` | dragging dead history through every turn | modeled exposure; three-policy case study supports context-aware batching, not a universal threshold | on |
 | `state-file-loops` | re-reading conversation in long loops | workflow policy; measure per completed task | on |
 | `manual-compact` | passive autocompact of stale threads | workflow policy; measure per completed task | on |
 | `delegate-mechanical` | top-tier model on renames/boilerplate | audit estimate w/ range | on, guardrailed |
