@@ -6,11 +6,11 @@ MARKER = "<!-- codeunlimited:v1 -->"
 CLAUDE_BLOCK = f"""{MARKER}
 ## Token efficiency (codeunlimited)
 
-Rules that fit more work into the same subscription limit:
+Rules intended to reduce avoidable context within the same subscription limit:
 
-- **New task = new session.** Don't grow one chat for days: by the tail of a
-  long session every turn drags the whole accumulated context. Task done -
-  /clear.
+- **Choose session boundaries by context reuse.** Batch small related tasks
+  while prior context still contributes. Start fresh for a distinct multi-step
+  task when old context would mostly be dead weight; account for boot cost.
 - **Long loops run on a state file, not on history.** For monitoring,
   list-driven migrations and other repetitive loops keep a compact
   `state/state.json` (done / remaining / counters) and work from it instead of
@@ -30,7 +30,8 @@ Rules that fit more work into the same subscription limit:
 AGENTS_BLOCK = f"""{MARKER}
 ## Token efficiency (codeunlimited)
 
-- New task = new session; don't grow one thread for days.
+- Batch small related tasks while prior context contributes; start fresh for a
+  distinct multi-step task when old context is mostly dead weight.
 - For repetitive loops keep a compact state file (done/remaining/counters) and
   work from it instead of re-reading the conversation (SKILL.state pattern,
   arXiv 2608.26263).

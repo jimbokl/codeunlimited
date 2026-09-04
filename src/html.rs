@@ -96,8 +96,8 @@ pub fn build_html(d: &ReportData) -> String {
     ));
     if d.reclaim > 0 {
         b.push_str(&format!(
-            "<div class=\"hero-num\"><b>{:.0}%</b><span>of weekly volume reclaimable<br>\
-             ~{:.0}M tokens of extra work</span></div>",
+            "<div class=\"hero-num\"><b>{:.0}%</b><span>estimated opportunity share<br>\
+             ~{:.0}M estimated opportunity tokens</span></div>",
             d.reclaim_pct,
             d.reclaim as f64 / 1e6
         ));
@@ -130,7 +130,7 @@ pub fn build_html(d: &ReportData) -> String {
             "<div class=\"finding\"><h3>{}. {}</h3>\
              <div class=\"meter\"><i style=\"width:{:.0}%\"></i></div>\
              <p>{}</p>\
-             <p class=\"reclaim\">Reclaim: ~{:.0}M tokens{} · {:.0}% of weekly volume · \
+             <p class=\"reclaim\">Estimated opportunity: ~{:.0}M tokens{} · {:.0}% of weekly volume · \
              ~{:.0} extra agent replies</p>\
              <p class=\"fix\"><b>Fix:</b> {}</p></div>\n",
             i + 1,
@@ -156,8 +156,8 @@ pub fn build_html(d: &ReportData) -> String {
         b.push_str("<p>No significant leaks detected in this window.</p>\n");
     } else {
         b.push_str(&format!(
-            "<div class=\"total\">Total reclaimable: <b>~{:.0}M tokens ≈ {:.0}% of \
-             weekly volume</b> - that much more work fits into the same limit.</div>\n",
+            "<div class=\"total\">Total estimated opportunity: <b>~{:.0}M tokens ≈ {:.0}% of \
+             weekly volume.</b> Validate it with a comparable completed-task experiment.</div>\n",
             d.reclaim as f64 / 1e6,
             d.reclaim_pct
         ));
@@ -279,7 +279,7 @@ pub fn build_html(d: &ReportData) -> String {
             b.push_str(&format!(
                 "<div class=\"trend-row\"><span class=\"date\">{}</span>\
                  <div class=\"tbar\" style=\"width:{:.1}%\"></div>\
-                 <span class=\"val\">{}k · {:.0}M reclaimable</span></div>\n",
+                 <span class=\"val\">{}k · {:.0}M est. opportunity</span></div>\n",
                 esc(h["date"].as_str().unwrap_or("?")),
                 100.0 * avg as f64 / max as f64,
                 avg / 1000,

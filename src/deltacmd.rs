@@ -87,18 +87,18 @@ fn print_source(b: &BaselineSrc, now: &metrics::Metrics) {
         let change = 100.0 * (now.avg_prompt_per_turn - b.prompt) / b.prompt;
         if change <= -1.0 {
             println!(
-                " VERDICT: context per turn is down {:.0}% - about {:.0}% more work \
-                 now fits into the same limit.",
+                " METRIC TREND: context per turn is down {:.0}%; modeled capacity proxy \
+                 +{:.0}%. Measure comparable completed tasks before attributing an outcome.",
                 -change,
                 100.0 * (b.prompt / now.avg_prompt_per_turn.max(1.0) - 1.0)
             );
         } else if change >= 1.0 {
             println!(
-                " VERDICT: context per turn is up {change:.0}% - the leaks are growing; \
+                " METRIC TREND: context per turn is up {change:.0}%; \
                  run `codeunlimited audit --project .` to see where."
             );
         } else {
-            println!(" VERDICT: flat so far - keep the rules on and re-check later.");
+            println!(" METRIC TREND: context per turn is flat so far; re-check later.");
         }
     }
     println!();

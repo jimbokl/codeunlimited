@@ -115,7 +115,7 @@ fn heavy_model_on_trivial(reqs: &[Request], cfg: &Config) -> Finding {
     }
     finding(
         "heavy_model_trivial_output",
-        "Top-tier model burned on mechanical replies",
+        "Top-tier model used for short mechanical replies",
         claims,
         format!(
             "{} requests to top-tier models ended in a reply shorter than {} tokens \
@@ -184,9 +184,10 @@ fn context_tax(reqs: &[Request], cfg: &Config, grouped: &[Vec<usize>]) -> Findin
              on average x{:.1} of an early turn.",
             hit, cfg.long_session_turns, average_growth
         ),
-        "New task = new session (/clear). For long repetitive loops keep a compact \
-         state file instead of conversation history (SKILL.state pattern, \
-         arXiv 2608.26263) - `codeunlimited init` adds the rule to CLAUDE.md.",
+        "Batch small related tasks while prior context contributes. Start a fresh \
+         session for a distinct multi-step task when old context is mostly dead \
+         weight. For long repetitive loops keep a compact state file instead of \
+         conversation history (SKILL.state pattern, arXiv 2608.26263).",
     )
 }
 
@@ -438,6 +439,16 @@ mod tests {
     }
 
     #[test]
+    fn heavy_model_title_is_observational() {
+        let finding = heavy_model_on_trivial(&[req("s", 0, 50_000, 10)], &Config::default());
+        assert_eq!(
+            finding.title,
+            "Top-tier model used for short mechanical replies"
+        );
+        assert!(!finding.title.contains("burned"));
+    }
+
+    #[test]
     fn context_tax_flags_growing_sessions() {
         let reqs: Vec<Request> = (0..40)
             .map(|i| req("s", i * 60, (10_000 + i * 5_000) as u64, 200))
@@ -445,6 +456,9 @@ mod tests {
         let finding = context_tax(&reqs, &Config::default(), &sessions(&reqs));
         assert!(finding.impact_tokens > 0);
         assert!(finding.detail.contains("1 sessions ran past 30 turns"));
+        assert!(finding.fix.contains("Batch small related tasks"));
+        assert!(finding.fix.contains("prior context"));
+        assert!(!finding.fix.contains("New task = new session"));
     }
 
     #[test]

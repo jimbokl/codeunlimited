@@ -21,7 +21,7 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("1.8.0")
+        result = self.run_checker("1.9.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_mismatching_expected_version_fails(self) -> None:
@@ -31,7 +31,7 @@ class ReleaseCheckerTests(unittest.TestCase):
 
     def test_shell_wrapper_accepts_minor_release(self) -> None:
         result = subprocess.run(
-            ["bash", str(CHECKER_SH), "1.8"],
+            ["bash", str(CHECKER_SH), "1.9"],
             cwd=ROOT,
             check=False,
             capture_output=True,

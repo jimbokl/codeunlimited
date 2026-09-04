@@ -13,3 +13,8 @@ content fields, raw log records, and finding details.
 An exact observed counter total is not a causal estimate. Compare repeated,
 similar tasks when possible, keep success criteria fixed, and treat an arm with
 fewer than three completed tasks as low confidence.
+
+For controlled work, prefer independent task pairs and the format in
+[PAIRED-SCHEMA.md](PAIRED-SCHEMA.md). The v1.9 analyzer reports aggregate
+observed counters and an exact paired sign-flip result without exposing task
+identifiers.

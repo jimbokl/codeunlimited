@@ -44,7 +44,7 @@ def render(reqs: list[Request], findings: list[Finding]) -> str:
         )
     lines.append(f" Weekly volume (limit proxy): ~{weekly/1e6:.0f}M tokens")
     lines.append("")
-    lines.append(" FINDINGS - where your limit leaks (by impact):")
+    lines.append(" FINDINGS - estimated reclaimable opportunities:")
     lines.append("")
 
     reclaimed = 0
@@ -55,7 +55,7 @@ def render(reqs: list[Request], findings: list[Finding]) -> str:
         lines.append(f" {i+1}. {f.title}")
         lines.append(f"    {f.detail}")
         lines.append(
-            f"    Reclaim: ~{f.impact_tokens/1e6:.0f}M tok. "
+            f"    Estimated opportunity: ~{f.impact_tokens/1e6:.0f}M tok. "
             f"(~{pct:.0f}% of weekly volume, ~{answers:.0f} extra agent replies)"
         )
         lines.append(f"    Fix: {f.fix}")
@@ -64,8 +64,9 @@ def render(reqs: list[Request], findings: list[Finding]) -> str:
     pct_all = 100 * (reclaimed / days * 7) / max(weekly, 1)
     lines.append(BAR)
     lines.append(
-        f" TOTAL reclaimable: ~{reclaimed/1e6:.0f}M tokens "
-        f"~ {pct_all:.0f}% of weekly volume - that much more work fits into the same limit."
+        f" TOTAL ESTIMATED OPPORTUNITY: ~{reclaimed/1e6:.0f}M tokens "
+        f"~ {pct_all:.0f}% of weekly volume - validate with a comparable "
+        "completed-task experiment."
     )
     lines.append(BAR)
     lines.append(" Top projects by volume:")

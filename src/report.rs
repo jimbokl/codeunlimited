@@ -54,7 +54,9 @@ pub fn render_json(
             "requests": s.0, "prompt_tokens": s.1, "output_tokens": s.2,
         }))).collect::<serde_json::Map<_,_>>(),
         "weekly_volume_tokens": weekly as u64,
+        "weekly_volume_measurement": "modeled_from_observed_window",
         "reclaimable_tokens": reclaimed,
+        "reclaimable_measurement": "estimated_reclaimable",
         "reclaimable_pct_of_weekly": if weekly > 0.0 {
             (100.0 * (reclaimed as f64 / days * 7.0) / weekly) as u64
         } else { 0 },
@@ -64,6 +66,7 @@ pub fn render_json(
             "impact_tokens": f.impact_tokens,
             "impact_lo": f.impact_lo,
             "impact_hi": f.impact_hi,
+            "impact_measurement": "estimated_reclaimable",
             "detail": f.detail,
             "fix": f.fix,
         })).collect::<Vec<_>>(),
@@ -151,7 +154,7 @@ pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
         weekly / 1e6
     ));
     l.push(String::new());
-    l.push(" FINDINGS - where your limit leaks (by impact):".into());
+    l.push(" FINDINGS - estimated reclaimable opportunities:".into());
     l.push(String::new());
 
     let reclaimed = detectors::reclaim_total(findings);
@@ -174,7 +177,7 @@ pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
             String::new()
         };
         l.push(format!(
-            "    Reclaim: ~{:.0}M tok.{range} (~{:.0}% of weekly volume, ~{:.0} extra agent replies)",
+            "    Estimated opportunity: ~{:.0}M tok.{range} (~{:.0}% of weekly volume, ~{:.0} extra agent replies)",
             f.impact_tokens as f64 / 1e6,
             pct,
             answers
@@ -186,8 +189,8 @@ pub fn render(reqs: &[Request], findings: &[Finding], color: bool) -> String {
     let pct_all = 100.0 * (reclaimed as f64 / days * 7.0) / weekly.max(1.0);
     l.push(format!("{green}{BAR}{off}"));
     l.push(format!(
-        " {green}{bold}TOTAL reclaimable: ~{:.0}M tokens ~ {:.0}% of weekly volume{off} - \
-         that much more work fits into the same limit.",
+        " {green}{bold}TOTAL ESTIMATED OPPORTUNITY: ~{:.0}M tokens ~ {:.0}% of weekly volume{off} - \
+         validate with a comparable completed-task experiment.",
         reclaimed as f64 / 1e6,
         pct_all
     ));

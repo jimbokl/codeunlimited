@@ -47,7 +47,7 @@ def heavy_model_on_trivial(reqs: list[Request]) -> Finding:
             toks += r.prompt_total
     return Finding(
         key="heavy_trivial",
-        title="Top-tier model burned on mechanical replies",
+        title="Top-tier model used for short mechanical replies",
         impact_tokens=int(toks * 0.5),  # conservative: half realistically delegable
         detail=(
             f"{n} requests to top-tier models ended in a reply shorter than "
@@ -89,10 +89,11 @@ def context_tax(reqs: list[Request]) -> Finding:
             f"a session each turn costs on average x{growth:.1f} of an early turn."
         ),
         fix=(
-            "New task = new session (/clear). For long repetitive loops keep a "
-            "compact state file instead of conversation history (SKILL.state "
-            "pattern, arXiv 2608.26263) - `codeunlimited init` adds the rule to "
-            "CLAUDE.md."
+            "Batch small related tasks while prior context contributes. Start a "
+            "fresh session for a distinct multi-step task when old context is "
+            "mostly dead weight. For long repetitive loops keep a compact state "
+            "file instead of conversation history (SKILL.state pattern, "
+            "arXiv 2608.26263)."
         ),
         extras={"sessions": sessions_hit, "growth": growth},
     )

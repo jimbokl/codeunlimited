@@ -186,7 +186,7 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
         .find(|f| f.impact_tokens > 0)
     {
         println!(
-            "  top leak here: {} (~{:.0}M tok. reclaimable)",
+            "  top estimated opportunity: {} (~{:.0}M tok.)",
             top.title,
             top.impact_tokens as f64 / 1e6
         );

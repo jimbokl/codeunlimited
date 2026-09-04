@@ -1,5 +1,8 @@
 # Handoff for the Codex review agent
 
+> Historical handoff. The v1.9 trust-release review found and addressed the
+> listed migration, installer, CI-discovery, and evidence-labeling defects.
+
 State of main as of 2026-09-04 (post-1.8.0). Everything below was added
 after your v1.8-measurement branch merged; please verify it with the same
 rigor you applied to 1.6-1.8. Release target: **v1.9.0 on Monday Sep 7**.

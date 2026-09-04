@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.9.0 - 2026-09-04
+
+- Added 13 named, individually toggleable techniques and versioned v2
+  instruction blocks. Context-sensitive techniques remain opt-in, and session
+  guidance now weighs reuse against restart boot cost instead of demanding a
+  new session for every task.
+- Made instruction upgrades fail closed. Duplicate, orphaned, reversed, mixed,
+  or malformed v1/v2 markers leave the target byte-identical; valid LF and CRLF
+  blocks upgrade in place through the existing safe-write and backup layer.
+- Replaced the historical context-tax script's Windows-only path and
+  positive-result filter. It now includes favorable and unfavorable sessions,
+  exposes accounting completeness, keeps identifiers private, and labels the
+  early-context counterfactual as modeled rather than exact savings.
+- Added a strict paired-task experiment analyzer with an exact sign-flip test.
+  The historical controlled run is reported as a negative total-token result
+  (approximately +17.4% for treatment), and its invalid request-level
+  significance claim was removed.
+- Unix and PowerShell installers now require a valid sha256 asset, smoke-test
+  the download, and stage it before replacing an existing installation. Unix
+  prints PATH guidance; PowerShell updates user PATH idempotently.
+- CI explicitly discovers the complete Python suite, validates historical
+  evidence against immutable release commits, tests installers on their native
+  runners, and smoke-tests the `techniques` command in release artifacts.
+- Public documentation and graphics now distinguish exact observed counters,
+  modeled counterfactuals, detector estimates, and realized observational
+  outcomes. Console, Markdown, HTML, badge, and JSON output label detector
+  opportunity values as estimates. No fixed savings percentage is promised.
+
 ## 1.8.0 - 2026-09-04
 
 - Added `experiment start|finish|record|compare|list`, a privacy-preserving
@@ -115,8 +143,8 @@
 - Markdown polish: impact bars per finding, trend arrows.
 - `docs/ACCURACY.md`: the conservative math behind every estimate,
   including the day-1 delta caveat.
-- crates.io metadata; sharper positioning: set up once - up to 50% more
-  work from the same limits.
+- crates.io metadata and the initial efficiency positioning, superseded by the
+  evidence-level language introduced in 1.9.
 
 ## 1.2.0 - 2026-09-03
 
