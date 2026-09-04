@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -99,6 +100,30 @@ class PacketBenchmarkTests(unittest.TestCase):
             report["provenance"]["binary_source_attestation"],
             "not_available_for_caller_supplied_binary",
         )
+        serialized = json.dumps(report, sort_keys=True).lower()
+        for forbidden in ("/users/", "/volumes/", "alpha\\n", "bravo\\n"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_saved_evidence_has_reproducible_source_and_fixture_provenance(self) -> None:
+        path = ROOT / "docs" / "experiments" / "2026-09-04-v2.2-packets.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        provenance = report["provenance"]
+        revision = provenance["source_revision"]
+        self.assertRegex(revision, r"^[0-9a-f]{40}$")
+        self.assertFalse(provenance["source_dirty"])
+
+        for relative, digest_key in (
+            ("scripts/benchmark_packets.py", "benchmark_script_sha256"),
+            ("tests/fixtures/packet_driver.py", "fixture_sha256"),
+        ):
+            source = subprocess.run(
+                ["git", "show", f"{revision}:{relative}"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+            ).stdout
+            self.assertEqual(hashlib.sha256(source).hexdigest(), provenance[digest_key])
+
         serialized = json.dumps(report, sort_keys=True).lower()
         for forbidden in ("/users/", "/volumes/", "alpha\\n", "bravo\\n"):
             self.assertNotIn(forbidden, serialized)
