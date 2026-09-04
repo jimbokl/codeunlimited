@@ -376,6 +376,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         result.envelope.clone(),
         &resolved_artifacts,
         check,
+        &loaded.observation,
     ) {
         Ok(transition) => transition,
         Err(error) => {

@@ -47,6 +47,39 @@ def main() -> int:
     if args.mode == "success":
         json.dump(envelope(revision, args.outcome), sys.stdout, separators=(",", ":"))
         return 0
+    if args.mode == "epistemic":
+        result = envelope(revision)
+        if revision == 0:
+            result["summary"] = "root cause remains a bounded hypothesis"
+            result["delta"] = {
+                "epistemic_upsert": [
+                    {
+                        "id": "root-cause",
+                        "claim": "The fixture behavior is caused by the bounded driver",
+                        "status": "hypothesis",
+                        "evidence": [],
+                    }
+                ]
+            }
+        elif revision == 1:
+            if b'"id":"root-cause"' not in prompt or b'"status":"hypothesis"' not in prompt:
+                return 65
+            result["outcome"] = "complete"
+            result["summary"] = "root cause verified by the configured check"
+            result["delta"] = {
+                "epistemic_upsert": [
+                    {
+                        "id": "root-cause",
+                        "claim": "The bounded driver completes the verified fixture path",
+                        "status": "verified",
+                        "evidence": [{"kind": "check", "revision": 2}],
+                    }
+                ]
+            }
+        else:
+            return 65
+        json.dump(result, sys.stdout, separators=(",", ":"))
+        return 0
     if args.mode == "claude":
         json.dump(
             {

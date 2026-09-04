@@ -4,8 +4,9 @@ use std::path::{Component, Path};
 use sha2::{Digest, Sha256};
 
 use super::model::{
-    ArchiveBatch, ArtifactRef, CheckResult, CodingState, Manifest, ProviderConfig, RunStatus,
-    RuntimeError, StepEnvelope, StepOutcome, Transition, MAX_OBSERVATION_BUDGET_BYTES,
+    ArchiveBatch, ArtifactRef, CheckResult, CodingState, EpistemicCandidate, EpistemicEvidence,
+    EpistemicEvidenceCandidate, EpistemicItem, EpistemicStatus, Manifest, ProviderConfig,
+    RunStatus, RuntimeError, StepEnvelope, StepOutcome, Transition, MAX_OBSERVATION_BUDGET_BYTES,
     MAX_PROMPT_BUDGET_BYTES, MAX_PROVIDER_TIMEOUT_SECONDS, MAX_STATE_BUDGET_BYTES,
     MAX_WORKFLOW_BUDGET_BYTES, RUNTIME_SCHEMA_VERSION,
 };
@@ -22,6 +23,8 @@ pub const MAX_BLOCKERS: usize = 16;
 pub const MAX_ACTIVE_FILES: usize = 32;
 pub const MAX_CHECKS: usize = 16;
 pub const MAX_ARTIFACTS: usize = 32;
+pub const MAX_EPISTEMIC_ITEMS: usize = 32;
+pub const MAX_EVIDENCE_PER_ITEM: usize = 8;
 pub const MAX_PROVIDER_ARGS: usize = 64;
 pub const MAX_ARGUMENT_BYTES: usize = 4096;
 pub const MAX_TOTAL_ATTEMPTS: u64 = 100;
@@ -109,6 +112,7 @@ pub fn validate_state(manifest: &Manifest, state: &CodingState) -> Result<(), Ru
     validate_count("active_files", state.active_files.len(), MAX_ACTIVE_FILES)?;
     validate_count("checks", state.checks.len(), MAX_CHECKS)?;
     validate_count("artifacts", state.artifacts.len(), MAX_ARTIFACTS)?;
+    validate_count("epistemic", state.epistemic.len(), MAX_EPISTEMIC_ITEMS)?;
 
     let mut work_ids = HashSet::new();
     for item in &state.queue {
@@ -167,6 +171,23 @@ pub fn validate_state(manifest: &Manifest, state: &CodingState) -> Result<(), Ru
             validate_digest("check.workspace_sha256", hash)?;
         }
     }
+    let mut epistemic_ids = HashSet::new();
+    for item in &state.epistemic {
+        validate_safe_id(&item.id)?;
+        validate_text("epistemic.claim", &item.claim, MAX_ITEM_BYTES, false)?;
+        validate_count(
+            "epistemic.evidence",
+            item.evidence.len(),
+            MAX_EVIDENCE_PER_ITEM,
+        )?;
+        insert_unique(&mut epistemic_ids, &item.id)?;
+        if item.updated_revision > state.revision {
+            return Err(RuntimeError::InvalidState(
+                "epistemic revision is newer than state".into(),
+            ));
+        }
+        validate_persisted_evidence(item, state)?;
+    }
     if let Some(hash) = &state.archive_hash {
         validate_digest("archive_hash", hash)?;
     }
@@ -203,6 +224,7 @@ pub fn apply_delta(
     envelope: StepEnvelope,
     resolved_artifacts: &[ArtifactRef],
     check: Option<CheckResult>,
+    latest_observation: &[u8],
 ) -> Result<Transition, RuntimeError> {
     validate_manifest(manifest)?;
     validate_state(manifest, current)?;
@@ -254,11 +276,24 @@ pub fn apply_delta(
         .checked_add(1)
         .ok_or_else(|| RuntimeError::InvalidState("revision overflow".into()))?;
 
-    let archive = compact_visible_history(&mut state, &previous_summary)?;
+    let epistemic_archive = apply_epistemic_delta(
+        &mut state,
+        envelope.delta.epistemic_upsert,
+        envelope.delta.epistemic_retire,
+        latest_observation,
+        envelope.summary.as_bytes(),
+        &previous_summary,
+    )?;
+
+    let mut archive = compact_visible_history(&mut state, &previous_summary)?;
+    archive.epistemic = epistemic_archive;
     if !archive.is_empty() {
         state.archive_count = state
             .archive_count
-            .checked_add((archive.completed.len() + archive.decisions.len()) as u64)
+            .checked_add(
+                (archive.completed.len() + archive.decisions.len() + archive.epistemic.len())
+                    as u64,
+            )
             .ok_or_else(|| RuntimeError::InvalidState("archive count overflow".into()))?;
         state.archive_hash = Some(chain_archive_hash(state.archive_hash.as_deref(), &archive)?);
     }
@@ -316,7 +351,242 @@ fn compact_visible_history(
     Ok(ArchiveBatch {
         completed: state.completed.drain(..completed_overflow).collect(),
         decisions: state.decisions.drain(..decisions_overflow).collect(),
+        epistemic: Vec::new(),
     })
+}
+
+fn apply_epistemic_delta(
+    state: &mut CodingState,
+    upserts: Vec<EpistemicCandidate>,
+    retirements: Vec<String>,
+    latest_observation: &[u8],
+    step_summary: &[u8],
+    previous_summary: &str,
+) -> Result<Vec<EpistemicItem>, RuntimeError> {
+    let mut changed_ids = HashSet::new();
+    for candidate in &upserts {
+        validate_safe_id(&candidate.id)?;
+        validate_text("epistemic.claim", &candidate.claim, MAX_ITEM_BYTES, false)?;
+        validate_count(
+            "epistemic.evidence",
+            candidate.evidence.len(),
+            MAX_EVIDENCE_PER_ITEM,
+        )?;
+        if !changed_ids.insert(candidate.id.clone()) {
+            return Err(RuntimeError::DuplicateId(candidate.id.clone()));
+        }
+    }
+    for id in &retirements {
+        validate_safe_id(id)?;
+        if !changed_ids.insert(id.clone()) {
+            return Err(RuntimeError::DuplicateId(id.clone()));
+        }
+    }
+
+    for candidate in upserts {
+        let prior = state
+            .epistemic
+            .iter()
+            .find(|item| item.id == candidate.id)
+            .map(|item| item.status);
+        validate_epistemic_status_change(prior, candidate.status)?;
+        let evidence =
+            resolve_epistemic_evidence(state, &candidate, latest_observation, step_summary)?;
+        validate_evidence_for_status(candidate.status, &evidence)?;
+        let item = EpistemicItem {
+            id: candidate.id,
+            claim: candidate.claim,
+            status: candidate.status,
+            evidence,
+            updated_revision: state.revision,
+        };
+        if let Some(index) = state.epistemic.iter().position(|value| value.id == item.id) {
+            state.epistemic[index] = item;
+        } else {
+            state.epistemic.push(item);
+        }
+    }
+
+    if !retirements.is_empty() && state.memory_summary == previous_summary {
+        return Err(RuntimeError::SummaryRequiredForArchive);
+    }
+    let mut archive = Vec::with_capacity(retirements.len());
+    for id in retirements {
+        let index = state
+            .epistemic
+            .iter()
+            .position(|item| item.id == id)
+            .ok_or_else(|| RuntimeError::InvalidState("retired knowledge was not found".into()))?;
+        if state.epistemic[index].status != EpistemicStatus::Disputed {
+            return Err(RuntimeError::InvalidState(
+                "knowledge must be disputed before retirement".into(),
+            ));
+        }
+        archive.push(state.epistemic.remove(index));
+    }
+    validate_count("epistemic", state.epistemic.len(), MAX_EPISTEMIC_ITEMS)?;
+    Ok(archive)
+}
+
+fn resolve_epistemic_evidence(
+    state: &CodingState,
+    candidate: &EpistemicCandidate,
+    latest_observation: &[u8],
+    step_summary: &[u8],
+) -> Result<Vec<EpistemicEvidence>, RuntimeError> {
+    let latest_hash = format!("{:x}", Sha256::digest(latest_observation));
+    let mut unique = HashSet::new();
+    candidate
+        .evidence
+        .iter()
+        .map(|evidence| {
+            let resolved = match evidence {
+                EpistemicEvidenceCandidate::Step => EpistemicEvidence::Observation {
+                    sha256: format!("{:x}", Sha256::digest(step_summary)),
+                },
+                EpistemicEvidenceCandidate::Observation { sha256 } => {
+                    validate_digest("epistemic observation", sha256)?;
+                    if latest_observation.is_empty() || sha256 != &latest_hash {
+                        return Err(RuntimeError::InvalidState(
+                            "observed knowledge must cite the latest observation".into(),
+                        ));
+                    }
+                    EpistemicEvidence::Observation {
+                        sha256: sha256.clone(),
+                    }
+                }
+                EpistemicEvidenceCandidate::Check { revision } => {
+                    if !state
+                        .checks
+                        .iter()
+                        .any(|check| check.revision == *revision && check.passed)
+                    {
+                        return Err(RuntimeError::InvalidState(
+                            "verified knowledge must cite a passed check".into(),
+                        ));
+                    }
+                    EpistemicEvidence::Check {
+                        revision: *revision,
+                    }
+                }
+                EpistemicEvidenceCandidate::Artifact { path } => {
+                    validate_relative_path(path)?;
+                    let artifact = state
+                        .artifacts
+                        .iter()
+                        .find(|artifact| artifact.path == *path)
+                        .ok_or(RuntimeError::ArtifactMismatch)?;
+                    EpistemicEvidence::Artifact {
+                        path: path.clone(),
+                        sha256: artifact.sha256.clone(),
+                    }
+                }
+            };
+            let key = serde_json::to_string(&resolved)
+                .map_err(|error| RuntimeError::InvalidState(error.to_string()))?;
+            if !unique.insert(key) {
+                return Err(RuntimeError::InvalidState(
+                    "duplicate epistemic evidence".into(),
+                ));
+            }
+            Ok(resolved)
+        })
+        .collect()
+}
+
+fn validate_epistemic_status_change(
+    prior: Option<EpistemicStatus>,
+    next: EpistemicStatus,
+) -> Result<(), RuntimeError> {
+    let valid = match prior {
+        None | Some(EpistemicStatus::Hypothesis) => true,
+        Some(EpistemicStatus::Observed) => {
+            matches!(
+                next,
+                EpistemicStatus::Observed | EpistemicStatus::Verified | EpistemicStatus::Disputed
+            )
+        }
+        Some(EpistemicStatus::Verified) => {
+            matches!(next, EpistemicStatus::Verified | EpistemicStatus::Disputed)
+        }
+        Some(EpistemicStatus::Disputed) => next == EpistemicStatus::Disputed,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(RuntimeError::InvalidState(
+            "invalid epistemic status regression".into(),
+        ))
+    }
+}
+
+fn validate_evidence_for_status(
+    status: EpistemicStatus,
+    evidence: &[EpistemicEvidence],
+) -> Result<(), RuntimeError> {
+    let supported = match status {
+        EpistemicStatus::Hypothesis => true,
+        EpistemicStatus::Observed => evidence
+            .iter()
+            .any(|item| matches!(item, EpistemicEvidence::Observation { .. })),
+        EpistemicStatus::Verified => evidence.iter().any(|item| {
+            matches!(
+                item,
+                EpistemicEvidence::Check { .. } | EpistemicEvidence::Artifact { .. }
+            )
+        }),
+        EpistemicStatus::Disputed => !evidence.is_empty(),
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(RuntimeError::InvalidState(
+            "epistemic status lacks required evidence".into(),
+        ))
+    }
+}
+
+fn validate_persisted_evidence(
+    item: &EpistemicItem,
+    state: &CodingState,
+) -> Result<(), RuntimeError> {
+    for evidence in &item.evidence {
+        match evidence {
+            EpistemicEvidence::Observation { sha256 } => {
+                validate_digest("epistemic observation", sha256)?;
+            }
+            EpistemicEvidence::Check { revision } => {
+                if *revision > state.revision {
+                    return Err(RuntimeError::InvalidState(
+                        "epistemic check is newer than state".into(),
+                    ));
+                }
+                if !state
+                    .checks
+                    .iter()
+                    .any(|check| check.revision == *revision && check.passed)
+                {
+                    return Err(RuntimeError::InvalidState(
+                        "epistemic persisted check evidence is missing".into(),
+                    ));
+                }
+            }
+            EpistemicEvidence::Artifact { path, sha256 } => {
+                validate_relative_path(path)?;
+                validate_digest("epistemic artifact", sha256)?;
+                if !state
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.path == *path && artifact.sha256 == *sha256)
+                {
+                    return Err(RuntimeError::InvalidState(
+                        "epistemic persisted artifact evidence is missing".into(),
+                    ));
+                }
+            }
+        }
+    }
+    validate_evidence_for_status(item.status, &item.evidence)
 }
 
 fn chain_archive_hash(
@@ -514,12 +784,15 @@ fn validate_digest(field: &str, digest: &str) -> Result<(), RuntimeError> {
 mod tests {
     use std::path::PathBuf;
 
+    use sha2::{Digest, Sha256};
+
     use crate::runtime::model::{
-        ArtifactRef, CodingState, Manifest, ProviderConfig, RunStatus, RuntimeError, StateDelta,
-        StepEnvelope, StepOutcome, WorkItem,
+        ArtifactRef, CheckResult, CodingState, EpistemicCandidate, EpistemicEvidence,
+        EpistemicEvidenceCandidate, EpistemicItem, EpistemicStatus, Manifest, ProviderConfig,
+        RunStatus, RuntimeError, StateDelta, StepEnvelope, StepOutcome, WorkItem,
     };
 
-    use super::apply_delta;
+    use super::{apply_delta, validate_state, MAX_EPISTEMIC_ITEMS};
 
     fn manifest() -> Manifest {
         Manifest::for_test(
@@ -557,7 +830,7 @@ mod tests {
 
     #[test]
     fn stale_delta_preserves_revision_contract() {
-        let error = apply_delta(&manifest(), &state(4), envelope(3), &[], None).unwrap_err();
+        let error = apply_delta(&manifest(), &state(4), envelope(3), &[], None, b"").unwrap_err();
         assert_eq!(
             error,
             RuntimeError::StaleRevision {
@@ -582,6 +855,7 @@ mod tests {
             "active_files": [],
             "checks": [],
             "artifacts": [],
+            "epistemic": [],
             "archive_count": 0,
             "archive_hash": null,
             "transcript": "must never be accepted"
@@ -605,7 +879,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            apply_delta(&manifest(), &CodingState::initial(), next, &[], None).unwrap_err(),
+            apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"").unwrap_err(),
             RuntimeError::DuplicateId("same".into())
         );
     }
@@ -624,6 +898,7 @@ mod tests {
                 envelope(0),
                 &[artifact],
                 None,
+                b"",
             )
             .is_err());
         }
@@ -635,13 +910,13 @@ mod tests {
         next.outcome = StepOutcome::Complete;
 
         assert_eq!(
-            apply_delta(&manifest(), &state(0), next.clone(), &[], None).unwrap_err(),
+            apply_delta(&manifest(), &state(0), next.clone(), &[], None, b"").unwrap_err(),
             RuntimeError::IncompleteQueue
         );
 
         next.delta.queue_replace = Some(vec![]);
         assert_eq!(
-            apply_delta(&manifest(), &state(0), next, &[], None).unwrap_err(),
+            apply_delta(&manifest(), &state(0), next, &[], None, b"").unwrap_err(),
             RuntimeError::VerificationRequired
         );
     }
@@ -653,15 +928,22 @@ mod tests {
         next.delta.queue_replace = Some(vec![]);
 
         assert_eq!(
-            apply_delta(&manifest(), &CodingState::initial(), next, &[], None).unwrap_err(),
+            apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"").unwrap_err(),
             RuntimeError::BlockerRequired
         );
     }
 
     #[test]
     fn continue_advances_exactly_one_revision() {
-        let transition = apply_delta(&manifest(), &CodingState::initial(), envelope(0), &[], None)
-            .expect("valid transition");
+        let transition = apply_delta(
+            &manifest(),
+            &CodingState::initial(),
+            envelope(0),
+            &[],
+            None,
+            b"",
+        )
+        .expect("valid transition");
 
         assert_eq!(transition.state.revision, 1);
         assert_eq!(transition.state.status, RunStatus::Running);
@@ -684,12 +966,12 @@ mod tests {
         }];
 
         assert_eq!(
-            apply_delta(&manifest(), &current, next.clone(), &[], None).unwrap_err(),
+            apply_delta(&manifest(), &current, next.clone(), &[], None, b"").unwrap_err(),
             RuntimeError::SummaryRequiredForArchive
         );
 
         next.delta.memory_summary = Some("new cumulative summary".into());
-        let transition = apply_delta(&manifest(), &current, next, &[], None)
+        let transition = apply_delta(&manifest(), &current, next, &[], None, b"")
             .expect("summary permits bounded archive");
         assert_eq!(transition.archive.completed[0].id, "done-0");
         assert_eq!(transition.state.completed.len(), 32);
@@ -703,7 +985,8 @@ mod tests {
             let mut next = envelope(0);
             next.delta.active_files_replace = Some(vec![path.into()]);
             assert_eq!(
-                apply_delta(&manifest(), &CodingState::initial(), next, &[], None).unwrap_err(),
+                apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"")
+                    .unwrap_err(),
                 RuntimeError::InvalidRelativePath(path.into())
             );
         }
@@ -717,8 +1000,234 @@ mod tests {
         approved.allow_unverified_completion = true;
 
         assert!(matches!(
-            apply_delta(&approved, &current, envelope(0), &[], None),
+            apply_delta(&approved, &current, envelope(0), &[], None, b""),
             Err(RuntimeError::InvalidState(message)) if message == "terminal state cannot advance"
         ));
+    }
+
+    #[test]
+    fn hypotheses_are_bounded_but_do_not_require_evidence() {
+        let mut next = envelope(0);
+        next.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "parser-cause".into(),
+            claim: "The parser drops nested usage records".into(),
+            status: EpistemicStatus::Hypothesis,
+            evidence: vec![],
+        }];
+
+        let transition = apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"")
+            .expect("hypothesis is valid");
+        let item = &transition.state.epistemic[0];
+        assert_eq!(item.updated_revision, 1);
+        assert_eq!(item.status, EpistemicStatus::Hypothesis);
+    }
+
+    #[test]
+    fn observed_claims_must_bind_to_the_latest_observation() {
+        let observation = b"fixture reproduced at line 12";
+        let observation_sha256 = format!("{:x}", Sha256::digest(observation));
+        let mut next = envelope(0);
+        next.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "parser-observation".into(),
+            claim: "The fixture reproduces the parser bug".into(),
+            status: EpistemicStatus::Observed,
+            evidence: vec![EpistemicEvidenceCandidate::Observation {
+                sha256: observation_sha256.clone(),
+            }],
+        }];
+
+        let transition = apply_delta(
+            &manifest(),
+            &CodingState::initial(),
+            next.clone(),
+            &[],
+            None,
+            observation,
+        )
+        .expect("matching observation is evidence");
+        assert_eq!(transition.state.epistemic[0].evidence.len(), 1);
+
+        next.delta.epistemic_upsert[0].evidence = vec![EpistemicEvidenceCandidate::Observation {
+            sha256: "00".repeat(32),
+        }];
+        assert!(matches!(
+            apply_delta(
+                &manifest(),
+                &CodingState::initial(),
+                next,
+                &[],
+                None,
+                observation,
+            ),
+            Err(RuntimeError::InvalidState(message)) if message.contains("latest observation")
+        ));
+    }
+
+    #[test]
+    fn current_step_evidence_can_be_retained_without_an_extra_round_trip() {
+        let mut next = envelope(0);
+        next.summary = "parser failure reproduced in this increment".into();
+        next.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "parser-reproduction".into(),
+            claim: "The parser failure is reproducible".into(),
+            status: EpistemicStatus::Observed,
+            evidence: vec![EpistemicEvidenceCandidate::Step],
+        }];
+
+        let transition = apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"")
+            .expect("current step summary is bounded evidence");
+        assert_eq!(
+            transition.state.epistemic[0].evidence,
+            vec![crate::runtime::model::EpistemicEvidence::Observation {
+                sha256: format!(
+                    "{:x}",
+                    Sha256::digest(b"parser failure reproduced in this increment")
+                ),
+            }]
+        );
+    }
+
+    #[test]
+    fn persisted_verified_knowledge_cannot_forge_missing_evidence() {
+        let mut state = CodingState::initial();
+        state.epistemic = vec![EpistemicItem {
+            id: "forged".into(),
+            claim: "Tests passed".into(),
+            status: EpistemicStatus::Verified,
+            evidence: vec![EpistemicEvidence::Check { revision: 0 }],
+            updated_revision: 0,
+        }];
+
+        assert!(matches!(
+            validate_state(&manifest(), &state),
+            Err(RuntimeError::InvalidState(message)) if message.contains("persisted check")
+        ));
+    }
+
+    #[test]
+    fn epistemic_memory_has_a_hard_item_cap() {
+        let mut next = envelope(0);
+        next.delta.epistemic_upsert = (0..=MAX_EPISTEMIC_ITEMS)
+            .map(|index| EpistemicCandidate {
+                id: format!("claim-{index}"),
+                claim: format!("bounded hypothesis {index}"),
+                status: EpistemicStatus::Hypothesis,
+                evidence: vec![],
+            })
+            .collect();
+
+        assert_eq!(
+            apply_delta(&manifest(), &CodingState::initial(), next, &[], None, b"",).unwrap_err(),
+            RuntimeError::TooManyItems {
+                field: "epistemic",
+                actual: MAX_EPISTEMIC_ITEMS + 1,
+                allowed: MAX_EPISTEMIC_ITEMS,
+            }
+        );
+    }
+
+    #[test]
+    fn verified_claims_require_a_passed_check_or_hashed_artifact() {
+        let check = CheckResult {
+            revision: 1,
+            program: "cargo".into(),
+            args: vec!["test".into()],
+            passed: true,
+            summary: "tests passed".into(),
+            workspace_sha256: Some("11".repeat(32)),
+        };
+        let mut next = envelope(0);
+        next.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "suite-green".into(),
+            claim: "The test suite passes at revision 1".into(),
+            status: EpistemicStatus::Verified,
+            evidence: vec![EpistemicEvidenceCandidate::Check { revision: 1 }],
+        }];
+
+        let transition = apply_delta(
+            &manifest(),
+            &CodingState::initial(),
+            next.clone(),
+            &[],
+            Some(check),
+            b"",
+        )
+        .expect("passed check verifies claim");
+        assert_eq!(
+            transition.state.epistemic[0].status,
+            EpistemicStatus::Verified
+        );
+
+        assert!(matches!(
+            apply_delta(
+                &manifest(),
+                &CodingState::initial(),
+                next,
+                &[],
+                None,
+                b"",
+            ),
+            Err(RuntimeError::InvalidState(message)) if message.contains("passed check")
+        ));
+    }
+
+    #[test]
+    fn verified_knowledge_must_be_disputed_before_retirement() {
+        let mut create = envelope(0);
+        create.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "api-contract".into(),
+            claim: "The fixture validates the API contract".into(),
+            status: EpistemicStatus::Verified,
+            evidence: vec![EpistemicEvidenceCandidate::Artifact {
+                path: "evidence.json".into(),
+            }],
+        }];
+        let artifact = ArtifactRef {
+            path: "evidence.json".into(),
+            purpose: "test evidence".into(),
+            sha256: "22".repeat(32),
+        };
+        create.delta.artifacts_add = vec![crate::runtime::model::ArtifactCandidate {
+            path: "evidence.json".into(),
+            purpose: "test evidence".into(),
+        }];
+        let current = apply_delta(
+            &manifest(),
+            &CodingState::initial(),
+            create,
+            std::slice::from_ref(&artifact),
+            None,
+            b"",
+        )
+        .expect("artifact verifies claim")
+        .state;
+
+        let mut retire = envelope(1);
+        retire.delta.memory_summary = Some("The earlier contract claim is obsolete".into());
+        retire.delta.epistemic_retire = vec!["api-contract".into()];
+        assert!(matches!(
+            apply_delta(&manifest(), &current, retire, &[], None, b""),
+            Err(RuntimeError::InvalidState(message)) if message.contains("disputed")
+        ));
+
+        let mut dispute = envelope(1);
+        dispute.delta.epistemic_upsert = vec![EpistemicCandidate {
+            id: "api-contract".into(),
+            claim: "The earlier fixture no longer matches the API contract".into(),
+            status: EpistemicStatus::Disputed,
+            evidence: vec![EpistemicEvidenceCandidate::Observation {
+                sha256: format!("{:x}", Sha256::digest(b"API changed")),
+            }],
+        }];
+        let disputed = apply_delta(&manifest(), &current, dispute, &[], None, b"API changed")
+            .expect("verified claim may become disputed")
+            .state;
+        let mut retire = envelope(2);
+        retire.delta.memory_summary = Some("Removed the obsolete contract claim".into());
+        retire.delta.epistemic_retire = vec!["api-contract".into()];
+        let transition = apply_delta(&manifest(), &disputed, retire, &[], None, b"")
+            .expect("disputed knowledge may be retired");
+        assert!(transition.state.epistemic.is_empty());
+        assert_eq!(transition.archive.epistemic.len(), 1);
     }
 }

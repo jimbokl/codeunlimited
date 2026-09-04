@@ -481,6 +481,47 @@
 
   Commit: `fix: harden stateful runtime boundaries`
 
+### Task 7.5: Add bounded epistemic memory
+
+**Files:**
+- Modify: `src/runtime/model.rs`, `src/runtime/validate.rs`, `src/runtime/prompt.rs`
+- Modify: `src/runtime/engine.rs`, `src/runtime/store.rs`
+- Test: runtime unit and integration tests
+
+**Interfaces:**
+- Durable claims are typed as hypothesis, observed, verified, or disputed
+- Observed and verified promotions require resolvable evidence
+- Verified claims must be disputed before retirement
+- Epistemic entries remain bounded and retirement is archive-chained
+
+- [x] **Step 1: Add failing epistemic-transition tests**
+
+  Cover hypothesis creation, observation-hash binding, verification promotion,
+  invalid evidence, verified-claim downgrade, dispute-before-retire, bounded
+  capacity, and prompt instructions.
+
+- [x] **Step 2: Witness RED**
+
+  Run the focused model, validation, and prompt tests before implementation.
+
+- [x] **Step 3: Implement typed epistemic state and evidence resolution**
+
+  Let the provider propose bounded claims while the runtime assigns revision,
+  resolves artifact hashes/check revisions, validates allowed status changes,
+  and archives explicit retirements. Never preserve free-form reasoning.
+
+- [x] **Step 4: Expose the logic at the orchestration boundary**
+
+  Add the latest-observation digest and retention/promotion rules to the prompt.
+  Keep the immutable prefix stable across revisions and preserve strict JSON
+  output for all providers.
+
+- [x] **Step 5: Run the complete runtime suite and commit**
+
+  Run: `cargo test runtime -- --nocapture && cargo test --test runtime_cli -- --nocapture`
+
+  Commit: `feat: add bounded epistemic memory`
+
 ### Task 8: Publish the honest 2.0 release surface
 
 **Files:**

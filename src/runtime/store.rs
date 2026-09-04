@@ -512,6 +512,7 @@ mod tests {
                 result: "already summarized".into(),
             }],
             decisions: Vec::new(),
+            epistemic: Vec::new(),
         };
 
         assert!(store

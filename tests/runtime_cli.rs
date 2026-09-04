@@ -264,6 +264,43 @@ fn auto_stops_when_a_run_becomes_terminal() {
 }
 
 #[test]
+fn fresh_provider_steps_promote_bounded_knowledge_from_hypothesis_to_verified() {
+    let project = TempDir::new().expect("project");
+    init_command(project.path(), "epistemic", "epistemic", &[])
+        .arg("--verify-program")
+        .arg(python())
+        .arg("--verify-arg=-c")
+        .arg("--verify-arg=raise SystemExit(0)")
+        .arg("--verify-every-step")
+        .assert()
+        .success();
+
+    let mut command = binary();
+    command
+        .args(["run", "auto", "epistemic", "--project"])
+        .arg(project.path())
+        .args(["--steps", "3", "--json"]);
+    let report = json_output(command);
+    assert_eq!(report["steps"].as_array().unwrap().len(), 2);
+    assert_eq!(report["steps"][1]["status"], "complete");
+
+    let state: Value = serde_json::from_slice(
+        &fs::read(
+            project
+                .path()
+                .join(".codeunlimited/runs/epistemic/state.json"),
+        )
+        .expect("state"),
+    )
+    .expect("state JSON");
+    assert_eq!(state["epistemic"].as_array().unwrap().len(), 1);
+    assert_eq!(state["epistemic"][0]["id"], "root-cause");
+    assert_eq!(state["epistemic"][0]["status"], "verified");
+    assert_eq!(state["epistemic"][0]["evidence"][0]["kind"], "check");
+    assert_eq!(state["epistemic"][0]["evidence"][0]["revision"], 2);
+}
+
+#[test]
 fn recover_requires_an_ambiguous_attempt_and_a_bounded_regular_observation() {
     let project = TempDir::new().expect("project");
     let changed = project.path().join("changed.txt");

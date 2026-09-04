@@ -176,6 +176,51 @@ pub struct ArtifactCandidate {
     pub purpose: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EpistemicStatus {
+    Hypothesis,
+    Observed,
+    Verified,
+    Disputed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum EpistemicEvidence {
+    Observation { sha256: String },
+    Check { revision: u64 },
+    Artifact { path: String, sha256: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum EpistemicEvidenceCandidate {
+    Step,
+    Observation { sha256: String },
+    Check { revision: u64 },
+    Artifact { path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpistemicItem {
+    pub id: String,
+    pub claim: String,
+    pub status: EpistemicStatus,
+    pub evidence: Vec<EpistemicEvidence>,
+    pub updated_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpistemicCandidate {
+    pub id: String,
+    pub claim: String,
+    pub status: EpistemicStatus,
+    pub evidence: Vec<EpistemicEvidenceCandidate>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodingState {
@@ -191,6 +236,7 @@ pub struct CodingState {
     pub active_files: Vec<String>,
     pub checks: Vec<CheckResult>,
     pub artifacts: Vec<ArtifactRef>,
+    pub epistemic: Vec<EpistemicItem>,
     pub archive_count: u64,
     pub archive_hash: Option<String>,
 }
@@ -210,6 +256,7 @@ impl CodingState {
             active_files: Vec::new(),
             checks: Vec::new(),
             artifacts: Vec::new(),
+            epistemic: Vec::new(),
             archive_count: 0,
             archive_hash: None,
         }
@@ -235,6 +282,8 @@ pub struct StateDelta {
     pub blockers_replace: Option<Vec<Blocker>>,
     pub active_files_replace: Option<Vec<String>>,
     pub artifacts_add: Vec<ArtifactCandidate>,
+    pub epistemic_upsert: Vec<EpistemicCandidate>,
+    pub epistemic_retire: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -252,11 +301,12 @@ pub struct StepEnvelope {
 pub struct ArchiveBatch {
     pub completed: Vec<CompletedItem>,
     pub decisions: Vec<Decision>,
+    pub epistemic: Vec<EpistemicItem>,
 }
 
 impl ArchiveBatch {
     pub fn is_empty(&self) -> bool {
-        self.completed.is_empty() && self.decisions.is_empty()
+        self.completed.is_empty() && self.decisions.is_empty() && self.epistemic.is_empty()
     }
 }
 

@@ -3,12 +3,15 @@ use sha2::{Digest, Sha256};
 use super::model::{CodingState, Manifest, RuntimeError};
 use super::validate::{validate_manifest, validate_state};
 
-pub const STEP_ENVELOPE_SCHEMA_JSON: &str = r#"{"type":"object","additionalProperties":false,"required":["schema_version","base_revision","outcome","summary","delta"],"properties":{"schema_version":{"type":"integer","const":1},"base_revision":{"type":"integer","minimum":0},"outcome":{"type":"string","enum":["continue","complete","blocked"]},"summary":{"type":"string","minLength":1,"maxLength":1024},"delta":{"type":"object","additionalProperties":false,"properties":{"focus":{"type":["string","null"]},"memory_summary":{"type":["string","null"]},"queue_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","task"],"properties":{"id":{"type":"string"},"task":{"type":"string"}}}},"completed_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","result"],"properties":{"id":{"type":"string"},"result":{"type":"string"}}}},"decisions_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","decision"],"properties":{"id":{"type":"string"},"decision":{"type":"string"}}}},"blockers_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","blocker"],"properties":{"id":{"type":"string"},"blocker":{"type":"string"}}}},"active_files_replace":{"type":["array","null"],"items":{"type":"string"}},"artifacts_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","purpose"],"properties":{"path":{"type":"string"},"purpose":{"type":"string"}}}}}}}}"#;
+pub const STEP_ENVELOPE_SCHEMA_JSON: &str = r#"{"type":"object","additionalProperties":false,"required":["schema_version","base_revision","outcome","summary","delta"],"properties":{"schema_version":{"type":"integer","const":1},"base_revision":{"type":"integer","minimum":0},"outcome":{"type":"string","enum":["continue","complete","blocked"]},"summary":{"type":"string","minLength":1,"maxLength":1024},"delta":{"type":"object","additionalProperties":false,"properties":{"focus":{"type":["string","null"]},"memory_summary":{"type":["string","null"]},"queue_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","task"],"properties":{"id":{"type":"string"},"task":{"type":"string"}}}},"completed_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","result"],"properties":{"id":{"type":"string"},"result":{"type":"string"}}}},"decisions_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","decision"],"properties":{"id":{"type":"string"},"decision":{"type":"string"}}}},"blockers_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","blocker"],"properties":{"id":{"type":"string"},"blocker":{"type":"string"}}}},"active_files_replace":{"type":["array","null"],"items":{"type":"string"}},"artifacts_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","purpose"],"properties":{"path":{"type":"string"},"purpose":{"type":"string"}}}},"epistemic_upsert":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","claim","status","evidence"],"properties":{"id":{"type":"string"},"claim":{"type":"string"},"status":{"type":"string","enum":["hypothesis","observed","verified","disputed"]},"evidence":{"type":"array","items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"step"}}},{"type":"object","additionalProperties":false,"required":["kind","sha256"],"properties":{"kind":{"const":"observation"},"sha256":{"type":"string"}}},{"type":"object","additionalProperties":false,"required":["kind","revision"],"properties":{"kind":{"const":"check"},"revision":{"type":"integer","minimum":0}}},{"type":"object","additionalProperties":false,"required":["kind","path"],"properties":{"kind":{"const":"artifact"},"path":{"type":"string"}}}]}}}},"epistemic_retire":{"type":"array","items":{"type":"string"}}}}}}"#;
 
 const RUNTIME_CONTRACT: &str = "codeunlimited state runtime v1\n\
 You are an ephemeral coding worker. You have no prior conversation.\n\
 Use the repository tools available to complete exactly one bounded work increment.\n\
 Treat CURRENT_STATE as the sole memory of earlier increments.\n\
+Classify durable claims as hypothesis, observed, verified, or disputed.\n\
+Observed claims must cite the latest observation digest or kind=step for this increment; verified claims must cite a passed check or hashed artifact.\n\
+Dispute verified knowledge before retiring it. Preserve knowledge needed to keep CURRENT_STATE sufficient.\n\
 Do not claim checks you did not run. Return exactly one JSON object matching STEP_ENVELOPE_SCHEMA.\n";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +60,8 @@ pub fn compile_prompt(
         manifest.workflow_sha256, workflow, objective
     );
     let dynamic = format!(
-        "CURRENT_STATE\n{state_json}\nEND_CURRENT_STATE\n\nLATEST_OBSERVATION\n{observation}\nEND_LATEST_OBSERVATION\n\nPerform one bounded increment now. Base the response on revision {}.\n",
+        "CURRENT_STATE\n{state_json}\nEND_CURRENT_STATE\n\nLATEST_OBSERVATION sha256={:x}\n{observation}\nEND_LATEST_OBSERVATION\n\nPerform one bounded increment now. Base the response on revision {}.\n",
+        Sha256::digest(observation.as_bytes()),
         state.revision
     );
     let stable_bytes = stable.len();
@@ -195,6 +199,21 @@ mod tests {
         let prompt = compile_prompt(&manifest(), WORKFLOW, &CodingState::initial(), b"latest")
             .expect("bounded prompt");
         assert!(!String::from_utf8_lossy(&prompt.bytes).contains("OLD_TRANSCRIPT_SENTINEL"));
+    }
+
+    #[test]
+    fn prompt_exposes_epistemic_rules_and_latest_observation_digest() {
+        let observation = b"new test evidence";
+        let prompt = compile_prompt(&manifest(), WORKFLOW, &CodingState::initial(), observation)
+            .expect("bounded prompt");
+        let text = String::from_utf8(prompt.bytes).unwrap();
+
+        assert!(text.contains("hypothesis, observed, verified, or disputed"));
+        assert!(text.contains("Dispute verified knowledge before retiring it"));
+        assert!(text.contains(&format!(
+            "LATEST_OBSERVATION sha256={:x}",
+            Sha256::digest(observation)
+        )));
     }
 
     #[test]
