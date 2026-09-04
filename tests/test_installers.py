@@ -167,6 +167,14 @@ class PowerShellInstallerStructureTests(unittest.TestCase):
             "SetEnvironmentVariable('Path', $originalUserPath, 'User')", script
         )
 
+    def test_native_harness_exercises_path_rollback(self) -> None:
+        harness = (ROOT / "tests" / "test_install_ps1.ps1").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("rollback-bin", harness)
+        self.assertIn("User PATH changed after failed replacement", harness)
+
 
 if __name__ == "__main__":
     unittest.main()

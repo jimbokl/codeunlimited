@@ -145,6 +145,18 @@ class ContextTaxTests(unittest.TestCase):
         self.assertIn("does not exist", stderr.getvalue())
         self.assertNotIn(str(missing), stderr.getvalue())
 
+    def test_safe_diagnostics_distinguish_missing_root_from_vanished_log(self) -> None:
+        root_error = bench_context.MissingRootError("private-root")
+        log_error = FileNotFoundError("private-log-path")
+
+        root_message = bench_context._safe_input_error(root_error)
+        log_message = bench_context._safe_input_error(log_error)
+
+        self.assertEqual(root_message, "Claude projects root does not exist")
+        self.assertEqual(log_message, "a log file disappeared while it was being read")
+        self.assertNotIn("private-root", root_message)
+        self.assertNotIn("private-log-path", log_message)
+
     def test_invalid_utf8_fails_instead_of_silently_dropping_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)

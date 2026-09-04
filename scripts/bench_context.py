@@ -21,6 +21,10 @@ SessionKey = tuple[str, str]
 Turn = tuple[str, int]
 
 
+class MissingRootError(FileNotFoundError):
+    """The configured projects root is absent, without exposing its path."""
+
+
 @dataclass(frozen=True)
 class LoadResult:
     sessions: dict[SessionKey, list[Turn]]
@@ -42,7 +46,7 @@ def _token(value: object) -> int:
 def load_sessions(root: pathlib.Path) -> LoadResult:
     root = root.expanduser()
     if not root.is_dir():
-        raise FileNotFoundError("Claude projects root does not exist")
+        raise MissingRootError("Claude projects root does not exist")
 
     sessions: dict[SessionKey, list[Turn]] = defaultdict(list)
     seen: set[tuple[SessionKey, str]] = set()
@@ -189,8 +193,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _safe_input_error(error: OSError | UnicodeError) -> str:
     if isinstance(error, UnicodeError):
         return "a log file is not valid UTF-8"
-    if isinstance(error, FileNotFoundError):
+    if isinstance(error, MissingRootError):
         return "Claude projects root does not exist"
+    if isinstance(error, FileNotFoundError):
+        return "a log file disappeared while it was being read"
     if isinstance(error, PermissionError):
         return "a log file cannot be read (permission denied)"
     return f"log input could not be read ({type(error).__name__})"

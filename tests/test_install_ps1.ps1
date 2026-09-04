@@ -55,6 +55,20 @@ try {
         throw 'Installer did not add exactly one user PATH entry'
     }
 
+    $failureDest = Join-Path $temp 'rollback-bin'
+    New-Item -ItemType Directory -Force -Path $failureDest | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $failureDest 'codeunlimited.exe') | Out-Null
+    $pathBeforeFailure = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:CODEUNLIMITED_INSTALL_DIR = $failureDest
+    if ((Invoke-Installer) -eq 0) { throw 'Blocked replacement unexpectedly succeeded' }
+    $pathAfterFailure = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($pathAfterFailure -ne $pathBeforeFailure) {
+        throw 'User PATH changed after failed replacement'
+    }
+    $stagedFiles = @(Get-ChildItem -LiteralPath $failureDest -Filter '.codeunlimited-install-*')
+    if ($stagedFiles.Count -ne 0) { throw 'Failed replacement left a staged binary' }
+
+    $env:CODEUNLIMITED_INSTALL_DIR = $dest
     [IO.File]::WriteAllBytes((Join-Path $dest 'codeunlimited.exe'), [Text.Encoding]::ASCII.GetBytes("existing verified binary`n"))
     Remove-Item -LiteralPath "$asset.sha256" -Force
     if ((Invoke-Installer) -eq 0) { throw 'Missing checksum unexpectedly succeeded' }
