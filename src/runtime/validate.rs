@@ -51,6 +51,11 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), RuntimeError> {
             "max_steps must be between 1 and {MAX_TOTAL_ATTEMPTS}"
         )));
     }
+    if manifest.max_total_tokens == Some(0) {
+        return Err(RuntimeError::InvalidManifest(
+            "max_total_tokens must be greater than zero".into(),
+        ));
+    }
     if manifest.max_attempts_per_revision == 0
         || manifest.max_attempts_per_revision > MAX_ATTEMPTS_PER_REVISION
     {

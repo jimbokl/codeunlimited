@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::ledger::LedgerReport;
 use super::model::{
     ArtifactRef, CheckResult, CodingState, GitSnapshot, Manifest, ProviderConfig, RecoveryRecord,
     RunStatus, RuntimeError, StepOutcome, VerificationCommand, DEFAULT_MAX_ATTEMPTS_PER_REVISION,
@@ -30,6 +31,7 @@ pub struct InitRequest {
     pub objective: String,
     pub provider: ProviderConfig,
     pub max_steps: u64,
+    pub max_total_tokens: Option<u64>,
     pub max_attempts_per_revision: u64,
     pub provider_timeout_seconds: u64,
     pub workflow_budget_bytes: usize,
@@ -56,6 +58,7 @@ impl InitRequest {
             objective,
             provider,
             max_steps: DEFAULT_MAX_STEPS,
+            max_total_tokens: None,
             max_attempts_per_revision: DEFAULT_MAX_ATTEMPTS_PER_REVISION,
             provider_timeout_seconds: DEFAULT_PROVIDER_TIMEOUT_SECONDS,
             workflow_budget_bytes: DEFAULT_WORKFLOW_BUDGET_BYTES,
@@ -151,7 +154,7 @@ pub struct CacheProbeReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum AttemptOutcome {
+pub(crate) enum AttemptOutcome {
     Succeeded,
     ProviderFailed,
     InvalidTransition,
@@ -160,29 +163,89 @@ enum AttemptOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AttemptRecord {
-    schema_version: u64,
-    attempt: u64,
-    base_revision: u64,
-    committed_revision: Option<u64>,
-    outcome: AttemptOutcome,
-    error_category: Option<String>,
-    prompt_bytes: usize,
-    stable_prompt_bytes: usize,
-    dynamic_prompt_bytes: usize,
-    prompt_sha256: String,
-    stable_prompt_sha256: String,
-    workflow_sha256: String,
-    provider: String,
-    started_unix: i64,
-    duration_ms: Option<u64>,
-    exit_code: Option<i32>,
-    response_bytes: Option<usize>,
-    usage: ProviderUsage,
-    state_before_sha256: String,
-    state_after_sha256: Option<String>,
-    before_git: GitSnapshot,
-    after_git: GitSnapshot,
+pub(crate) struct AttemptRecord {
+    pub(crate) schema_version: u64,
+    pub(crate) attempt: u64,
+    pub(crate) base_revision: u64,
+    pub(crate) committed_revision: Option<u64>,
+    pub(crate) outcome: AttemptOutcome,
+    pub(crate) error_category: Option<String>,
+    pub(crate) prompt_bytes: usize,
+    pub(crate) stable_prompt_bytes: usize,
+    pub(crate) dynamic_prompt_bytes: usize,
+    pub(crate) prompt_sha256: String,
+    pub(crate) stable_prompt_sha256: String,
+    pub(crate) workflow_sha256: String,
+    pub(crate) provider: String,
+    pub(crate) started_unix: i64,
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) response_bytes: Option<usize>,
+    pub(crate) usage: ProviderUsage,
+    pub(crate) state_before_sha256: String,
+    pub(crate) state_after_sha256: Option<String>,
+    pub(crate) before_git: GitSnapshot,
+    pub(crate) after_git: GitSnapshot,
+    #[serde(default)]
+    pub(crate) accepted_task_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) configuration_sha256: String,
+}
+
+impl AttemptOutcome {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::ProviderFailed => "provider_failed",
+            Self::InvalidTransition => "invalid_transition",
+            Self::RecoveryRequired => "recovery_required",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AttemptIntent {
+    pub(crate) schema_version: u64,
+    pub(crate) attempt: u64,
+    pub(crate) base_revision: u64,
+    pub(crate) provider: String,
+    pub(crate) configuration_sha256: String,
+    pub(crate) prompt_sha256: String,
+    pub(crate) stable_prompt_sha256: String,
+    pub(crate) workflow_sha256: String,
+    pub(crate) prompt_bytes: usize,
+    pub(crate) stable_prompt_bytes: usize,
+    pub(crate) dynamic_prompt_bytes: usize,
+    pub(crate) state_before_sha256: String,
+    pub(crate) started_unix: i64,
+    pub(crate) before_git: GitSnapshot,
+}
+
+impl AttemptIntent {
+    fn validate(&self) -> Result<(), RuntimeError> {
+        let valid_digest =
+            |value: &str| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if self.schema_version != RUNTIME_SCHEMA_VERSION
+            || self.attempt == 0
+            || !matches!(
+                self.provider.as_str(),
+                "claude" | "codex" | "command" | "openai_api" | "anthropic_api"
+            )
+            || ![
+                &self.configuration_sha256,
+                &self.prompt_sha256,
+                &self.stable_prompt_sha256,
+                &self.workflow_sha256,
+                &self.state_before_sha256,
+            ]
+            .into_iter()
+            .all(|digest| valid_digest(digest))
+        {
+            return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
+        }
+        Ok(())
+    }
 }
 
 pub fn init_run(request: InitRequest) -> Result<RunStatusView, RuntimeError> {
@@ -210,6 +273,7 @@ pub fn init_run(request: InitRequest) -> Result<RunStatusView, RuntimeError> {
         objective: request.objective,
         provider: request.provider,
         max_steps: request.max_steps,
+        max_total_tokens: request.max_total_tokens,
         max_attempts_per_revision: request.max_attempts_per_revision,
         provider_timeout_seconds: request.provider_timeout_seconds,
         workflow_budget_bytes: request.workflow_budget_bytes,
@@ -236,6 +300,22 @@ pub fn status(reference: &RunRef) -> Result<RunStatusView, RuntimeError> {
     status_for_store(&store)
 }
 
+pub fn ledger(reference: &RunRef) -> Result<LedgerReport, RuntimeError> {
+    let store = RunStore::open(&reference.project_root, &reference.run_name)?;
+    let snapshot_lock = match store.try_lock() {
+        Ok(lock) => Some(lock),
+        Err(RuntimeError::RunBusy) => None,
+        Err(error) => return Err(error),
+    };
+    let busy = snapshot_lock.is_none();
+    let loaded = store.load()?;
+    let attempts: Vec<AttemptRecord> = store.read_attempts()?;
+    let intent = read_attempt_intent(&store)?;
+    let report = super::ledger::build_report(&loaded.manifest, &attempts, intent.as_ref(), busy);
+    drop(snapshot_lock);
+    Ok(report)
+}
+
 pub fn render_next_prompt(reference: &RunRef) -> Result<CompiledPrompt, RuntimeError> {
     let store = RunStore::open(&reference.project_root, &reference.run_name)?;
     let loaded = store.load()?;
@@ -252,13 +332,16 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     let _lock = store.try_lock()?;
     let loaded = store.load()?;
     store.ensure_provider_instructions(&loaded)?;
-    if loaded.recovery.is_some() {
+    if loaded.recovery.is_some() || read_attempt_intent(&store)?.is_some() {
         return Err(RuntimeError::RecoveryRequired);
     }
     if loaded.state.status != RunStatus::Running {
         return Err(RuntimeError::TerminalRun);
     }
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
+    if let Some(error) = super::ledger::cap_admission_error(&loaded.manifest, &attempts) {
+        return Err(error);
+    }
     if attempts.len() as u64 >= loaded.manifest.max_steps
         || attempts
             .iter()
@@ -278,6 +361,23 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     let before_git = git_snapshot(&loaded.manifest.project_root);
     let before_control = store.control_hash()?;
     let started_unix = chrono::Utc::now().timestamp();
+    let intent = AttemptIntent {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        attempt,
+        base_revision: loaded.state.revision,
+        provider: provider_name(&loaded.manifest.provider).into(),
+        configuration_sha256: super::ledger::configuration_sha256(&loaded.manifest.provider),
+        prompt_sha256: prompt.prompt_sha256.clone(),
+        stable_prompt_sha256: prompt.stable_sha256.clone(),
+        workflow_sha256: loaded.manifest.workflow_sha256.clone(),
+        prompt_bytes: prompt.bytes.len(),
+        stable_prompt_bytes: prompt.stable_bytes,
+        dynamic_prompt_bytes: prompt.dynamic_bytes,
+        state_before_sha256: state_hash(&loaded.state),
+        started_unix,
+        before_git: before_git.clone(),
+    };
+    store.write_attempt_intent(&intent)?;
     let provider_result = provider.run(
         &loaded.manifest.provider,
         &prompt,
@@ -287,12 +387,14 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     let control_unchanged = store
         .control_hash()
         .is_ok_and(|after| after == before_control);
+    let intent_intact = store.attempt_intent_matches(&intent).unwrap_or(false);
 
     let result = match provider_result {
         Ok(result) => result,
         Err(error) => {
             let after_git = git_snapshot(&loaded.manifest.project_root);
-            let changed = !control_unchanged || workspace_changed(&before_git, &after_git);
+            let changed =
+                !intent_intact || !control_unchanged || workspace_changed(&before_git, &after_git);
             let outcome = if changed {
                 AttemptOutcome::RecoveryRequired
             } else {
@@ -312,16 +414,16 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
             if let ProviderFailure::InvalidOutputWithUsage(usage) = &error {
                 record.usage = usage.as_ref().clone();
             }
-            store.write_attempt(attempt, &record)?;
+            let recovery = changed.then(|| RecoveryRecord {
+                schema_version: RUNTIME_SCHEMA_VERSION,
+                attempt,
+                base_revision: loaded.state.revision,
+                reason: provider_failure_category(&error),
+                before_git: before_git.clone(),
+                after_git: after_git.clone(),
+            });
+            finalize_attempt(&store, &intent, &record, recovery.as_ref(), intent_intact)?;
             if changed {
-                store.write_recovery(&RecoveryRecord {
-                    schema_version: RUNTIME_SCHEMA_VERSION,
-                    attempt,
-                    base_revision: loaded.state.revision,
-                    reason: provider_failure_category(&error),
-                    before_git,
-                    after_git,
-                })?;
                 return Err(RuntimeError::RecoveryRequired);
             }
             return Err(RuntimeError::ProviderFailed(provider_failure_category(
@@ -329,9 +431,11 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
             )));
         }
     };
-    if !control_unchanged {
+    if !control_unchanged || !intent_intact {
         return fail_transition(
             &store,
+            &intent,
+            intent_intact,
             &loaded.manifest,
             &loaded.state,
             &prompt,
@@ -352,6 +456,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         Err(error) => {
             return fail_transition(
                 &store,
+                &intent,
+                intent_intact,
                 &loaded.manifest,
                 &loaded.state,
                 &prompt,
@@ -378,6 +484,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
                 Err(error) => {
                     return fail_transition(
                         &store,
+                        &intent,
+                        intent_intact,
                         &loaded.manifest,
                         &loaded.state,
                         &prompt,
@@ -409,6 +517,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         Err(error) => {
             return fail_transition(
                 &store,
+                &intent,
+                intent_intact,
                 &loaded.manifest,
                 &loaded.state,
                 &prompt,
@@ -434,6 +544,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
     if transition.observation.len() > loaded.manifest.observation_budget_bytes {
         return fail_transition(
             &store,
+            &intent,
+            intent_intact,
             &loaded.manifest,
             &loaded.state,
             &prompt,
@@ -450,7 +562,8 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         transition.observation.as_bytes(),
         (!transition.archive.is_empty()).then_some(&transition.archive),
     ) {
-        let changed = !control_unchanged || workspace_changed(&before_git, &after_git);
+        let changed =
+            !intent_intact || !control_unchanged || workspace_changed(&before_git, &after_git);
         let record = result_attempt(
             &loaded.manifest,
             &loaded.state,
@@ -467,16 +580,16 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
             before_git.clone(),
             after_git.clone(),
         );
-        store.write_attempt(attempt, &record)?;
+        let recovery = changed.then(|| RecoveryRecord {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            attempt,
+            base_revision: loaded.state.revision,
+            reason: "state commit failed".into(),
+            before_git: before_git.clone(),
+            after_git: after_git.clone(),
+        });
+        finalize_attempt(&store, &intent, &record, recovery.as_ref(), intent_intact)?;
         if changed {
-            store.write_recovery(&RecoveryRecord {
-                schema_version: RUNTIME_SCHEMA_VERSION,
-                attempt,
-                base_revision: loaded.state.revision,
-                reason: "state commit failed".into(),
-                before_git,
-                after_git,
-            })?;
             return Err(RuntimeError::RecoveryRequired);
         }
         return Err(error);
@@ -492,7 +605,7 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         before_git,
         after_git,
     );
-    store.write_attempt(attempt, &record)?;
+    finalize_attempt(&store, &intent, &record, None, intent_intact)?;
     let transported_input_tokens = result.usage.transported_input_tokens();
     let cache_read_ratio_basis_points = result.usage.cache_read_ratio_basis_points();
     Ok(StepReport {
@@ -598,24 +711,62 @@ pub fn recover(reference: &RunRef, observation: &[u8]) -> Result<RunStatusView, 
     let store = RunStore::open(&reference.project_root, &reference.run_name)?;
     let _lock = store.try_lock()?;
     let loaded = store.load()?;
-    if loaded.recovery.is_none() {
-        return Err(RuntimeError::InvalidState(
-            "run does not require recovery".into(),
-        ));
-    }
     if observation.len() > loaded.manifest.observation_budget_bytes
         || std::str::from_utf8(observation).is_err()
     {
         return Err(RuntimeError::InvalidStoredData("observation.txt"));
     }
-    let mut state = loaded.state;
-    state.revision = state
-        .revision
-        .checked_add(1)
-        .ok_or_else(|| RuntimeError::InvalidState("revision overflow".into()))?;
-    state.status = RunStatus::Running;
-    store.save_transition(&state, observation, None)?;
-    store.clear_recovery()?;
+    let intent_result = read_attempt_intent(&store);
+    let intent = match intent_result {
+        Ok(intent) => intent,
+        Err(_) if loaded.recovery.is_some() => None,
+        Err(error) => return Err(error),
+    };
+    if loaded.recovery.is_none() && intent.is_none() {
+        return Err(RuntimeError::InvalidState(
+            "run does not require recovery".into(),
+        ));
+    }
+
+    let attempts: Vec<AttemptRecord> = store.read_attempts()?;
+    let mut apply_observation = loaded.recovery.is_some();
+    if let Some(intent) = intent.as_ref() {
+        match attempts
+            .iter()
+            .find(|record| record.attempt == intent.attempt)
+        {
+            Some(record) => {
+                if !record_matches_intent(record, intent) {
+                    return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
+                }
+                apply_observation |= record.outcome == AttemptOutcome::RecoveryRequired
+                    && loaded.state.revision == record.base_revision;
+            }
+            None => {
+                let record =
+                    interrupted_attempt(intent, git_snapshot(&loaded.manifest.project_root));
+                // The immutable attempt is the recovery commit point. If a
+                // later write fails, the intent remains for a deduplicating
+                // retry instead of losing the interrupted invocation.
+                store.write_attempt(record.attempt, &record)?;
+                apply_observation = true;
+            }
+        }
+    }
+
+    if apply_observation {
+        let mut state = loaded.state;
+        state.revision = state
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::InvalidState("revision overflow".into()))?;
+        state.status = RunStatus::Running;
+        store.save_transition(&state, observation, None)?;
+    }
+    if loaded.recovery.is_some() {
+        store.clear_recovery()?;
+    }
+    store.clear_attempt_intent()?;
     drop(_lock);
     status_for_store(&store)
 }
@@ -660,16 +811,15 @@ pub fn git_snapshot(project_root: &Path) -> GitSnapshot {
 }
 
 fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
-    let busy = match store.try_lock() {
-        Ok(lock) => {
-            drop(lock);
-            false
-        }
-        Err(RuntimeError::RunBusy) => true,
+    let snapshot_lock = match store.try_lock() {
+        Ok(lock) => Some(lock),
+        Err(RuntimeError::RunBusy) => None,
         Err(error) => return Err(error),
     };
+    let busy = snapshot_lock.is_none();
     let loaded = store.load()?;
     let attempts: Vec<AttemptRecord> = store.read_attempts()?;
+    let intent = read_attempt_intent(store)?;
     let prompt = inspect_prompt(
         &loaded.manifest,
         &loaded.workflow,
@@ -679,12 +829,12 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
     let usage = aggregate_usage(&attempts);
     let transported_input_tokens = usage.transported_input_tokens();
     let cache_read_ratio_basis_points = usage.cache_read_ratio_basis_points();
-    Ok(RunStatusView {
+    let view = RunStatusView {
         schema_version: RUNTIME_SCHEMA_VERSION,
         run_name: loaded.manifest.run_name,
         revision: loaded.state.revision,
         status: loaded.state.status,
-        recovery_required: loaded.recovery.is_some(),
+        recovery_required: loaded.recovery.is_some() || intent.is_some(),
         busy,
         attempts: attempts.len() as u64,
         prompt_bytes: prompt.bytes.len(),
@@ -694,7 +844,9 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
         transported_input_tokens,
         cache_read_ratio_basis_points,
         provider: provider_status(&loaded.manifest.provider),
-    })
+    };
+    drop(snapshot_lock);
+    Ok(view)
 }
 
 fn provider_status(provider: &ProviderConfig) -> ProviderStatus {
@@ -814,6 +966,8 @@ fn run_verification(
 #[allow(clippy::too_many_arguments)]
 fn fail_transition(
     store: &RunStore,
+    intent: &AttemptIntent,
+    intent_intact: bool,
     manifest: &Manifest,
     state: &CodingState,
     prompt: &CompiledPrompt,
@@ -825,7 +979,8 @@ fn fail_transition(
     control_unchanged: bool,
 ) -> Result<StepReport, RuntimeError> {
     let after_git = git_snapshot(&manifest.project_root);
-    let changed = !control_unchanged || workspace_changed(&before_git, &after_git);
+    let changed =
+        !intent_intact || !control_unchanged || workspace_changed(&before_git, &after_git);
     let record = result_attempt(
         manifest,
         state,
@@ -842,20 +997,66 @@ fn fail_transition(
         before_git.clone(),
         after_git.clone(),
     );
-    store.write_attempt(attempt, &record)?;
+    let recovery = changed.then_some(RecoveryRecord {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        attempt,
+        base_revision: state.revision,
+        reason: category,
+        before_git,
+        after_git,
+    });
+    finalize_attempt(store, intent, &record, recovery.as_ref(), intent_intact)?;
     if changed {
-        store.write_recovery(&RecoveryRecord {
-            schema_version: RUNTIME_SCHEMA_VERSION,
-            attempt,
-            base_revision: state.revision,
-            reason: category,
-            before_git,
-            after_git,
-        })?;
         Err(RuntimeError::RecoveryRequired)
     } else {
         Err(RuntimeError::ProviderFailed("invalid_transition".into()))
     }
+}
+
+fn finalize_attempt(
+    store: &RunStore,
+    intent: &AttemptIntent,
+    record: &AttemptRecord,
+    recovery: Option<&RecoveryRecord>,
+    intent_intact: bool,
+) -> Result<(), RuntimeError> {
+    store.write_attempt(record.attempt, record)?;
+    if let Some(recovery) = recovery {
+        store.write_recovery(recovery)?;
+    }
+    if intent_intact {
+        // Recheck immediately before removal so an altered intent is never
+        // silently discarded after a provider had access to the project.
+        if !store.attempt_intent_matches(intent)? {
+            return Err(RuntimeError::RecoveryRequired);
+        }
+        store.clear_attempt_intent()?;
+    }
+    Ok(())
+}
+
+fn read_attempt_intent(store: &RunStore) -> Result<Option<AttemptIntent>, RuntimeError> {
+    let intent: Option<AttemptIntent> = store.read_attempt_intent()?;
+    if let Some(intent) = intent.as_ref() {
+        intent.validate()?;
+    }
+    Ok(intent)
+}
+
+fn record_matches_intent(record: &AttemptRecord, intent: &AttemptIntent) -> bool {
+    record.attempt == intent.attempt
+        && record.base_revision == intent.base_revision
+        && record.provider == intent.provider
+        && record.configuration_sha256 == intent.configuration_sha256
+        && record.prompt_sha256 == intent.prompt_sha256
+        && record.stable_prompt_sha256 == intent.stable_prompt_sha256
+        && record.workflow_sha256 == intent.workflow_sha256
+        && record.prompt_bytes == intent.prompt_bytes
+        && record.stable_prompt_bytes == intent.stable_prompt_bytes
+        && record.dynamic_prompt_bytes == intent.dynamic_prompt_bytes
+        && record.state_before_sha256 == intent.state_before_sha256
+        && record.started_unix == intent.started_unix
+        && record.before_git == intent.before_git
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -894,6 +1095,8 @@ fn result_attempt(
         state_after_sha256: None,
         before_git,
         after_git,
+        accepted_task_ids: Vec::new(),
+        configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
     }
 }
 
@@ -932,6 +1135,37 @@ fn failed_attempt(
         state_after_sha256: None,
         before_git,
         after_git,
+        accepted_task_ids: Vec::new(),
+        configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
+    }
+}
+
+fn interrupted_attempt(intent: &AttemptIntent, after_git: GitSnapshot) -> AttemptRecord {
+    AttemptRecord {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        attempt: intent.attempt,
+        base_revision: intent.base_revision,
+        committed_revision: None,
+        outcome: AttemptOutcome::RecoveryRequired,
+        error_category: Some("interrupted".into()),
+        prompt_bytes: intent.prompt_bytes,
+        stable_prompt_bytes: intent.stable_prompt_bytes,
+        dynamic_prompt_bytes: intent.dynamic_prompt_bytes,
+        prompt_sha256: intent.prompt_sha256.clone(),
+        stable_prompt_sha256: intent.stable_prompt_sha256.clone(),
+        workflow_sha256: intent.workflow_sha256.clone(),
+        provider: intent.provider.clone(),
+        started_unix: intent.started_unix,
+        duration_ms: None,
+        exit_code: None,
+        response_bytes: None,
+        usage: ProviderUsage::default(),
+        state_before_sha256: intent.state_before_sha256.clone(),
+        state_after_sha256: None,
+        before_git: intent.before_git.clone(),
+        after_git,
+        accepted_task_ids: Vec::new(),
+        configuration_sha256: intent.configuration_sha256.clone(),
     }
 }
 
@@ -970,6 +1204,8 @@ fn successful_attempt(
         state_after_sha256: Some(state_hash(after_state)),
         before_git,
         after_git,
+        accepted_task_ids: Vec::new(),
+        configuration_sha256: super::ledger::configuration_sha256(&manifest.provider),
     }
 }
 

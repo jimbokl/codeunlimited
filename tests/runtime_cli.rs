@@ -111,6 +111,7 @@ fn run_help_lists_the_complete_bounded_lifecycle() {
         .success()
         .stdout(predicate::str::contains("init"))
         .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("ledger"))
         .stdout(predicate::str::contains("prompt"))
         .stdout(predicate::str::contains("step"))
         .stdout(predicate::str::contains("auto"))
@@ -899,7 +900,7 @@ fn non_utf8_recovery_observation_is_rejected_without_clearing_recovery() {
 
 #[cfg(unix)]
 #[test]
-fn post_provider_read_only_store_preserves_state_and_journals_the_attempt() {
+fn read_only_store_refuses_provider_launch_when_attempt_intent_cannot_be_persisted() {
     use std::os::unix::fs::PermissionsExt;
 
     let project = TempDir::new().expect("project");
@@ -926,13 +927,17 @@ fn post_provider_read_only_store_preserves_state_and_journals_the_attempt() {
         .stderr(predicate::str::contains("runtime[invalid_input]"));
 
     fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).expect("restore run");
-    assert!(capture.exists(), "failure must occur after provider launch");
+    assert!(
+        !capture.exists(),
+        "provider must not launch before its durable intent exists"
+    );
     assert_eq!(fs::read(state).expect("state after"), before);
     assert_eq!(
         fs::read_dir(run.join("attempts"))
             .expect("attempt journal")
             .count(),
-        1,
-        "every provider launch must be journaled"
+        0,
+        "a refused launch is not an attempt"
     );
+    assert!(!run.join("attempt-intent.json").exists());
 }

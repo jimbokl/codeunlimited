@@ -15,6 +15,8 @@ use super::model::{
 use super::prompt::{compile_prompt, inspect_prompt};
 use super::validate::{validate_manifest, validate_run_name, validate_state};
 
+const MAX_ATTEMPT_INTENT_BYTES: usize = 16 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPaths {
     pub project_root: PathBuf,
@@ -27,6 +29,7 @@ pub struct RunPaths {
     pub state: PathBuf,
     pub observation: PathBuf,
     pub lock: PathBuf,
+    pub attempt_intent: PathBuf,
     pub attempts: PathBuf,
     pub archive: PathBuf,
     pub recovery: PathBuf,
@@ -49,6 +52,7 @@ impl RunPaths {
             state: run.join("state.json"),
             observation: run.join("observation.txt"),
             lock: run.join("lock"),
+            attempt_intent: run.join("attempt-intent.json"),
             attempts: run.join("attempts"),
             archive: run.join("archive"),
             recovery: run.join("recovery.json"),
@@ -86,12 +90,12 @@ impl Drop for RunLock {
 impl RunStore {
     pub fn open(project_root: &Path, name: &str) -> Result<Self, RuntimeError> {
         let paths = RunPaths::new(project_root, name)?;
-        ensure_existing_directory(&paths.store_root)?;
-        ensure_existing_directory(&paths.runs_root)?;
-        ensure_existing_directory(&paths.run).map_err(|error| match error {
-            RuntimeError::Io(_) => RuntimeError::RunNotFound,
-            other => other,
-        })?;
+        for path in [&paths.store_root, &paths.runs_root, &paths.run] {
+            ensure_existing_directory(path).map_err(|error| match error {
+                RuntimeError::Io(_) => RuntimeError::RunNotFound,
+                other => other,
+            })?;
+        }
         ensure_existing_directory(&paths.attempts)?;
         ensure_existing_directory(&paths.archive)?;
         Ok(Self { paths })
@@ -238,6 +242,49 @@ impl RunStore {
         }
     }
 
+    pub fn write_attempt_intent<T: Serialize>(&self, value: &T) -> Result<(), RuntimeError> {
+        let bytes = json_bytes(value, "attempt-intent.json")?;
+        if bytes.len() > MAX_ATTEMPT_INTENT_BYTES {
+            return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
+        }
+        atomic_create(&self.paths.attempt_intent, &bytes)
+            .map_err(|_| io_error("create attempt intent"))
+    }
+
+    pub fn read_attempt_intent<T: DeserializeOwned>(&self) -> Result<Option<T>, RuntimeError> {
+        reject_symlink(&self.paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
+        let bytes = match fs::read(&self.paths.attempt_intent) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(io_error("read attempt intent")),
+        };
+        if bytes.len() > MAX_ATTEMPT_INTENT_BYTES {
+            return Err(RuntimeError::InvalidStoredData("attempt-intent.json"));
+        }
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| RuntimeError::InvalidStoredData("attempt-intent.json"))
+    }
+
+    pub fn attempt_intent_matches<T: Serialize>(&self, value: &T) -> Result<bool, RuntimeError> {
+        reject_symlink(&self.paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
+        let expected = json_bytes(value, "attempt-intent.json")?;
+        match fs::read(&self.paths.attempt_intent) {
+            Ok(actual) => Ok(actual == expected),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(io_error("read attempt intent")),
+        }
+    }
+
+    pub fn clear_attempt_intent(&self) -> Result<(), RuntimeError> {
+        reject_symlink(&self.paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
+        match fs::remove_file(&self.paths.attempt_intent) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(io_error("remove attempt intent")),
+        }
+    }
+
     pub fn read_attempts<T: DeserializeOwned>(&self) -> Result<Vec<T>, RuntimeError> {
         ensure_existing_directory(&self.paths.attempts)?;
         let mut paths = fs::read_dir(&self.paths.attempts)
@@ -367,6 +414,9 @@ fn check_run_paths(paths: &RunPaths) -> Result<(), RuntimeError> {
     if paths.provider_instructions.exists() {
         reject_symlink(&paths.provider_instructions).map_err(|_| RuntimeError::UnsafeStorePath)?;
     }
+    // This must be unconditional: Path::exists is false for a dangling
+    // symlink, while symlink_metadata in reject_symlink still detects it.
+    reject_symlink(&paths.attempt_intent).map_err(|_| RuntimeError::UnsafeStorePath)?;
     if paths.recovery.exists() {
         reject_symlink(&paths.recovery).map_err(|_| RuntimeError::UnsafeStorePath)?;
     }
@@ -388,9 +438,7 @@ fn write_json<T: Serialize>(
     value: &T,
     label: &'static str,
 ) -> Result<(), RuntimeError> {
-    let mut bytes =
-        serde_json::to_vec_pretty(value).map_err(|_| RuntimeError::InvalidStoredData(label))?;
-    bytes.push(b'\n');
+    let bytes = json_bytes(value, label)?;
     atomic_write(path, &bytes).map_err(|_| io_error("write runtime JSON"))
 }
 
@@ -399,10 +447,15 @@ fn write_new_json<T: Serialize>(
     value: &T,
     label: &'static str,
 ) -> Result<(), RuntimeError> {
+    let bytes = json_bytes(value, label)?;
+    atomic_create(path, &bytes).map_err(|_| io_error("create runtime JSON"))
+}
+
+fn json_bytes<T: Serialize>(value: &T, label: &'static str) -> Result<Vec<u8>, RuntimeError> {
     let mut bytes =
         serde_json::to_vec_pretty(value).map_err(|_| RuntimeError::InvalidStoredData(label))?;
     bytes.push(b'\n');
-    atomic_create(path, &bytes).map_err(|_| io_error("create runtime JSON"))
+    Ok(bytes)
 }
 
 fn cleanup_partial_create(paths: &RunPaths) {

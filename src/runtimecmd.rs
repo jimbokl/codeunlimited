@@ -7,8 +7,8 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::runtime::engine::{
-    cache_probe, init_run, recover, render_next_prompt, run_steps, status, step, InitRequest,
-    RunRef, RunStatusView,
+    cache_probe, init_run, ledger, recover, render_next_prompt, run_steps, status, step,
+    InitRequest, RunRef, RunStatusView,
 };
 use crate::runtime::model::{
     ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand,
@@ -148,6 +148,9 @@ pub enum RunCmd {
         /// Maximum provider attempts for the complete run
         #[arg(long, default_value_t = DEFAULT_MAX_STEPS)]
         max_steps: u64,
+        /// Soft admission boundary for observed input plus output tokens
+        #[arg(long, value_name = "N")]
+        max_total_tokens: Option<u64>,
         /// Maximum failed attempts against one state revision
         #[arg(long, default_value_t = DEFAULT_MAX_ATTEMPTS_PER_REVISION)]
         max_attempts_per_revision: u64,
@@ -169,6 +172,14 @@ pub enum RunCmd {
     },
     /// Show bounded state, prompt sizes, attempts, usage, and provider isolation
     Status {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show immutable worker-attempt counters and aggregate coverage
+    Ledger {
         #[command(flatten)]
         target: TargetArgs,
         /// Machine-readable output
@@ -248,6 +259,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             verify_every_step,
             allow_unverified_completion,
             max_steps,
+            max_total_tokens,
             max_attempts_per_revision,
             provider_timeout_seconds,
             workflow_budget_bytes,
@@ -327,6 +339,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             });
             let mut request = InitRequest::new(project, name, skill, objective, provider);
             request.max_steps = max_steps;
+            request.max_total_tokens = max_total_tokens;
             request.max_attempts_per_revision = max_attempts_per_revision;
             request.provider_timeout_seconds = provider_timeout_seconds;
             request.workflow_budget_bytes = workflow_budget_bytes;
@@ -349,6 +362,31 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 print_json(&view)?;
             } else {
                 print_status(&view);
+            }
+        }
+        RunCmd::Ledger { target, json } => {
+            let report = ledger(&reference(target)?)?;
+            if json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "run={} provider={} attempts={} complete={} observed_total_tokens={} total_tokens={} cap={}",
+                    report.run_name,
+                    report.provider,
+                    report.coverage.attempt_count,
+                    report.coverage.complete,
+                    report
+                        .coverage
+                        .observed_total_tokens
+                        .map_or_else(|| "overflow".into(), |value| value.to_string()),
+                    report
+                        .coverage
+                        .total_tokens
+                        .map_or_else(|| "unknown".into(), |value| value.to_string()),
+                    report
+                        .max_total_tokens
+                        .map_or_else(|| "none".into(), |value| value.to_string()),
+                );
             }
         }
         RunCmd::Prompt { target } => {
@@ -570,7 +608,9 @@ fn runtime_exit(error: &RuntimeError) -> (i32, &'static str) {
         RuntimeError::RecoveryRequired => (EXIT_RECOVERY_REQUIRED, "recovery_required"),
         RuntimeError::FieldTooLarge { .. }
         | RuntimeError::TooManyItems { .. }
-        | RuntimeError::StateBudgetExceeded { .. } => (EXIT_OVER_BUDGET, "over_budget"),
+        | RuntimeError::StateBudgetExceeded { .. }
+        | RuntimeError::TokenCapReached { .. }
+        | RuntimeError::TokenCapUsageUnknown => (EXIT_OVER_BUDGET, "over_budget"),
         RuntimeError::ProviderFailed(category) if category == "missing_executable" => {
             (EXIT_MISSING_PROVIDER, "missing_provider")
         }

@@ -30,6 +30,8 @@ pub struct Manifest {
     pub objective: String,
     pub provider: ProviderConfig,
     pub max_steps: u64,
+    #[serde(default)]
+    pub max_total_tokens: Option<u64>,
     pub max_attempts_per_revision: u64,
     pub provider_timeout_seconds: u64,
     pub workflow_budget_bytes: usize,
@@ -59,6 +61,7 @@ impl Manifest {
             objective: objective.to_string(),
             provider,
             max_steps: DEFAULT_MAX_STEPS,
+            max_total_tokens: None,
             max_attempts_per_revision: DEFAULT_MAX_ATTEMPTS_PER_REVISION,
             provider_timeout_seconds: DEFAULT_PROVIDER_TIMEOUT_SECONDS,
             workflow_budget_bytes: DEFAULT_WORKFLOW_BUDGET_BYTES,
@@ -482,6 +485,11 @@ pub enum RuntimeError {
     ProviderFailed(String),
     RecoveryRequired,
     AttemptLimit,
+    TokenCapReached {
+        limit: u64,
+        observed: u64,
+    },
+    TokenCapUsageUnknown,
     TerminalRun,
 }
 
@@ -548,6 +556,14 @@ impl fmt::Display for RuntimeError {
             Self::ProviderFailed(category) => write!(f, "provider failed: {category}"),
             Self::RecoveryRequired => write!(f, "run requires explicit recovery"),
             Self::AttemptLimit => write!(f, "run attempt limit reached"),
+            Self::TokenCapReached { limit, observed } => write!(
+                f,
+                "run observed {observed} total tokens; configured soft cap is {limit}"
+            ),
+            Self::TokenCapUsageUnknown => write!(
+                f,
+                "run has incomplete token usage; configured soft cap forbids another attempt"
+            ),
             Self::TerminalRun => write!(f, "run is already in a terminal state"),
         }
     }
