@@ -42,7 +42,7 @@
 - Produces: `apply_delta(&Manifest, &CodingState, StepEnvelope, &[ArtifactRef], Option<CheckResult>) -> Result<Transition, RuntimeError>`
 - Produces constants for every default and compiled hard cap from the approved spec
 
-- [ ] **Step 1: Add failing strict-model tests**
+- [x] **Step 1: Add failing strict-model tests**
 
   Add tests that deserialize an unknown state field, a stale `base_revision`,
   duplicate queue/completed IDs, an absolute or `..` artifact path, completion
@@ -63,14 +63,14 @@
   }
   ```
 
-- [ ] **Step 2: Run the focused tests and witness RED**
+- [x] **Step 2: Run the focused tests and witness RED**
 
   Run: `cargo test runtime::validate::tests -- --nocapture`
 
   Expected: compilation fails because `runtime`, `Manifest`, and `apply_delta`
   do not exist.
 
-- [ ] **Step 3: Implement serialized types and exact limits**
+- [x] **Step 3: Implement serialized types and exact limits**
 
   Define strict serde structs with `#[serde(deny_unknown_fields)]`, explicit
   schema version `1`, and the following shape:
@@ -109,7 +109,7 @@
   dependencies for later tasks. Keep dependency resolution compatible with
   Rust 1.82.
 
-- [ ] **Step 4: Implement validation and typed transitions**
+- [x] **Step 4: Implement validation and typed transitions**
 
   Validate names, UTF-8 byte caps, collection caps, path components, provider
   args, secret-looking flags, immutable fields, duplicate IDs, and total
@@ -119,14 +119,14 @@
   model's candidates and an optional runtime-produced `CheckResult`; the model
   cannot supply either digest or check evidence.
 
-- [ ] **Step 5: Add archive and terminal-state tests**
+- [x] **Step 5: Add archive and terminal-state tests**
 
   Add a test proving overflow archives the oldest completed/decision entries
   only when `memory_summary` changes, plus tests proving a valid `continue` and
   a valid `blocked` transition advance one revision without rewriting prior
   completed items.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
   Run: `cargo test runtime::validate::tests -- --nocapture`
 

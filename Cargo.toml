@@ -28,6 +28,8 @@ clap = { version = "=4.5.48", features = ["derive"] }
 toml = "0.8"
 fs2 = "0.4"
 tempfile = "=3.14.0"
+sha2 = "0.10"
+wait-timeout = "0.2"
 # Keep fresh Cargo 1.82 resolution from selecting edition-2024 indexmap.
 indexmap = "=2.11.4"
 
