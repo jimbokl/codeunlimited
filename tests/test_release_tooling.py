@@ -4,7 +4,9 @@ import datetime
 import json
 import pathlib
 import re
+import subprocess
 import unittest
+from decimal import Decimal, localcontext
 
 from scripts.test_benchmark_local import (
     BenchmarkOutputTests,
@@ -22,10 +24,65 @@ class ExperimentEvidenceTests(unittest.TestCase):
         raw = path.read_text(encoding="utf-8")
         evidence = json.loads(raw)
 
-        for forbidden in ("/Users/", "/Volumes/", '"prompt"', '"response"', '"hostname"'):
-            self.assertNotIn(forbidden, raw)
+        lower_raw = raw.lower()
+        for forbidden in (
+            "/users/",
+            "/volumes/",
+            "prompt",
+            "response",
+            "hostname",
+            "claude-",
+            "gpt-",
+            "gemini-",
+        ):
+            self.assertNotIn(forbidden, lower_raw)
         for key in ("control_start_git_sha", "control_end_git_sha", "treatment_end_git_sha"):
             self.assertRegex(evidence["provenance"][key], re.compile(r"^[0-9a-f]{40}$"))
+
+        def commit_timestamp(sha: str) -> int:
+            result = subprocess.run(
+                ["git", "show", "-s", "--format=%ct", sha],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return int(result.stdout.strip())
+
+        provenance = evidence["provenance"]
+        self.assertEqual(
+            evidence["windows"]["control"]["started_unix"],
+            commit_timestamp(provenance["control_start_git_sha"]),
+        )
+        self.assertEqual(
+            evidence["windows"]["control"]["finished_unix"],
+            commit_timestamp(provenance["control_end_git_sha"]) + 1,
+        )
+        self.assertEqual(
+            evidence["windows"]["treatment"]["finished_unix"],
+            commit_timestamp(provenance["treatment_end_git_sha"]) + 1,
+        )
+        changed_after_treatment = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--name-only",
+                f'{provenance["treatment_end_git_sha"]}..HEAD',
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.assertLessEqual(
+            set(changed_after_treatment),
+            {
+                "CHANGELOG.md",
+                "docs/ACCURACY.md",
+                "docs/experiments/2026-09-04-v1.7-v1.8.json",
+            },
+            "treatment must end after the final production, tooling, and test commit",
+        )
 
         comparison = evidence["comparison_output"]
         categories = (
@@ -61,6 +118,34 @@ class ExperimentEvidenceTests(unittest.TestCase):
             comparison["observed_input_change_percent"],
             100.0 * expected_delta / (control / control_tasks),
         )
+        self.assertAlmostEqual(
+            comparison["observed_capacity_change_percent"],
+            100.0
+            * ((control / control_tasks) / (treatment / treatment_tasks) - 1.0),
+        )
+        independent = evidence["independent_arithmetic_check"]
+        control_totals = comparison["control"]["totals"]
+        treatment_totals = comparison["treatment"]["totals"]
+        for key in (*categories, "input_tokens", "output_tokens", "total_tokens"):
+            self.assertEqual(
+                independent["observed_delta_per_task"][key],
+                treatment_totals[key] / treatment_tasks
+                - control_totals[key] / control_tasks,
+            )
+        with localcontext() as context:
+            context.prec = 50
+            control_decimal = Decimal(control) / Decimal(control_tasks)
+            treatment_decimal = Decimal(treatment) / Decimal(treatment_tasks)
+            decimal_delta = treatment_decimal - control_decimal
+            self.assertEqual(
+                Decimal(independent["observed_input_change_percent_high_precision"]),
+                decimal_delta / control_decimal * Decimal(100),
+            )
+            self.assertEqual(
+                Decimal(independent["observed_capacity_change_percent_high_precision"]),
+                (control_decimal / treatment_decimal - Decimal(1)) * Decimal(100),
+            )
+        self.assertTrue(independent["matches_cli_json"])
         self.assertEqual(comparison["confidence"], "low")
         self.assertEqual(comparison["causality"], "observational")
 

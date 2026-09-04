@@ -63,6 +63,14 @@ class ReleaseCheckerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("codeunlimited-9.9.0.crate", result.stderr)
 
+    def test_package_audit_extracts_and_tests_the_exact_archive(self) -> None:
+        script = AUDIT_PACKAGE_SH.read_text(encoding="utf-8")
+        self.assertIn("mktemp -d", script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertIn('tar -xzf "$archive" -C "$audit_dir"', script)
+        self.assertIn('package_dir="$audit_dir/$package_prefix"', script)
+        self.assertNotIn('package_dir="$root/target/package/$package_prefix"', script)
+
 
 if __name__ == "__main__":
     unittest.main()
