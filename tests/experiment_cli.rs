@@ -1,4 +1,6 @@
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
@@ -11,6 +13,8 @@ use tempfile::TempDir;
 const FROM: &str = "2099-01-01T00:00:00Z";
 const END_MINUS_ONE: &str = "2099-01-01T23:59:59Z";
 const TO: &str = "2099-01-02T00:00:00Z";
+const TREATMENT_FROM: &str = "2099-01-03T00:00:00Z";
+const TREATMENT_TO: &str = "2099-01-04T00:00:00Z";
 
 fn binary(home: &Path) -> Command {
     let mut command = Command::cargo_bin("codeunlimited").expect("binary");
@@ -121,6 +125,62 @@ fn write_one_claude_request(home: &Path, project: &Path, timestamp: &str) {
         ),
     )
     .expect("Claude fixture");
+}
+
+fn write_compare_fixtures(home: &Path, project: &Path) {
+    let claude_key = codeunlimited::parsers::claude_project_key(project);
+    let path = home
+        .join("claude/projects")
+        .join(claude_key)
+        .join("compare.jsonl");
+    fs::create_dir_all(path.parent().expect("Claude fixture parent"))
+        .expect("Claude fixture directory");
+    fs::write(
+        path,
+        concat!(
+            r#"{"type":"assistant","sessionId":"control-session","timestamp":"2099-01-01T12:00:00Z","message":{"id":"control","model":"private-model","usage":{"input_tokens":100,"output_tokens":10}}}"#,
+            "\n",
+            r#"{"type":"assistant","sessionId":"treatment-session","timestamp":"2099-01-03T12:00:00Z","message":{"id":"treatment","model":"private-model","usage":{"input_tokens":80,"output_tokens":8}}}"#,
+            "\n",
+        ),
+    )
+    .expect("comparison fixtures");
+}
+
+fn append_missing_timestamp_request(home: &Path, project: &Path) {
+    let claude_key = codeunlimited::parsers::claude_project_key(project);
+    let path = home
+        .join("claude/projects")
+        .join(claude_key)
+        .join("compare.jsonl");
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(path)
+        .expect("comparison fixture");
+    file.write_all(
+        br#"{"type":"assistant","sessionId":"missing-session","message":{"id":"missing","model":"private-model","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+    )
+    .expect("missing timestamp fixture");
+    file.write_all(b"\n").expect("fixture newline");
+}
+
+fn record_named(home: &Path, project: &Path, name: &str, from: &str, to: &str) -> Value {
+    run_json(
+        home,
+        &[
+            "experiment",
+            "record",
+            name,
+            "--from",
+            from,
+            "--to",
+            to,
+            "--tasks",
+            "1",
+            project.to_str().expect("UTF-8 project"),
+            "--json",
+        ],
+    )
 }
 
 #[test]
@@ -474,4 +534,122 @@ fn start_in_read_only_project_leaves_no_partial_state() {
         .path()
         .join(codeunlimited::experiment::EXPERIMENT_FILE)
         .exists());
+}
+
+#[test]
+fn compare_json_preserves_exact_records_and_text_states_limitations() {
+    let home = TempDir::new().expect("isolated homes");
+    let project = TempDir::new().expect("project");
+    write_compare_fixtures(home.path(), project.path());
+    let control = record_named(home.path(), project.path(), "control", FROM, TO);
+    let treatment = record_named(
+        home.path(),
+        project.path(),
+        "treatment",
+        TREATMENT_FROM,
+        TREATMENT_TO,
+    );
+
+    let comparison = run_json(
+        home.path(),
+        &[
+            "experiment",
+            "compare",
+            "control",
+            "treatment",
+            project.path().to_str().expect("UTF-8 project"),
+            "--json",
+        ],
+    );
+
+    assert_eq!(comparison["control"], control);
+    assert_eq!(comparison["treatment"], treatment);
+    assert_eq!(comparison["control_input_tokens_per_task"], 100.0);
+    assert_eq!(comparison["treatment_input_tokens_per_task"], 80.0);
+    assert_eq!(comparison["observed_input_delta_per_task"], -20.0);
+    assert_eq!(comparison["observed_input_change_percent"], -20.0);
+    assert_eq!(comparison["observed_capacity_change_percent"], 25.0);
+    assert_eq!(comparison["confidence"], "low");
+    assert_eq!(comparison["causality"], "observational");
+
+    let text = binary(home.path())
+        .args([
+            "experiment",
+            "compare",
+            "control",
+            "treatment",
+            project.path().to_str().expect("UTF-8 project"),
+        ])
+        .output()
+        .expect("text comparison");
+    assert!(text.status.success());
+    let text = String::from_utf8(text.stdout).expect("comparison UTF-8");
+    assert!(text.contains("exact observed counters"));
+    assert!(text.contains("lower observed input"));
+    assert!(text.contains("low confidence"));
+    assert!(text.contains("does not establish causality"));
+}
+
+#[test]
+fn compare_refusals_leave_state_byte_identical() {
+    let home = TempDir::new().expect("isolated homes");
+    let project = TempDir::new().expect("project");
+    let project_arg = project.path().to_str().expect("UTF-8 project");
+    write_compare_fixtures(home.path(), project.path());
+    record_named(home.path(), project.path(), "control", FROM, TO);
+    record_named(
+        home.path(),
+        project.path(),
+        "treatment",
+        TREATMENT_FROM,
+        TREATMENT_TO,
+    );
+    record_named(
+        home.path(),
+        project.path(),
+        "overlap",
+        "2099-01-01T06:00:00Z",
+        "2099-01-02T06:00:00Z",
+    );
+    record_named(
+        home.path(),
+        project.path(),
+        "empty",
+        "2099-01-05T00:00:00Z",
+        "2099-01-06T00:00:00Z",
+    );
+    binary(home.path())
+        .args(["experiment", "start", "active", project_arg])
+        .assert()
+        .success();
+    append_missing_timestamp_request(home.path(), project.path());
+    record_named(
+        home.path(),
+        project.path(),
+        "incomplete",
+        TREATMENT_FROM,
+        TREATMENT_TO,
+    );
+
+    let state_path = project
+        .path()
+        .join(codeunlimited::experiment::EXPERIMENT_FILE);
+    let original = fs::read(&state_path).expect("experiment state");
+    for (control, treatment) in [
+        ("control", "overlap"),
+        ("control", "active"),
+        ("control", "incomplete"),
+        ("control", "empty"),
+        ("control", "unknown"),
+    ] {
+        binary(home.path())
+            .args(["experiment", "compare", control, treatment, project_arg])
+            .assert()
+            .failure();
+        assert_eq!(
+            fs::read(&state_path).expect("preserved state"),
+            original,
+            "compare mutated state for {control}/{treatment}"
+        );
+    }
 }

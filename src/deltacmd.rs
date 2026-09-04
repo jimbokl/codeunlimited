@@ -9,6 +9,7 @@ use crate::types::Request;
 use crate::{metrics, parsers};
 
 pub const BASELINE_FILE: &str = ".codeunlimited.baseline.json";
+pub const MIN_VERDICT_REQUESTS: u64 = 100;
 
 /// One source's slice of the baseline captured by `init`.
 pub struct BaselineSrc {
@@ -74,6 +75,14 @@ fn print_source(b: &BaselineSrc, now: &metrics::Metrics) {
         " {:26} {:>13.1}x {:>13.1}x",
         "long-session context growth", b.growth, now.context_growth
     );
+    if now.requests < MIN_VERDICT_REQUESTS {
+        println!(
+            " insufficient sample ({}/{} requests) - exact metrics shown without a directional verdict.",
+            now.requests, MIN_VERDICT_REQUESTS
+        );
+        println!();
+        return;
+    }
     if b.prompt > 0.0 {
         let change = 100.0 * (now.avg_prompt_per_turn - b.prompt) / b.prompt;
         if change <= -1.0 {

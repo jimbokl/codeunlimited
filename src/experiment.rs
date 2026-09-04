@@ -748,9 +748,45 @@ pub fn compare(control: &str, treatment: &str, project: &Path, json: bool) -> i3
         if json {
             print_json(&comparison)
         } else {
+            let control_totals = comparison
+                .control
+                .totals
+                .as_ref()
+                .ok_or_else(|| "control experiment has no totals".to_string())?;
+            let treatment_totals = comparison
+                .treatment
+                .totals
+                .as_ref()
+                .ok_or_else(|| "treatment experiment has no totals".to_string())?;
             println!(
-                "observed input difference per task: {:.0} tokens ({:.1}%)",
-                comparison.observed_input_delta_per_task, comparison.observed_input_change_percent
+                "exact observed counters: control={} input tokens/tasks={}; treatment={} input tokens/tasks={}",
+                control_totals.input_tokens,
+                comparison.control.completed_tasks.unwrap_or(0),
+                treatment_totals.input_tokens,
+                comparison.treatment.completed_tasks.unwrap_or(0)
+            );
+            if comparison.observed_input_delta_per_task < 0.0 {
+                println!(
+                    "treatment has {:.0} lower observed input tokens per task ({:.1}% change); observed capacity change {:+.1}%",
+                    comparison.observed_input_delta_per_task.abs(),
+                    comparison.observed_input_change_percent,
+                    comparison.observed_capacity_change_percent
+                );
+            } else if comparison.observed_input_delta_per_task > 0.0 {
+                println!(
+                    "treatment has {:.0} higher observed input tokens per task ({:+.1}% change); observed capacity change {:+.1}%",
+                    comparison.observed_input_delta_per_task,
+                    comparison.observed_input_change_percent,
+                    comparison.observed_capacity_change_percent
+                );
+            } else {
+                println!("treatment has equal observed input tokens per task (0.0% change)");
+            }
+            if comparison.confidence == "low" {
+                println!("low confidence: either arm has fewer than three completed tasks");
+            }
+            println!(
+                "observational comparison: this observed difference does not establish causality"
             );
             Ok(())
         }
