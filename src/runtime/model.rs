@@ -267,6 +267,39 @@ pub struct Transition {
     pub observation: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitSnapshot {
+    pub available: bool,
+    pub head: Option<String>,
+    pub status_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryRecord {
+    pub schema_version: u64,
+    pub attempt: u64,
+    pub base_revision: u64,
+    pub reason: String,
+    pub before_git: GitSnapshot,
+    pub after_git: GitSnapshot,
+}
+
+impl RecoveryRecord {
+    #[cfg(test)]
+    pub fn for_test(attempt: u64, base_revision: u64) -> Self {
+        Self {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            attempt,
+            base_revision,
+            reason: "ambiguous provider attempt".into(),
+            before_git: GitSnapshot::default(),
+            after_git: GitSnapshot::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     UnsupportedSchema {
@@ -304,6 +337,14 @@ pub enum RuntimeError {
         actual: usize,
         allowed: usize,
     },
+    RunExists,
+    RunNotFound,
+    RunBusy,
+    AttemptExists(u64),
+    UnsafeStorePath,
+    InvalidStoredData(&'static str),
+    WorkflowHashMismatch,
+    Io(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -355,6 +396,14 @@ impl fmt::Display for RuntimeError {
             Self::StateBudgetExceeded { actual, allowed } => {
                 write!(f, "state is {actual} bytes; limit is {allowed}")
             }
+            Self::RunExists => write!(f, "run already exists"),
+            Self::RunNotFound => write!(f, "run does not exist"),
+            Self::RunBusy => write!(f, "run is busy"),
+            Self::AttemptExists(attempt) => write!(f, "attempt {attempt} already exists"),
+            Self::UnsafeStorePath => write!(f, "runtime store contains an unsafe path"),
+            Self::InvalidStoredData(name) => write!(f, "invalid stored runtime data: {name}"),
+            Self::WorkflowHashMismatch => write!(f, "workflow snapshot hash mismatch"),
+            Self::Io(operation) => write!(f, "runtime I/O failed during {operation}"),
         }
     }
 }

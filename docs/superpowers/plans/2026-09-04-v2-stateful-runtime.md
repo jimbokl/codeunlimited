@@ -149,7 +149,7 @@
 - Produces: `RunStore::{create, load, try_lock, save_transition, write_attempt, write_recovery, recover}`
 - Consumes: the strict model and existing `safeio::atomic_write`
 
-- [ ] **Step 1: Add failing store tests**
+- [x] **Step 1: Add failing store tests**
 
   Cover first creation, duplicate creation, strict round-trip, corrupt JSON,
   unsupported schema, symlinked store/run/state/workflow/observation, immutable
@@ -167,28 +167,28 @@
   }
   ```
 
-- [ ] **Step 2: Witness RED**
+- [x] **Step 2: Witness RED**
 
   Run: `cargo test runtime::store::tests -- --nocapture && cargo test safeio::tests -- --nocapture`
 
   Expected: compilation fails because `RunStore` and `atomic_create` are
   missing.
 
-- [ ] **Step 3: Implement atomic create and strict path handling**
+- [x] **Step 3: Implement atomic create and strict path handling**
 
   Add `atomic_create` using a same-directory `NamedTempFile`, `sync_all`, and
   `persist_noclobber`. Reject symlinks for every security-sensitive path before
   reads or writes. Canonicalize the project root once, but never canonicalize a
   model-supplied relative path across a symlink boundary.
 
-- [ ] **Step 4: Implement run creation and loading**
+- [x] **Step 4: Implement run creation and loading**
 
   `create` writes immutable `workflow.md`, `manifest.json`, initial
   `state.json`, and empty `observation.txt`. If a later file fails, remove only
   files created by this invocation and remove the run directory only when it
   is empty. `load` verifies strict JSON, workflow hash, and all budgets.
 
-- [ ] **Step 5: Implement lock, attempt, archive, and recovery writes**
+- [x] **Step 5: Implement lock, attempt, archive, and recovery writes**
 
   Use `fs2::FileExt::try_lock_exclusive` for the complete step lifetime. Store
   attempt and archive files under zero-padded revision/attempt names using
@@ -196,7 +196,7 @@
   and the state file is the commit point. Recovery removal happens only after
   the recovered state and observation commit successfully.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
   Run: `cargo test runtime::store::tests -- --nocapture && cargo test safeio::tests -- --nocapture`
 

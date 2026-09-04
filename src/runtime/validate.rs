@@ -29,7 +29,7 @@ pub const MAX_ATTEMPTS_PER_REVISION: u64 = 10;
 
 pub fn validate_manifest(manifest: &Manifest) -> Result<(), RuntimeError> {
     validate_schema(manifest.schema_version)?;
-    validate_safe_id(&manifest.run_name).map_err(|_| RuntimeError::InvalidRunName)?;
+    validate_run_name(&manifest.run_name)?;
     validate_text("objective", &manifest.objective, MAX_OBJECTIVE_BYTES, false)?;
     if !manifest.project_root.is_absolute() {
         return Err(RuntimeError::InvalidManifest(
@@ -87,6 +87,10 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<(), RuntimeError> {
         validate_args(&command.args, None)?;
     }
     Ok(())
+}
+
+pub fn validate_run_name(value: &str) -> Result<(), RuntimeError> {
+    validate_safe_id(value).map_err(|_| RuntimeError::InvalidRunName)
 }
 
 pub fn validate_state(manifest: &Manifest, state: &CodingState) -> Result<(), RuntimeError> {
