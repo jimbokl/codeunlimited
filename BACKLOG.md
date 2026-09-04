@@ -12,6 +12,8 @@ Only unshipped work belongs here. Completed capabilities are summarized in
       and compare its embedded VCS SHA with the tag.
 - [ ] Rebase or retarget the reviewed 1.7 performance pull request after 1.6,
       merge it, and verify `v1.7.0` artifacts before publishing the crate.
+- [ ] Rebase or retarget the reviewed 1.8 measurement pull request after 1.7,
+      merge it, and verify `v1.8.0` artifacts before publishing the crate.
 - [ ] Update both release notes with any migration caveats found in the final
       smoke tests.
 

@@ -20,7 +20,10 @@ or download a binary from https://github.com/jimbokl/codeunlimited/releases).
 3. **Set up measurement.** If the project has no baseline yet, `fix --apply`
    captures one. Tell the user to re-check in a few days with
    `codeunlimited report .` - the trend table provides observational evidence,
-   not proof that codeunlimited caused a change.
+   not proof that codeunlimited caused a change. For a bounded task cohort, use
+   `codeunlimited experiment start <name> .`, then
+   `codeunlimited experiment finish <name> --tasks <N> . --json` after the
+   declared tasks finish. Compare only non-overlapping complete records.
 4. **Weekly ritual.** For "keep an eye on it" requests, suggest
    `codeunlimited schedule` (weekly summary) and `codeunlimited compare`
    (this week vs last).
@@ -32,5 +35,8 @@ or download a binary from https://github.com/jimbokl/codeunlimited/releases).
 - Describe opportunities as estimates and quote numbers exactly as the tool
   prints them, including ranges; they are deliberately conservative
   (docs/ACCURACY.md in the repo).
+- Describe experiment totals as exact observed counters for their explicit
+  half-open windows, but never describe an observed difference as proven or
+  guaranteed savings. Preserve low-confidence and observational labels.
 - If a command reports unrecognized log lines, run `codeunlimited doctor`
   and suggest filing a format-drift issue.

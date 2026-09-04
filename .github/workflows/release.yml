@@ -30,6 +30,7 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
+          bash scripts/check_release.sh "$version"
           python scripts/check_release.py --expected "$version" --tag "$GITHUB_REF_NAME"
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings

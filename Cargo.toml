@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Offline estimates of token-leak opportunities, one-command fixes, and before/after tracking for Claude Code and Codex CLI."

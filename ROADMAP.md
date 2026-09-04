@@ -4,7 +4,7 @@ Mission: **fit more useful agent work into the subscription limits people
 already pay for.** The Rust CLI is the product. The Python package remains a
 legacy detector prototype and has a separate distribution name.
 
-## Shipped through 1.7
+## Shipped through 1.8
 
 - Fast local parsing for Claude Code and Codex logs, project-scoped audit,
   bounded time windows, and versioned JSON output.
@@ -24,6 +24,9 @@ legacy detector prototype and has a separate distribution name.
 - Rust 1.82 MSRV, RustSec and package gates, tag/version validation, checksummed
   release artifacts, Python 3.10 compatibility, MIT license, and a distinct
   Python reference command.
+- Strict offline experiment ledgers with exact half-open-window counters,
+  completed-task normalization, observational comparisons, low-confidence
+  disclosure, and a 100-request minimum for directional `delta` verdicts.
 
 ## Next: measurement depth
 
@@ -39,7 +42,8 @@ legacy detector prototype and has a separate distribution name.
 ## Distribution and reach
 
 - Merge and publish the approved 1.6 release first, then the stacked 1.7
-  performance release from its reviewed commit.
+  performance release, then the stacked 1.8 measurement release from their
+  reviewed commits.
 - Homebrew, Scoop, and winget packages driven from the checksummed GitHub
   artifacts.
 - A small documentation site and verified installation guides for each

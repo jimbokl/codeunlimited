@@ -192,9 +192,14 @@ fn repeated_scope_uses_index() {
     assert_eq!(index["schema_version"], 1);
     assert!(!raw.contains("gpt-target"));
     assert!(!raw.contains("gpt-other"));
-    assert!(!raw.contains("input_tokens"));
-    assert!(!raw.contains("111"));
-    assert!(!raw.contains("222"));
+    for private_usage_field in [
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "last_token_usage",
+    ] {
+        assert!(!raw.contains(private_usage_field));
+    }
 }
 
 #[test]

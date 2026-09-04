@@ -1,8 +1,6 @@
 //! Shared filesystem mutation helpers.
 
-use std::fs;
-#[cfg(unix)]
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -15,7 +13,7 @@ pub enum UpdateOutcome {
     Unchanged,
 }
 
-fn reject_symlink(path: &Path) -> io::Result<()> {
+pub(crate) fn reject_symlink(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -42,6 +40,21 @@ pub fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
 
 /// Atomically replace a regular file with bytes written in the same directory.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_with_post_commit(path, bytes, |persisted, parent| {
+        persisted.sync_all()?;
+        #[cfg(unix)]
+        File::open(parent)?.sync_all()?;
+        #[cfg(not(unix))]
+        let _ = parent;
+        Ok(())
+    })
+}
+
+fn atomic_write_with_post_commit(
+    path: &Path,
+    bytes: &[u8],
+    post_commit: impl FnOnce(&File, &Path) -> io::Result<()>,
+) -> io::Result<()> {
     reject_symlink(path)?;
     let parent = path
         .parent()
@@ -50,14 +63,14 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let existing_permissions = fs::metadata(path).ok().map(|m| m.permissions());
     let mut tmp = NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
-    tmp.as_file().sync_all()?;
     if let Some(permissions) = existing_permissions {
         tmp.as_file().set_permissions(permissions)?;
     }
+    tmp.as_file().sync_all()?;
     let persisted = tmp.persist(path).map_err(|e| e.error)?;
-    persisted.sync_all()?;
-    #[cfg(unix)]
-    File::open(parent)?.sync_all()?;
+    // The rename is the commit point. Durability sync is best effort because
+    // returning an error now would falsely claim that state was not changed.
+    let _ = post_commit(&persisted, parent);
     Ok(())
 }
 
@@ -89,4 +102,23 @@ pub fn update_text_with_backup(path: &Path, text: &str) -> io::Result<UpdateOutc
         Some(backup) => UpdateOutcome::Updated { backup },
         None => UpdateOutcome::Created,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_commit_sync_failure_does_not_report_an_uncommitted_write() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("state.json");
+        fs::write(&path, b"old").expect("old state");
+
+        let result = atomic_write_with_post_commit(&path, b"new", |_, _| {
+            Err(io::Error::other("injected post-commit sync failure"))
+        });
+
+        assert!(result.is_ok(), "rename already committed the new state");
+        assert_eq!(fs::read(path).expect("committed state"), b"new");
+    }
 }

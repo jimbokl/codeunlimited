@@ -103,6 +103,26 @@ similar task mix, models, and team. Run `init` at the boundary, keep task succes
 criteria fixed, and record every completed or failed task rather than selecting
 only successful examples.
 
+For auditable bounded windows, use the 1.8 experiment ledger:
+
+```bash
+codeunlimited experiment start treatment .
+# Complete the declared work without changing the measurement rule.
+codeunlimited experiment finish treatment --tasks 3 . --json
+
+# A prior whole-second RFC 3339 window can be backfilled with the same shipped parser.
+codeunlimited experiment record control \
+  --from 2026-08-01T00:00:00Z --to 2026-08-08T00:00:00Z \
+  --tasks 3 . --json
+codeunlimited experiment compare control treatment . --json
+```
+
+The ledger sums exact observed integer counters for `start <= timestamp < end`
+and stores the task denominators used by the comparison. Repeat comparable
+tasks in each arm; fewer than three completed tasks on either side is explicitly
+low confidence. Even a counter-exact result remains observational unless task
+assignment and confounders support a causal design.
+
 Primary KPI:
 
 ```text

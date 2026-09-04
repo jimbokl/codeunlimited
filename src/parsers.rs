@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -56,7 +56,7 @@ pub struct CodexScan {
 }
 
 type ClaudeRecord = (Option<String>, Option<Request>);
-type ClaudeFileScan = Option<(Vec<ClaudeRecord>, ScanStats)>;
+type ClaudeFileScan = io::Result<(Vec<ClaudeRecord>, ScanStats)>;
 
 #[derive(Default)]
 struct FileObservation {
@@ -89,7 +89,7 @@ struct CodexCandidate {
     fingerprint: Option<FileFingerprint>,
 }
 
-type CodexFileScan = Option<(Vec<Request>, LimitSeries, ScanStats, FileObservation)>;
+type CodexFileScan = io::Result<(Vec<Request>, LimitSeries, ScanStats, FileObservation)>;
 
 struct ParsedCandidate {
     key: String,
@@ -151,6 +151,23 @@ fn jsonl_files(base: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn jsonl_files_checked(base: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(base) {
+        let entry = entry.map_err(io::Error::other)?;
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "jsonl")
+        {
+            files.push(entry.into_path());
+        }
+    }
+    files.sort_unstable();
+    Ok(files)
+}
+
 fn u64_of(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
@@ -166,14 +183,14 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
         .and_then(|s| s.to_str())
         .unwrap_or("?")
         .into();
-    let f = File::open(path).ok()?;
+    let f = File::open(path)?;
     let mut stats = ScanStats {
         files_opened: 1,
         ..ScanStats::default()
     };
     let mut out = Vec::new();
     for line in BufReader::new(f).lines() {
-        let Ok(line) = line else { continue };
+        let line = line?;
         if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
             continue;
         }
@@ -234,7 +251,7 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
         ));
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    Some((out, stats))
+    Ok((out, stats))
 }
 
 pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
@@ -295,6 +312,51 @@ pub fn iter_claude(project: Option<&Path>) -> Vec<Request> {
         use_index: false,
     })
     .requests
+}
+
+/// Strict Claude scan used by experiment accounting. Missing source roots are
+/// empty, but discovery and file I/O failures abort the measurement.
+pub fn iter_claude_checked(project: Option<&Path>) -> io::Result<Vec<Request>> {
+    let root = claude_root();
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let files = match project {
+        Some(project) => {
+            let key = claude_project_key(project).to_lowercase();
+            let mut files = Vec::new();
+            for entry in std::fs::read_dir(&root)? {
+                let entry = entry?;
+                if entry.file_name().to_string_lossy().to_lowercase() == key {
+                    files.extend(jsonl_files_checked(&entry.path())?);
+                }
+            }
+            files
+        }
+        None => jsonl_files_checked(&root)?,
+    };
+
+    let parsed: Vec<ClaudeFileScan> = files
+        .par_iter()
+        .map(|path| parse_claude_file(path, None))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut requests = Vec::new();
+    for scan in parsed {
+        let (records, _) = scan?;
+        for (message_id, request) in records {
+            if let Some(message_id) = message_id {
+                if !seen.insert(message_id) {
+                    continue;
+                }
+            }
+            if let Some(request) = request {
+                requests.push(request);
+            }
+        }
+    }
+    Ok(requests)
 }
 
 fn normalize_path_text(raw: &str) -> String {
@@ -372,7 +434,7 @@ fn leading_timestamp(line: &str) -> Option<i64> {
 }
 
 fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
-    let f = File::open(path).ok()?;
+    let f = File::open(path)?;
     let mut stats = ScanStats {
         files_opened: 1,
         ..ScanStats::default()
@@ -389,7 +451,7 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
     let mut series: LimitSeries = Vec::new();
     let mut observation = FileObservation::default();
     for line in BufReader::new(f).lines() {
-        let Ok(line) = line else { continue };
+        let line = line?;
         if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
             continue;
         }
@@ -473,7 +535,7 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
         });
         stats.usage_records = stats.usage_records.saturating_add(1);
     }
-    Some((out, series, stats, observation))
+    Ok((out, series, stats, observation))
 }
 
 fn parse_codex_batch(
@@ -554,7 +616,7 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let mut aggregate = CodexAggregate::default();
     for batch in candidates.chunks(batch_size) {
         for parsed in parse_codex_batch(batch, want.as_deref(), options.since) {
-            let Some((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
+            let Ok((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
                 continue;
             };
             aggregate.stats += file_stats;
@@ -599,6 +661,34 @@ pub fn iter_codex_full(project: Option<&Path>) -> (Vec<Request>, LimitSeries) {
 
 pub fn iter_codex(project: Option<&Path>) -> Vec<Request> {
     iter_codex_full(project).0
+}
+
+/// Strict Codex scan used by experiment accounting. Missing source roots are
+/// empty, but discovery and file I/O failures abort the measurement.
+pub fn iter_codex_checked(project: Option<&Path>) -> io::Result<Vec<Request>> {
+    let root = codex_root();
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Codex session root is not a directory: {}", root.display()),
+        ));
+    }
+
+    let want = project.map(path_key);
+    let files = jsonl_files_checked(&root)?;
+    let parsed: Vec<CodexFileScan> = files
+        .par_iter()
+        .map(|path| parse_codex_file(path, want.as_deref(), None))
+        .collect();
+    let mut requests = Vec::new();
+    for scan in parsed {
+        let (mut file_requests, _, _, _) = scan?;
+        requests.append(&mut file_requests);
+    }
+    Ok(requests)
 }
 
 #[cfg(test)]
@@ -691,7 +781,7 @@ mod tests {
         let parsed = parse_codex_batch(&candidates, None, None);
         let sessions: Vec<_> = parsed
             .into_iter()
-            .filter_map(|candidate| candidate.scan)
+            .map(|candidate| candidate.scan.expect("parsed candidate"))
             .flat_map(|(requests, _, _, _)| requests)
             .map(|request| request.session.to_string())
             .collect();
