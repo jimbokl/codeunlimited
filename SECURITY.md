@@ -33,6 +33,11 @@ Commands write only when their documented behavior requires it:
   the index contains no prompts, responses, models, token events, or counts.
   `audit --no-index` neither reads nor writes it;
 - `report --all` maintains `~/.codeunlimited/history.jsonl`;
+- `experiment start`, `finish`, and `record` atomically maintain
+  `.codeunlimited.experiments.json` in the selected project. It contains only
+  validated experiment names, Unix boundaries, task counts, completeness
+  counts, and aggregate token/request/session counters; it contains no models,
+  paths, prompts, responses, findings, hostnames, or raw log records;
 - `skill` writes `~/.claude/skills/codeunlimited/SKILL.md`; replacing different
   content requires `--force` and keeps a backup;
 - on Windows, `schedule` creates or removes the named Task Scheduler entry.

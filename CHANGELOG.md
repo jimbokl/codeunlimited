@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.8.0 - 2026-09-04
+
+- Added `experiment start|finish|record|compare|list`, a privacy-preserving
+  ledger of exact observed token counters for explicit half-open time windows.
+  Saved and JSON forms retain integer source totals and completed-task counts;
+  comparison percentages are presentation fields.
+- Experiment comparison refuses active, incomplete, empty, zero-token, or
+  overlapping records. Results are labeled observational, and either arm with
+  fewer than three completed tasks is called low confidence rather than causal
+  evidence of savings.
+- `delta` now requires 100 retained post-baseline requests per source before it
+  emits any directional verdict. Smaller samples show exact metrics and an
+  insufficient-sample message.
+- Experiment state uses strict versioned JSON and atomic replacement. Corrupt,
+  unreadable, unsupported, or symlinked state fails visibly without replacing
+  original bytes; experiment output excludes prompts, responses, models,
+  project paths, hostnames, and raw log records.
+
 ## 1.7.0 - 2026-09-03
 
 - Audit time and project filters now run inside the parsers, before retained

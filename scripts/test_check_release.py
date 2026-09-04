@@ -6,6 +6,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check_release.py"
+CHECKER_SH = ROOT / "scripts" / "check_release.sh"
 
 
 class ReleaseCheckerTests(unittest.TestCase):
@@ -18,13 +19,23 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("1.7.0")
+        result = self.run_checker("1.8.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_mismatching_expected_version_fails(self) -> None:
         result = self.run_checker("9.9.9")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("9.9.9", result.stdout + result.stderr)
+
+    def test_shell_wrapper_accepts_minor_release(self) -> None:
+        result = subprocess.run(
+            ["bash", str(CHECKER_SH), "1.8"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

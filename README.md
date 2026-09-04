@@ -50,6 +50,9 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # before/after tracking since init's baseline
+codeunlimited experiment start sprint-a myproject/  # begin an exact bounded ledger
+codeunlimited experiment finish sprint-a --tasks 3 myproject/ --json
+codeunlimited experiment compare control treatment myproject/ --json
 codeunlimited report myproject/   # saved report (MD + styled HTML): findings + delta + trend
 codeunlimited report --all        # one summary across every project you've touched
 codeunlimited fix myproject/      # findings -> concrete changes (dry-run; --apply)
@@ -67,6 +70,13 @@ selected project's file is layered on top. See the header of
 
 `report` extras: `--badge` writes an SVG "reclaimable %" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.
+
+`experiment` stores exact observed integer token counters for explicit
+half-open windows (`start <= request timestamp < finish`) and compares input
+tokens per declared completed task. The comparison is observational: it does
+not prove savings, and either arm with fewer than three tasks is labeled low
+confidence. Historical windows can be backfilled with `experiment record`;
+run `codeunlimited experiment --help` for the complete command set.
 
 The shipped CLI is the Rust binary. A legacy Python reference lives in
 `codeunlimited/` for detector prototyping; it is not feature-equivalent and
@@ -115,7 +125,7 @@ protocol, see [docs/BENCHMARKING.md](docs/BENCHMARKING.md).
 The runtime has no network client. It extracts token counts, model names,
 timestamps and project identifiers from local logs. Prompt and response text
 is not extracted, retained, printed, or transmitted. The files written by
-`init`, `fix`, `report`, `skill`, and `schedule` are listed in
+`init`, `fix`, `report`, `experiment`, `skill`, and `schedule` are listed in
 [SECURITY.md](SECURITY.md).
 
 ## Supported sources
