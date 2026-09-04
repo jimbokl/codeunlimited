@@ -1,4 +1,4 @@
-# Controlled A/B: useful negative evidence, not a savings proof
+# Session-boundary experiments: directional evidence, not a savings proof
 
 On 2026-09-04 the author ran two arms in parallel on the same reported model
 and eight small coding tasks (roman numerals, LRU cache, CSV parser, token
@@ -55,7 +55,7 @@ existing context remains useful; use a fresh session for a distinct multi-step
 task when the old context would mostly be dead weight. Measure tokens per
 completed comparable task instead of optimizing request size alone.
 
-## Round 2: pre-registered three-arm test (the decisive one)
+## Round 2: author-reported third arm
 
 The two-arm result left a dispute: "no savings" (treatment lost 17%) vs
 "savings exist" (field x6.8). Both follow from one law fitted on observed
@@ -63,10 +63,15 @@ constants - session boot b~24k, linear context growth g~1.0k/request:
 
     continue - restart = g*N*t0 - b   (restart pays iff N*t0 > b/g ~ 24)
 
-Minimizing total cost gives an optimal session length of ~7 requests
-(2-3 of these micro-tasks per session). **Prediction registered before the
-run**: a third arm batching the same 8 tasks as 3+3+2 per session would
-cost 0.70-0.90M - below BOTH prior arms.
+Minimizing total cost gives a modeled session length of ~7 requests
+(2-3 of these micro-tasks per session). The author reports predicting before
+the run that a third arm batching the same 8 tasks as 3+3+2 per session would
+cost 0.70-0.90M, below both prior arms. The specific arm, interval, and result
+first appear together in commit `3a3a3d7`; this repository therefore cannot
+independently verify that the quantitative protocol was registered before the
+run. The earlier commit `a1efd12` does independently preserve the qualitative
+~7-request heuristic and the direction that these micro-tasks should be
+batched.
 
 | arm | requests | total tokens |
 |---|---:|---:|
@@ -74,12 +79,19 @@ cost 0.70-0.90M - below BOTH prior arms.
 | treatment - 8 sessions x 1 task | 39 | 1.08M |
 | **optimal - 3 sessions (3+3+2)** | **22** | **0.65M** |
 
-Outcome: **-29.9% vs control, -40.2% vs treatment** - the predicted
-ordering held decisively (the point estimate even beat the registered
-interval's lower edge by 0.05M; all 123 tests green, same quality bar).
-The savings dispute is resolved: session-boundary discipline saves tokens
-when session length follows the break-even law, and burns tokens when it
-does not. The `fresh-sessions` technique text carries exactly this rule.
+The author reports **-29.9% vs control and -40.2% vs treatment**. The rounded
+values in the table independently imply -29.35% and -39.81%; exact totals are
+not checked in. The directional ordering matched the prediction, while the
+0.65M point estimate fell below the prediction interval's 0.70M lower bound.
+All 123 tests in the third arm passed, but the control reports 165 tests, so
+the repository does not establish an identical quality bar.
+
+This single run supports the session break-even hypothesis: both an
+indefinitely growing context and restart-per-task can waste tokens, while
+context-aware batching can use less. It does not establish causality, a
+universal threshold, or a universal savings percentage. See
+[EVIDENCE-VERDICT.md](EVIDENCE-VERDICT.md) for the independent audit and the
+evidence required to upgrade this result to a causal claim.
 
 ## Threats to validity
 
