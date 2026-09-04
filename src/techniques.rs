@@ -53,8 +53,12 @@ pub const CATALOG: &[Technique] = &[
         since: "0.1",
         claude: "**New task = new session.** Don't grow one chat for days: by the tail \
                  of a long session every turn drags the whole accumulated context. \
-                 Task done - /clear.",
-        agents: "New task = new session; don't grow one thread for days.",
+                 Task done - /clear. Break-even guardrail (measured): a fresh session \
+                 costs one ~25k boot and pays off when the next task is more than a \
+                 handful of turns - batch micro-tasks in one session instead of \
+                 restarting per prompt.",
+        agents: "New task = new session; don't grow one thread for days. Batch \
+                 micro-tasks: a restart pays off only for tasks longer than a few turns.",
     },
     Technique {
         id: "state-file-loops",
