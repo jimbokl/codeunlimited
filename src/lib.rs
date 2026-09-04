@@ -5,6 +5,7 @@ pub mod config;
 pub mod deltacmd;
 pub mod detectors;
 pub mod doctor;
+pub mod experiment;
 pub mod fixcmd;
 pub mod forecast;
 pub mod html;
