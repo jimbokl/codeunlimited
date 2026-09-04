@@ -2,15 +2,15 @@
 
 **Set up once — more work from the same subscription limits.**
 
-![codeunlimited audit](docs/assets/terminal.svg)
+![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 
-The core number is exact, not an estimate: in the author's own logs
-(71k requests, 113 days) the 9 longest sessions processed **3,551M prompt
-tokens where a bounded-context loop pays 519M — x6.8**, three billion tokens
-burned by context growth alone ([docs/BENCHMARK.md](docs/BENCHMARK.md),
-reproduce with `scripts/bench_context.py`). On top of that the audit
-estimates ~52% of weekly volume as reclaimable opportunity — estimates are
-conservative and documented in [docs/ACCURACY.md](docs/ACCURACY.md).
+`codeunlimited` separates what was **observed** from what is **modeled**. It
+sums local log counters exactly, estimates reclaimable opportunities with
+documented ranges, and measures the outcome in input tokens per comparable
+completed task. It does not promise a fixed savings percentage. A historical
+selected-session snapshot reported an x6.8 observed/model ratio; version 1.9
+labels that number as counterfactual exposure, not realized savings
+([methodology](docs/BENCHMARK.md)).
 
 You hit the weekly limit of Claude Code or Codex CLI mid-task. The limit is
 fixed — but how much *work* fits inside it is not. `codeunlimited` reads the
@@ -36,33 +36,39 @@ your projects up so the same subscription produces more code.
   auto-retries), each attempt dragging the full context.
 
 Plus a **limit forecast**: Codex logs expose `used_percent`, so the tool
-calibrates your window's capacity from your own data and answers "how many
-hours of work are left before the wall - and how much a fix moves it".
+calibrates your window's capacity from your own data and estimates how many
+hours remain at the observed pace. It does not attribute that forecast to a fix.
 
-Each finding is reported in **limit currency**: tokens reclaimed, % of your
-weekly volume, extra agent answers that fit into the same limit.
+Each finding is reported in **limit currency**: estimated reclaimable tokens,
+share of weekly volume, and an estimated number of extra agent answers.
 
 ## The techniques — no black box
 
 Every rule the tool installs is a named, individually toggleable technique.
-Each maps to a detector, and the numbers come from your own logs — run
-`codeunlimited audit` and `python scripts/bench_context.py` to regenerate
-every chart below on your machine.
+Each states its evidence level: some map directly to detectors, while others
+are workflow policies that must be evaluated with a comparable-task
+experiment. Run `codeunlimited audit` for local findings and
+`python scripts/bench_context.py --json` for the explicit context model.
 
-![Context tax measured exactly](docs/assets/chart-overall.svg)
+![Historical selected-session snapshot: 3,551M exact observed prompt tokens versus 519M modeled bounded tokens, an x6.8 counterfactual exposure ratio that is not realized savings](docs/assets/chart-overall.svg)
 
-![Reclaimable tokens per leak](docs/assets/chart-by-technique.svg)
+![Detector model parameters: context excess uses a 40–80% range with 60% midpoint; top-tier short replies, fat starts, and retry storms use 25–75% with 50% midpoint; confirmed in-TTL cache rewrites use the observed duplicate amount](docs/assets/chart-by-technique.svg)
+
+The second graphic shows estimation parameters, not achieved savings. Context
+excess uses a 40–80% range (60% midpoint); top-tier short replies, fat starts,
+and retry storms use 25–75% (50% midpoint). Confirmed in-TTL cache rewrites use
+the observed duplicate amount without an assumption range.
 
 | Technique | Prevents | Evidence | Default |
 |---|---|---|---|
-| `fresh-sessions` | dragging dead history through every turn | exact: x6.8 on 9 real sessions | on |
-| `state-file-loops` | re-reading conversation in long loops | exact (same benchmark) | on |
-| `manual-compact` | passive autocompact of stale threads | exact (same benchmark) | on |
+| `fresh-sessions` | dragging dead history through every turn | modeled exposure; short-batch A/B lost 17.4% | on |
+| `state-file-loops` | re-reading conversation in long loops | workflow policy; measure per completed task | on |
+| `manual-compact` | passive autocompact of stale threads | workflow policy; measure per completed task | on |
 | `delegate-mechanical` | top-tier model on renames/boilerplate | audit estimate w/ range | on, guardrailed |
 | `no-rereads` | re-reading files already in context | part of context tax | on |
 | `file-refs` | pasted file bodies living in context forever | part of context tax | on |
 | `concise-answers` | output tokens spent on narration | rule-only | on |
-| `mcp-hygiene` | unused MCP schemas billed at every session start | measured (fat-start detector) | on |
+| `mcp-hygiene` | unused MCP schemas billed at every session start | audit estimate w/ range (fat-start detector) | on |
 | `lean-memory` | oversized CLAUDE.md/AGENTS.md billed every turn | measured (fix check) | on |
 | `scan-ignore` | searches burning tokens in dumps/build output | rule-only | on |
 | `tool-output-budget` | verbose Codex command output | rule-only (config hint) | on |
@@ -98,9 +104,11 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/jimbokl/codeunlimited/main/install.ps1 | iex
 ```
 
-Both fetch the latest release binary for your platform, verify its sha256,
-and put it on PATH. Alternatives: `cargo install codeunlimited --locked` or
-a binary straight from GitHub Releases.
+Both require the release's sha256 before replacing an installed binary.
+PowerShell adds the verified directory to user PATH idempotently; the Unix
+installer uses `~/.local/bin` and prints the exact export when that directory
+is not already on PATH. Alternatives: `cargo install codeunlimited --locked`
+or a binary straight from GitHub Releases.
 
 ## Quick start
 
@@ -113,7 +121,7 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # before/after tracking since init's baseline
-codeunlimited experiment start sprint-a myproject/  # begin an exact bounded ledger
+codeunlimited experiment start sprint-a myproject/  # begin an observed-counter ledger
 codeunlimited experiment finish sprint-a --tasks 3 myproject/ --json
 codeunlimited experiment compare control treatment myproject/ --json
 codeunlimited report myproject/   # saved report (MD + styled HTML): findings + delta + trend
@@ -131,7 +139,7 @@ Machine-wide settings come from `~/.codeunlimited/config.toml`; an explicitly
 selected project's file is layered on top. See the header of
 [src/config.rs](src/config.rs) for the format.
 
-`report` extras: `--badge` writes an SVG "reclaimable %" badge for your
+`report` extras: `--badge` writes an SVG "estimated opportunity" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.
 
 `experiment` stores exact observed integer token counters for explicit
@@ -150,16 +158,18 @@ uses a non-conflicting command:
 ## Two ways to adopt — both first-class
 
 **Starting a new project:** run `codeunlimited init` in the fresh directory.
-Token-efficiency rules (fresh-session discipline, state-file pattern for long
-loops per [SKILL.state, arXiv 2608.26263](https://arxiv.org/abs/2608.26263),
-light-model delegation, MCP hygiene) are in place from day one and picked up
-by Claude Code and Codex automatically.
+Token-efficiency rules (context-aware session boundaries, state-file pattern
+for long loops per
+[SKILL.state, arXiv 2608.26263](https://arxiv.org/abs/2608.26263),
+light-model delegation, MCP hygiene) are in place from day one and picked up by
+Claude Code and Codex automatically.
 
 **Attaching to an existing project:** the same `codeunlimited init` appends
 the rules to your existing CLAUDE.md/AGENTS.md (idempotent, marker-guarded,
-with a backup before replacement)
-and — because the project already has history — instantly prints its
-baseline: requests, sessions, and the top limit leak found in *this* project.
+with a backup before replacement). Ambiguous or malformed marker layouts are
+rejected without changing the instruction file. For a valid block, the command
+also uses existing history to print an immediate baseline: requests, sessions,
+and the top limit leak found in *this* project.
 Then `codeunlimited audit --project <path>` gives the full scoped report,
 and re-running it later shows your delta.
 

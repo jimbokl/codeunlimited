@@ -51,7 +51,7 @@ def _baseline(root: Path) -> None:
           f"({total/1e6:.0f}M tokens) - existing project, baseline captured")
     top = [f for f in detectors.run_all(reqs) if f.impact_tokens > 0]
     if top:
-        print(f"  top leak here: {top[0].title} (~{top[0].impact_tokens/1e6:.0f}M tok. reclaimable)")
+        print(f"  top estimated opportunity: {top[0].title} (~{top[0].impact_tokens/1e6:.0f}M tok.)")
     print(f"  full scoped report: codeunlimited audit --project \"{root}\"")
 
 

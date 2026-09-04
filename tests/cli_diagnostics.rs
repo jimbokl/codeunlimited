@@ -93,7 +93,9 @@ fn delta_with_one_hundred_requests_retains_directional_verdict() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("delta UTF-8");
-    assert!(stdout.contains("VERDICT: context per turn is down 50%"));
+    assert!(stdout.contains("METRIC TREND: context per turn is down 50%"));
+    assert!(stdout.contains("modeled capacity proxy +100%"));
+    assert!(!stdout.contains("more work"));
 }
 
 #[test]

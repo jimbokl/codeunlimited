@@ -1,55 +1,58 @@
-# Show HN draft (ready to post)
+# Show HN draft
 
-**Title:** Show HN: I reclaimed half of my Claude Code weekly limit with an offline audit
+**Title:** Show HN: codeunlimited — an offline audit for Claude Code and Codex context waste
 
 **Body:**
 
-I kept hitting the weekly limit of Claude Code and Codex CLI mid-task, so I
-wrote a tool that reads the session logs both CLIs already keep on disk and
-answers one question: where does the limit actually go, and how much more
-work could fit into it?
+I kept hitting agent subscription limits mid-task, so I built a Rust CLI that
+reads the session logs Claude Code and Codex already keep locally. It shows
+where tokens accumulate: long-session context growth, cache-prefix rewrites,
+retry storms, large session boots, and top-tier models used for mechanical
+replies.
 
-On my own logs (71k requests over 113 days) the audit found ~52% of weekly
-volume reclaimable. The headline number is exact, not an estimate: my 9
-longest sessions processed 3,551M prompt tokens where a bounded-context
-loop would have paid 519M - x6.8, three billion tokens burned purely by
-re-dragging history (methodology + reproduce script: docs/BENCHMARK.md).
-The two big leaks, in my case:
+The difficult part turned out to be measurement, not parsing. Version 1.9
+separates four evidence levels:
 
-1. **Context tax of long sessions** - by turn 40+, every reply drags the
-   whole accumulated history through the context window. My worst sessions
-   cost ~10x per turn at the tail vs the start.
-2. **Top-tier model on mechanical replies** - thousands of requests to the
-   most expensive model that ended in a 3-line answer.
+- exact observed log counters;
+- modeled counterfactuals such as “what if later turns stayed near the early
+  context size?”;
+- detector estimates with visible ranges;
+- realized input tokens per comparable completed task.
 
-`codeunlimited init` drops efficiency rules into CLAUDE.md/AGENTS.md and
-freezes a baseline; `fix --apply` adds a state-file scaffold for long loops;
-`report` then proves (or disproves) the savings against your own baseline,
-with a trend that grows one snapshot per run. After day one under the rules
-my context per turn is down ~50% - and the tool itself warns you that day-1
-deltas are mechanically flattered (young sessions are cheap), so it tracks
-the weekly trend instead of extrapolating. I'll keep posting the trend as
-it accumulates.
+That distinction changed the product guidance. A controlled short-task run
+made individual requests about 28% lighter, yet eight fresh sessions used
+roughly 17.4% more prompt tokens overall because they paid more boots and made
+more requests. A separate observational sprint comparison was also worse for
+treatment. So the tool no longer says “new task = new session” or promises a
+fixed savings percentage: batch small related tasks while context is useful,
+restart when a distinct multi-step task would mostly drag dead history, and
+measure the result.
 
-Details that matter:
+`codeunlimited init` installs individually toggleable rules into
+CLAUDE.md/AGENTS.md; `audit` explains opportunities; `experiment` records exact
+observed counters in bounded windows; and the paired-task harness evaluates
+repeated work.
+Malformed instruction markers now fail without changing the file, and the
+installers refuse binaries without a valid release checksum.
 
-- 100% offline. Only token counts, models, timestamps and project names are
-  read - prompts never. No proxy, no gateway, no API keys.
-- Rust, single binary, scans 3.6 GB of logs in ~2.4 s.
-- Every estimate is deliberately conservative and documented (docs/ACCURACY.md);
-  the day-1 delta dip is called out as mechanically biased - trust the trend.
-- It is not a usage tracker - ccusage does accounting better; this answers
-  "why so much and how to fit more".
+Details:
+
+- Offline: no proxy, gateway, telemetry, API keys, prompts, or responses.
+- Single Rust binary with Claude Code and Codex parsers.
+- Every estimate and model is documented in `docs/ACCURACY.md`.
+- Negative experiment results are published in `docs/EXPERIMENT.md`.
+- It complements accounting tools such as ccusage; it focuses on diagnosis and
+  outcome experiments.
 
 https://github.com/jimbokl/codeunlimited
 
 ---
 
 **Reddit variant title (r/ClaudeAI):**
-I audited 113 days of my Claude Code logs - half the weekly limit was going
-to context re-reads. Tool + numbers inside.
+I built an offline audit for agent context waste — and its first controlled
+experiment found a loss, not a win.
 
 **X thread opener:**
-Your Claude Code weekly limit isn't too small. It's leaking.
-I measured 71k of my own requests: ~52% of weekly volume was reclaimable.
-Here's where it goes and the offline tool that gets it back:
+Smaller agent requests do not automatically mean lower total usage. Our
+short-task treatment cut context per request but used ~17% more overall.
+codeunlimited now audits the leak and measures the outcome:

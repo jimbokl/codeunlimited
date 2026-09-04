@@ -89,7 +89,7 @@ enum ExperimentCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Find where your limit leaks (offline, local logs only)
+    /// Find estimated reclaimable opportunities (offline, local logs only)
     Audit {
         #[arg(long, value_enum, default_value = "all")]
         source: Source,
@@ -131,7 +131,7 @@ enum Cmd {
         /// Summary across every project seen by init/fix/report, plus global trend
         #[arg(long)]
         all: bool,
-        /// Also write CODEUNLIMITED_BADGE.svg (reclaimable % as a README badge)
+        /// Also write CODEUNLIMITED_BADGE.svg (estimated opportunity as a README badge)
         #[arg(long)]
         badge: bool,
         /// Hash project names so the report can be shared publicly
@@ -234,8 +234,7 @@ fn main() {
                 println!("{}", report::render(&reqs, &findings, color));
                 if let Some((used, win)) = parsers::peak(&series) {
                     println!(
-                        " Codex rate limit: peak {:.0}% of the {:.0}-day window observed - \
-                         every token below funds more work.",
+                        " Codex rate limit: peak {:.0}% of the {:.0}-day window observed.",
                         used,
                         win as f64 / 1440.0
                     );

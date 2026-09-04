@@ -4,29 +4,21 @@ Mission: **fit more useful agent work into the subscription limits people
 already pay for.** The Rust CLI is the product. The Python package remains a
 legacy detector prototype and has a separate distribution name.
 
-## Sprint v1.9 (Sep 5-7, 2026) — launch weekend
+## Sprint v1.9 (Sep 4, 2026) — trust release
 
-Polish Friday-Sunday, public launch Monday Sep 7.
+- [x] Thirteen named, toggleable techniques with opt-in quality-sensitive
+      settings and context-aware session boundaries.
+- [x] Fail-closed v1/v2 instruction upgrades with duplicate, malformed, and
+      CRLF coverage.
+- [x] Portable, unbiased context-tax model with visible incomplete accounting.
+- [x] Paired-task experiment analysis and publication of negative total-token
+      results without request-level pseudoreplication.
+- [x] Checksum-mandatory staged installers and native-runner tests.
+- [x] Complete Python discovery, immutable evidence provenance, and release
+      artifact smoke tests.
+- [ ] Tag v1.9.0, wait for all release jobs, and verify both live installers.
 
-- [ ] **One-command install**: `install.sh` (curl | sh) and `install.ps1`
-      (irm | iex) - latest release binary, sha256 verification, PATH setup;
-      README leads with it.
-- [ ] **Rules v2** in init blocks (researched techniques): manual /compact
-      with direction before autocompact, /clear between tasks, answer-only
-      subagents for bulk-mechanical work, @file references over pasted
-      content, model routing (top tier only for architecture), lean
-      CLAUDE.md/AGENTS.md (they bill every turn), .claudeignore for
-      scan-heavy repos, Codex config hints (tool_output_token_limit,
-      model_reasoning_effort).
-- [ ] **fix v2**: oversized CLAUDE.md/AGENTS.md warning; Codex config.toml
-      suggestions (read-only, never auto-edited).
-- [ ] Compaction-marathon detector if compact events are detectable in logs.
-- [ ] Dogfood snapshots Sat/Sun (`report --all`); merge new codex/* branches.
-- [ ] Mon Sep 7: freeze -> v1.9.0 tag -> CI binaries -> cargo publish ->
-      verify installers against the live release -> owner posts
-      (docs/launch/).
-
-## Shipped through 1.8
+## Shipped through 1.9
 
 - Fast local parsing for Claude Code and Codex logs, project-scoped audit,
   bounded time windows, and versioned JSON output.
@@ -49,6 +41,9 @@ Polish Friday-Sunday, public launch Monday Sep 7.
 - Strict offline experiment ledgers with exact half-open-window counters,
   completed-task normalization, observational comparisons, low-confidence
   disclosure, and a 100-request minimum for directional `delta` verdicts.
+- Evidence-safe benchmark vocabulary, paired-task inference, fail-closed
+  instruction migrations, and verified installers that preserve the prior
+  binary on failure.
 
 ## Next: measurement depth
 
@@ -63,9 +58,7 @@ Polish Friday-Sunday, public launch Monday Sep 7.
 
 ## Distribution and reach
 
-- Merge and publish the approved 1.6 release first, then the stacked 1.7
-  performance release, then the stacked 1.8 measurement release from their
-  reviewed commits.
+- Publish and independently verify v1.9.0 from its reviewed commit.
 - Homebrew, Scoop, and winget packages driven from the checksummed GitHub
   artifacts.
 - A small documentation site and verified installation guides for each

@@ -44,6 +44,27 @@ fn row(name: &str, a: f64, b: f64, unit: &str, better_down: bool) {
     println!(" {name:28} {b:>12.0}{unit} {a:>12.0}{unit}   {arrow}");
 }
 
+fn detector_trend(current: f64, previous: f64) -> String {
+    if current < previous - 0.01 {
+        format!(
+            "\n DETECTOR TREND: estimated opportunity share fell from {:.0}% to {:.0}% of volume. \
+             This is not a completed-work outcome.",
+            previous * 100.0,
+            current * 100.0
+        )
+    } else if current > previous + 0.01 {
+        format!(
+            "\n DETECTOR TREND: estimated opportunity share grew from {:.0}% to {:.0}% of volume. \
+             Run `codeunlimited audit` for the flagged contributors; this is not a completed-work outcome.",
+            previous * 100.0,
+            current * 100.0
+        )
+    } else {
+        "\n DETECTOR TREND: estimated opportunity share is flat. This is not a completed-work outcome."
+            .into()
+    }
+}
+
 pub fn run(days: u64) -> i32 {
     let cfg = config::Config::load_for(None);
     let mut reqs = parsers::iter_claude(None);
@@ -83,7 +104,7 @@ pub fn run(days: u64) -> i32 {
         "long-session growth", b.growth, a.growth
     );
     row(
-        "reclaimable, M tokens",
+        "estimated opportunity, M",
         a.reclaim as f64 / 1e6,
         b.reclaim as f64 / 1e6,
         "",
@@ -91,19 +112,19 @@ pub fn run(days: u64) -> i32 {
     );
     let eff_a = a.reclaim as f64 / a.volume.max(1) as f64;
     let eff_b = b.reclaim as f64 / b.volume.max(1) as f64;
-    if eff_a < eff_b - 0.01 {
-        println!(
-            "\n VERDICT: leak share fell from {:.0}% to {:.0}% of volume - the rules are working.",
-            eff_b * 100.0,
-            eff_a * 100.0
-        );
-    } else if eff_a > eff_b + 0.01 {
-        println!(
-            "\n VERDICT: leak share grew from {:.0}% to {:.0}% of volume - run `codeunlimited audit` for the culprits."
-            , eff_b * 100.0, eff_a * 100.0
-        );
-    } else {
-        println!("\n VERDICT: flat - keep the rules on and re-check next week.");
-    }
+    println!("{}", detector_trend(eff_a, eff_b));
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detector_trend_does_not_claim_causality() {
+        let line = detector_trend(0.10, 0.20);
+        assert!(line.contains("estimated opportunity share fell"));
+        assert!(line.contains("not a completed-work outcome"));
+        assert!(!line.contains("rules are working"));
+    }
 }

@@ -172,15 +172,15 @@ pub fn delta_change(d: &DeltaInfo) -> Option<f64> {
 pub fn verdict_line(d: &DeltaInfo) -> String {
     match delta_change(d) {
         Some(c) if c <= -1.0 => format!(
-            "↓ context per turn is down {:.0}% - about {:.0}% more work now fits \
-             into the same limit.",
+            "↓ context per turn is down {:.0}%; modeled capacity proxy +{:.0}%. \
+             This is a metric trend, not a completed-task outcome.",
             -c,
             100.0 * (d.b_prompt / d.now.avg_prompt_per_turn.max(1.0) - 1.0)
         ),
         Some(c) if c >= 1.0 => {
-            format!("↑ context per turn is up {c:.0}% - the leaks are growing.")
+            format!("↑ context per turn is up {c:.0}%; inspect the flagged contributors.")
         }
-        Some(_) => "→ flat so far - keep the rules on and re-check later.".into(),
+        Some(_) => "→ context per turn is flat so far; re-check later.".into(),
         None => String::new(),
     }
 }
@@ -235,7 +235,7 @@ pub fn build_markdown(d: &ReportData) -> String {
             String::new()
         };
         l.push(format!(
-            "**Reclaim:** ~{:.0}M tokens{range} (~{:.0} extra agent replies).",
+            "**Estimated opportunity:** ~{:.0}M tokens{range} (~{:.0} extra agent replies).",
             f.tokens as f64 / 1e6,
             f.answers
         ));
@@ -248,8 +248,8 @@ pub fn build_markdown(d: &ReportData) -> String {
         l.push(String::new());
     } else {
         l.push(format!(
-            "**Total reclaimable: ~{:.0}M tokens ~ {:.0}% of weekly volume** - \
-             that much more work fits into the same limit.",
+            "**Total estimated opportunity: ~{:.0}M tokens ~ {:.0}% of weekly volume.** \
+             Validate it with a comparable completed-task experiment.",
             d.reclaim as f64 / 1e6,
             d.reclaim_pct
         ));
@@ -348,10 +348,11 @@ pub fn build_markdown(d: &ReportData) -> String {
     if !d.history.is_empty() {
         l.push("## Trend".into());
         l.push(String::new());
-        l.push("One row per `codeunlimited report` run - watch the numbers fall.".into());
+        l.push("One row per `codeunlimited report` run - track changes across runs.".into());
         l.push(String::new());
         l.push(
-            "| date | requests | avg context/turn | session growth | reclaimable, M tok |".into(),
+            "| date | requests | avg context/turn | session growth | est. opportunity, M tok |"
+                .into(),
         );
         l.push("|---|---:|---:|---:|---:|".into());
         let mut prev: Option<u64> = None;
@@ -416,7 +417,7 @@ fn anonymize(data: &mut ReportData) {
 }
 
 fn write_badge(md_path: &Path, pct: f64) -> std::io::Result<()> {
-    let value = format!("~{pct:.0}% of weekly limit");
+    let value = format!("est. opportunity ~{pct:.0}%");
     let vw = 10 + value.len() * 7;
     let svg = format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="20" role="img" aria-label="codeunlimited: {value}">
@@ -484,6 +485,7 @@ fn history_snapshot(
         "context_growth": (m.context_growth * 100.0).round() / 100.0,
         "total_tokens": total,
         "reclaimable_tokens": reclaim,
+        "reclaimable_measurement": "estimated_reclaimable",
     })
 }
 

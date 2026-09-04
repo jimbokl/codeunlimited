@@ -3,19 +3,15 @@
 Only unshipped work belongs here. Completed capabilities are summarized in
 [ROADMAP.md](ROADMAP.md), and the privacy red lines still apply.
 
-## P0 — release the reviewed stack
+## P0 — release v1.9.0
 
-- [ ] Review and merge the 1.6 hardening pull request.
-- [ ] Create the `v1.6.0` tag from the reviewed merge commit and verify all
-      three checksummed GitHub artifacts.
-- [ ] Publish crate 1.6.0 from that same commit, then install it from crates.io
-      and compare its embedded VCS SHA with the tag.
-- [ ] Rebase or retarget the reviewed 1.7 performance pull request after 1.6,
-      merge it, and verify `v1.7.0` artifacts before publishing the crate.
-- [ ] Rebase or retarget the reviewed 1.8 measurement pull request after 1.7,
-      merge it, and verify `v1.8.0` artifacts before publishing the crate.
-- [ ] Update both release notes with any migration caveats found in the final
-      smoke tests.
+- [ ] Review and merge `codex/v1.9-trust-release` after every CI job passes.
+- [ ] Tag the reviewed merge as `v1.9.0` and verify all three binaries plus
+      mandatory sha256 assets.
+- [ ] Run the live Unix and PowerShell installers where their native platforms
+      are available; both must expose `codeunlimited techniques`.
+- [ ] Publish the crate from the same commit only after package and live-install
+      verification.
 
 ## P1 — measurement depth
 

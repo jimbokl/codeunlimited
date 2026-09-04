@@ -13,6 +13,20 @@ models and cache tiers differently; the proxy tracks direction and scale, not
 the provider's exact accounting. "Extra agent replies" converts tokens into
 work using your own average output size and your own context-to-output ratio.
 
+## Observed counters versus the context model
+
+`scripts/bench_context.py` reports two different evidence types. The actual
+prompt total is an exact sum of recognized integer counters. The bounded total
+is modeled as each eligible session's first-N-request mean multiplied by its
+request count. That counterfactual does not observe the work, tool calls,
+quality, or number of requests a fresh session would actually require.
+
+Version 1.9 includes every eligible session regardless of the model's
+direction, counts malformed candidate rows, and fails on unreadable files. A
+positive modeled difference is context-growth exposure, not attributable or
+guaranteed savings. Realized outcomes require comparable completed-task
+experiments.
+
 ## Detectors
 
 **1. Context tax of long sessions.** For every session longer than 30 turns,
@@ -89,7 +103,7 @@ different task mix, model, operator, or provider behavior. Use the outcome
 protocol in [BENCHMARKING.md](BENCHMARKING.md) when evaluating whether the
 utility helped real work.
 
-## Exact bounded experiment counters
+## Exact observed experiment counters
 
 `experiment start`/`finish` and historical `experiment record` sum recognized
 integer counters whose request timestamps fall in the explicit half-open

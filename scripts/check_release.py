@@ -4,18 +4,69 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import sys
-import tomllib
 
 
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+STRING_ASSIGNMENT = re.compile(
+    r'^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:[^"\\]|\\.)*")\s*(?:#.*)?$'
+)
 
 
-def load_toml(path: pathlib.Path) -> dict:
-    with path.open("rb") as stream:
-        return tomllib.load(stream)
+def _string_assignment(line: str) -> tuple[str, str] | None:
+    match = STRING_ASSIGNMENT.fullmatch(line)
+    if match is None:
+        return None
+    return match.group(1), str(json.loads(match.group(2)))
+
+
+def table_strings(path: pathlib.Path, table: str) -> dict[str, str]:
+    """Read only the quoted string fields used by the release contract.
+
+    This intentionally small reader keeps the checker dependency-free on
+    Python 3.10. It is not a general TOML parser.
+    """
+    current = ""
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current = stripped[1:-1].strip()
+            continue
+        if current == table:
+            assignment = _string_assignment(line)
+            if assignment is not None:
+                key, value = assignment
+                values[key] = value
+    return values
+
+
+def lock_package_versions(path: pathlib.Path, name: str) -> set[str]:
+    versions: set[str] = set()
+    package: dict[str, str] | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[[package]]":
+            if package is not None and package.get("name") == name:
+                versions.add(package.get("version", ""))
+            package = {}
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if package is not None and package.get("name") == name:
+                versions.add(package.get("version", ""))
+            package = None
+            continue
+        if package is not None:
+            assignment = _string_assignment(line)
+            if assignment is not None:
+                key, value = assignment
+                package[key] = value
+    if package is not None and package.get("name") == name:
+        versions.add(package.get("version", ""))
+    return versions
 
 
 def check(root: pathlib.Path, expected: str, tag: str | None = None) -> list[str]:
@@ -23,32 +74,27 @@ def check(root: pathlib.Path, expected: str, tag: str | None = None) -> list[str
     if not SEMVER.fullmatch(expected):
         errors.append(f"expected version is not SemVer x.y.z: {expected}")
 
-    manifest = load_toml(root / "Cargo.toml")
-    cargo_version = str(manifest.get("package", {}).get("version", ""))
+    manifest = table_strings(root / "Cargo.toml", "package")
+    cargo_version = manifest.get("version", "")
     if cargo_version != expected:
         errors.append(f"Cargo.toml version {cargo_version!r} != expected {expected!r}")
-    if manifest.get("package", {}).get("rust-version") != "1.82":
+    if manifest.get("rust-version") != "1.82":
         errors.append("Cargo.toml rust-version must be '1.82'")
 
-    lock = load_toml(root / "Cargo.lock")
-    lock_versions = {
-        str(package.get("version", ""))
-        for package in lock.get("package", [])
-        if package.get("name") == "codeunlimited"
-    }
+    lock_versions = lock_package_versions(root / "Cargo.lock", "codeunlimited")
     if lock_versions != {expected}:
         errors.append(
             f"Cargo.lock codeunlimited versions {sorted(lock_versions)!r} != [{expected!r}]"
         )
 
-    pyproject = load_toml(root / "pyproject.toml")
-    python_name = pyproject.get("project", {}).get("name")
+    project = table_strings(root / "pyproject.toml", "project")
+    python_name = project.get("name")
     if python_name != "codeunlimited-reference":
         errors.append(
             "pyproject distribution must be named 'codeunlimited-reference' "
             "so it cannot shadow the Rust CLI"
         )
-    scripts = pyproject.get("project", {}).get("scripts", {})
+    scripts = table_strings(root / "pyproject.toml", "project.scripts")
     if scripts != {"codeunlimited-reference": "codeunlimited.cli:main"}:
         errors.append("pyproject must expose only the codeunlimited-reference command")
 

@@ -36,7 +36,13 @@ class ExperimentEvidenceTests(unittest.TestCase):
             "gemini-",
         ):
             self.assertNotIn(forbidden, lower_raw)
-        for key in ("control_start_git_sha", "control_end_git_sha", "treatment_end_git_sha"):
+        for key in (
+            "control_start_git_sha",
+            "control_end_git_sha",
+            "treatment_end_git_sha",
+            "evidence_git_sha",
+            "release_git_sha",
+        ):
             self.assertRegex(evidence["provenance"][key], re.compile(r"^[0-9a-f]{40}$"))
 
         def commit_timestamp(sha: str) -> int:
@@ -62,12 +68,31 @@ class ExperimentEvidenceTests(unittest.TestCase):
             evidence["windows"]["treatment"]["finished_unix"],
             commit_timestamp(provenance["treatment_end_git_sha"]) + 1,
         )
+        release_commit = subprocess.run(
+            ["git", "rev-parse", "v1.8.0^{commit}"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(provenance["release_git_sha"], release_commit)
+        subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                provenance["evidence_git_sha"],
+                provenance["release_git_sha"],
+            ],
+            cwd=root,
+            check=True,
+        )
         changed_after_treatment = subprocess.run(
             [
                 "git",
                 "diff",
                 "--name-only",
-                f'{provenance["treatment_end_git_sha"]}..HEAD',
+                f'{provenance["treatment_end_git_sha"]}..{provenance["evidence_git_sha"]}',
             ],
             cwd=root,
             check=True,
@@ -150,11 +175,37 @@ class ExperimentEvidenceTests(unittest.TestCase):
         self.assertEqual(comparison["causality"], "observational")
 
 
+class PythonMatrixTests(unittest.TestCase):
+    def test_every_supported_python_runs_the_same_discovered_suite(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflow = (root / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('python-version: ["3.10", "3.12"]', workflow)
+        self.assertEqual(
+            workflow.count("python -m unittest discover -s tests -p 'test_*.py' -v"),
+            1,
+        )
+        self.assertNotIn("matrix.python-version == '3.10'", workflow)
+
+    def test_ci_and_release_audit_the_exact_crate_archive(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release = (root / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("bash scripts/audit-package.sh 1.9", ci)
+        self.assertIn('bash scripts/audit-package.sh "$version"', release)
+
+
 __all__ = [
     "BenchmarkOutputTests",
     "BenchmarkProvenanceTests",
     "BenchmarkScenarioTests",
     "BenchmarkStatisticsTests",
     "ExperimentEvidenceTests",
+    "PythonMatrixTests",
     "ReleaseCheckerTests",
 ]

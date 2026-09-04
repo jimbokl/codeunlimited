@@ -1,5 +1,8 @@
 # Handoff for the Codex review agent
 
+> Historical handoff. The v1.9 trust-release review found and addressed the
+> listed migration, installer, CI-discovery, and evidence-labeling defects.
+
 State of main as of 2026-09-04 (post-1.8.0). Everything below was added
 after your v1.8-measurement branch merged; please verify it with the same
 rigor you applied to 1.6-1.8. Release target: **v1.9.0 on Monday Sep 7**.
@@ -30,8 +33,8 @@ rigor you applied to 1.6-1.8. Release target: **v1.9.0 on Monday Sep 7**.
 
 3. **Evidence docs** (`docs/BENCHMARK.md`, `scripts/bench_context.py`,
    README charts in `docs/assets/chart-*.svg`)
-   - Layer 1 is exact arithmetic over raw logs (bounded-context vs actual);
-     check the math and the honesty of the labels (exact vs estimate).
+   - Layer 1 sums exact observed counters and compares them with a modeled
+     bounded-context counterfactual; only the observed quantity is exact.
 
 ## Verification checklist
 
@@ -45,15 +48,15 @@ rigor you applied to 1.6-1.8. Release target: **v1.9.0 on Monday Sep 7**.
       asset; PATH idempotency on re-run.
 - [ ] README claims match `docs/ACCURACY.md` semantics (estimate vs exact).
 
-## In flight (Claude side)
+## Completed after this handoff
 
-- A/B experiment running now: control = 8 coding tasks in one growing
-  session; treatment = the same 8 tasks in fresh bounded sessions with the
-  rules applied. Exact per-arm token accounting from agent transcripts +
-  significance tests. Results will land in `docs/EXPERIMENT.md` - please
-  review the statistical method when it appears.
-- Weekend: dogfood snapshots; your branches merge via the usual flow
-  (`codex/*` -> review -> ff/merge -> tag).
+- The short-task A/B reported rounded totals of 0.92M control and 1.08M
+  treatment prompt tokens: approximately 17.4% more in treatment. The invalid
+  request-level significance claim was removed; paired tasks are now the
+  supported inference unit.
+- The v1.9 trust review added fail-closed marker upgrades, mandatory installer
+  checksums, full Python discovery, immutable evidence provenance, and
+  evidence-safe wording across console, JSON, Markdown, HTML, and SVG output.
 
 ## Invariants (unchanged, enforced)
 

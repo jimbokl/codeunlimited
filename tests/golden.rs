@@ -62,16 +62,24 @@ fn golden_end_to_end() {
     assert!(text.contains("CODEUNLIMITED"));
     assert!(text.contains("claude"));
     assert!(text.contains("codex"));
+    assert!(text.contains("TOTAL ESTIMATED OPPORTUNITY"));
+    assert!(!text.contains("that much more work fits"));
     let json = report::render_json(&all, &findings, None);
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
     assert_eq!(v["schema_version"], 1);
+    assert_eq!(
+        v["weekly_volume_measurement"],
+        "modeled_from_observed_window"
+    );
+    assert_eq!(v["reclaimable_measurement"], "estimated_reclaimable");
     assert_eq!(v["sources"]["claude"]["requests"], 2);
     assert_eq!(v["sources"]["codex"]["requests"], 2);
     assert!(v["findings"]
         .as_array()
         .expect("findings array")
         .iter()
-        .all(|finding| finding["key"].as_str().is_some()));
+        .all(|finding| finding["key"].as_str().is_some()
+            && finding["impact_measurement"] == "estimated_reclaimable"));
 
     // --- Baseline: both formats parse (v1 single-source and v2 multi) ---
     let (c1, v1) = deltacmd::parse_baseline(
@@ -113,6 +121,11 @@ fn golden_end_to_end() {
     let md = reportcmd::build_markdown(&data);
     assert!(md.starts_with("# codeunlimited report - test-proj"));
     assert!(md.contains("## Where the limit leaks"));
+    assert!(md.contains("**Estimated opportunity:**"));
+    assert!(md.contains("**Total estimated opportunity:"));
+    assert!(md.contains("track changes across runs"));
+    assert!(!md.contains("watch the numbers fall"));
+    assert!(!md.contains("that much more work fits"));
     assert!(md.contains("## Delta since baseline (2026-01-01)"));
     assert!(md.contains("| 2026-01-02 | 4 | 16k | 1.0x | 0 |"));
     assert!(md.contains("| claude | 2 |"));
@@ -121,6 +134,10 @@ fn golden_end_to_end() {
     assert!(page.starts_with("<!doctype html>"));
     assert!(page.contains("<title>codeunlimited - test-proj</title>"));
     assert!(page.contains("Delta since baseline"));
+    assert!(page.contains("Estimated opportunity:"));
+    assert!(page.contains("estimated opportunity share"));
+    assert!(!page.contains("tokens of extra work"));
+    assert!(!page.contains("that much more work fits"));
     assert!(page.contains("prefers-color-scheme:dark"));
     assert!(page.ends_with("</html>\n"));
 

@@ -47,18 +47,18 @@ pub const MARKER_END: &str = "<!-- /codeunlimited -->";
 pub const CATALOG: &[Technique] = &[
     Technique {
         id: "fresh-sessions",
-        title: "New task = new session",
+        title: "Context-aware session boundaries",
         risk: Risk::Low,
         default_on: true,
         since: "0.1",
-        claude: "**New task = new session.** Don't grow one chat for days: by the tail \
-                 of a long session every turn drags the whole accumulated context. \
-                 Task done - /clear. Break-even guardrail (measured): a fresh session \
-                 costs one ~25k boot and pays off when the next task is more than a \
-                 handful of turns - batch micro-tasks in one session instead of \
-                 restarting per prompt.",
-        agents: "New task = new session; don't grow one thread for days. Batch \
-                 micro-tasks: a restart pays off only for tasks longer than a few turns.",
+        claude: "**Choose session boundaries by context reuse.** Batch small related tasks \
+                 while prior context still contributes. Start a fresh session for a \
+                 distinct multi-step task when the old context would mostly be dead \
+                 weight; every restart also pays the session boot cost. Don't grow one \
+                 chat for days, but don't restart mechanically per prompt.",
+        agents: "Batch small related tasks while prior context still contributes. Start \
+                 a fresh session for a distinct multi-step task when old context would \
+                 mostly be dead weight; account for session boot cost.",
     },
     Technique {
         id: "state-file-loops",
@@ -246,7 +246,7 @@ pub fn render_claude(techs: &[&Technique]) -> String {
     render(
         techs,
         |t| t.claude,
-        "Rules that fit more work into the same subscription limit. Each rule is \
+        "Rules intended to reduce avoidable context within the same subscription limit. Each rule is \
          toggleable: `codeunlimited techniques` lists them; disable any via \
          .codeunlimited.toml -> [techniques] disable = [\"id\"]. Quality guardrail: \
          none of these may trade output quality for tokens - aggressive trades are \
@@ -332,6 +332,19 @@ mod tests {
                 "{} lacks a quality guardrail",
                 t.id
             );
+        }
+    }
+
+    #[test]
+    fn fresh_session_rule_is_conditional_on_context_reuse() {
+        let technique = CATALOG
+            .iter()
+            .find(|technique| technique.id == "fresh-sessions")
+            .expect("fresh-sessions technique");
+        for text in [technique.claude, technique.agents] {
+            assert!(text.contains("Batch small related tasks"));
+            assert!(text.contains("prior context"));
+            assert!(!text.contains("New task = new session"));
         }
     }
 }

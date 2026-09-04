@@ -12,30 +12,61 @@ esac
 
 DEST="${CODEUNLIMITED_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$DEST"
-URL="https://github.com/$REPO/releases/latest/download/$ASSET"
-TMP="$(mktemp)"
-echo "Downloading $ASSET ..."
-curl -fsSL "$URL" -o "$TMP"
+BASE_URL="${CODEUNLIMITED_DOWNLOAD_BASE_URL:-https://github.com/$REPO/releases/latest/download}"
+URL="${BASE_URL%/}/$ASSET"
+TMP_DIR="$(mktemp -d)"
+DOWNLOAD="$TMP_DIR/$ASSET"
+SUM_FILE="$TMP_DIR/$ASSET.sha256"
+STAGED="$DEST/.codeunlimited.install.$$"
+cleanup() {
+  rm -f "$DOWNLOAD" "$SUM_FILE" "$STAGED"
+  rmdir "$TMP_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
 
-# Verify checksum when the release ships one and a hasher is available.
-SUM_URL="$URL.sha256"
-if SUM="$(curl -fsSL "$SUM_URL" 2>/dev/null | awk '{print $1}')" && [ -n "$SUM" ]; then
-  if command -v sha256sum >/dev/null 2>&1; then
-    ACTUAL="$(sha256sum "$TMP" | awk '{print $1}')"
-  elif command -v shasum >/dev/null 2>&1; then
-    ACTUAL="$(shasum -a 256 "$TMP" | awk '{print $1}')"
-  else
-    ACTUAL=""
-  fi
-  if [ -n "$ACTUAL" ] && [ "$ACTUAL" != "$SUM" ]; then
-    echo "Checksum mismatch - aborting." >&2; rm -f "$TMP"; exit 1
-  fi
+echo "Downloading $ASSET ..."
+curl -fsSL "$URL" -o "$DOWNLOAD"
+if ! curl -fsSL "$URL.sha256" -o "$SUM_FILE"; then
+  echo "Checksum download failed - preserving the existing installation." >&2
+  exit 1
 fi
 
-install -m 755 "$TMP" "$DEST/codeunlimited"
-rm -f "$TMP"
+SUM="$(awk 'NR == 1 { print $1 }' "$SUM_FILE")"
+case "$SUM" in
+  ""|*[!0-9a-fA-F]*)
+    echo "Malformed checksum - preserving the existing installation." >&2
+    exit 1
+    ;;
+esac
+if [ "${#SUM}" -ne 64 ]; then
+  echo "Malformed checksum - preserving the existing installation." >&2
+  exit 1
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "$DOWNLOAD" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "$DOWNLOAD" | awk '{print $1}')"
+else
+  echo "No SHA-256 tool found - preserving the existing installation." >&2
+  exit 1
+fi
+SUM_LOWER="$(printf '%s' "$SUM" | tr '[:upper:]' '[:lower:]')"
+ACTUAL_LOWER="$(printf '%s' "$ACTUAL" | tr '[:upper:]' '[:lower:]')"
+if [ "$ACTUAL_LOWER" != "$SUM_LOWER" ]; then
+  echo "Checksum mismatch - preserving the existing installation." >&2
+  exit 1
+fi
+
+chmod 755 "$DOWNLOAD"
+if ! VERSION_OUTPUT="$("$DOWNLOAD" --version)"; then
+  echo "Downloaded binary failed its smoke test - preserving the existing installation." >&2
+  exit 1
+fi
+install -m 755 "$DOWNLOAD" "$STAGED"
+mv -f "$STAGED" "$DEST/codeunlimited"
 echo "Installed: $DEST/codeunlimited"
-"$DEST/codeunlimited" --version || true
+printf '%s\n' "$VERSION_OUTPUT"
 case ":$PATH:" in
   *":$DEST:"*) ;;
   *) echo "Note: add it to PATH ->  export PATH=\"$DEST:\$PATH\"" ;;

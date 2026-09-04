@@ -27,13 +27,21 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - if: runner.os == 'Linux'
-        run: cargo fmt --check
+        run: cargo fmt --all -- --check
       - if: runner.os == 'Linux'
-        run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --release --locked
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --release --all-targets --locked
       - run: cargo build --release --locked
+      - if: runner.os == 'Linux'
+        run: python -m unittest -v tests.test_installers
+      - if: runner.os == 'Windows'
+        shell: powershell
+        run: .\tests\test_install_ps1.ps1
 
   package:
     name: package and metadata
@@ -42,6 +50,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable 2026-09-03
         with:
           toolchain: stable
@@ -49,8 +58,9 @@ jobs:
         with:
           python-version: "3.12"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
-      - run: bash scripts/check_release.sh 1.8
+      - run: bash scripts/check_release.sh 1.9
       - run: cargo package --locked
+      - run: bash scripts/audit-package.sh 1.9
 
   python-tests:
     name: python ${{ matrix.python-version }}
@@ -63,13 +73,11 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
-      - if: matrix.python-version == '3.10'
-        run: python -m unittest -v scripts.test_benchmark_local
-      - if: matrix.python-version == '3.12'
-        run: python -m unittest discover -v
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
 
   msrv:
     name: rust 1.82 MSRV
