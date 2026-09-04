@@ -154,6 +154,7 @@ pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, Runt
             "--output-format",
             "--json-schema",
             "--input-format",
+            "--exclude-dynamic-system-prompt-sections",
         ],
     )?;
     let mut command_args = vec![
@@ -163,6 +164,7 @@ pub fn build_claude_command(config: &ProviderConfig) -> Result<CommandSpec, Runt
         OsString::from("json"),
         OsString::from("--json-schema"),
         OsString::from(STEP_ENVELOPE_SCHEMA_JSON),
+        OsString::from("--exclude-dynamic-system-prompt-sections"),
     ];
     command_args.extend(args.iter().map(OsString::from));
     Ok(CommandSpec {
@@ -337,7 +339,10 @@ pub(crate) fn capture_process(
     }
     let stdout = stdout_reader.join().map_err(|_| ProviderFailure::Spawn)?;
     let stderr = stderr_reader.join().map_err(|_| ProviderFailure::Spawn)?;
-    if stdout.overflow || stderr.overflow {
+    if stdout.overflow
+        || stderr.overflow
+        || stdout.bytes.len().saturating_add(stderr.bytes.len()) > MAX_PROVIDER_OUTPUT_BYTES
+    {
         return Err(ProviderFailure::OutputTooLarge);
     }
     let exit_code = status.code().unwrap_or(-1);
@@ -397,12 +402,24 @@ fn usage_from_value(value: Option<&Value>) -> ProviderUsage {
             .and_then(|usage| usage.get(name))
             .and_then(Value::as_u64)
     };
+    let details = value.and_then(|usage| {
+        usage
+            .get("input_tokens_details")
+            .or_else(|| usage.get("prompt_tokens_details"))
+    });
+    let get_detail = |name: &str| {
+        details
+            .and_then(|value| value.get(name))
+            .and_then(Value::as_u64)
+    };
     ProviderUsage {
-        input_tokens: get("input_tokens"),
+        input_tokens: get("input_tokens").or_else(|| get("prompt_tokens")),
         cache_read_input_tokens: get("cache_read_input_tokens")
-            .or_else(|| get("cached_input_tokens")),
+            .or_else(|| get("cached_input_tokens"))
+            .or_else(|| get_detail("cached_tokens")),
         cache_write_input_tokens: get("cache_creation_input_tokens")
-            .or_else(|| get("cache_write_input_tokens")),
+            .or_else(|| get("cache_write_input_tokens"))
+            .or_else(|| get_detail("cache_write_tokens")),
         output_tokens: get("output_tokens"),
     }
 }
@@ -412,6 +429,8 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::thread;
     use std::time::Duration;
 
     use tempfile::TempDir;
@@ -420,8 +439,8 @@ mod tests {
     use crate::runtime::prompt::CompiledPrompt;
 
     use super::{
-        build_claude_command, build_codex_command, parse_claude_output, ProcessProvider, Provider,
-        ProviderFailure,
+        build_claude_command, build_codex_command, parse_claude_output, parse_codex_usage,
+        ProcessProvider, Provider, ProviderFailure,
     };
 
     fn python() -> PathBuf {
@@ -497,6 +516,89 @@ mod tests {
     }
 
     #[test]
+    fn combined_stdout_and_stderr_share_one_output_budget() {
+        let project = TempDir::new().expect("project");
+        let config = ProviderConfig::Command {
+            executable: python(),
+            args: vec![
+                "-c".into(),
+                "import sys; sys.stdout.write('x'*614400); sys.stderr.write('y'*614400)".into(),
+            ],
+        };
+
+        let error = ProcessProvider
+            .run(&config, &prompt(), project.path(), Duration::from_secs(3))
+            .unwrap_err();
+
+        assert_eq!(error, ProviderFailure::OutputTooLarge);
+    }
+
+    #[test]
+    fn timeout_kills_the_child_before_it_can_mutate_later() {
+        let project = TempDir::new().expect("project");
+        let marker = project.path().join("late-marker");
+        let config = ProviderConfig::Command {
+            executable: python(),
+            args: vec![
+                "-c".into(),
+                "import pathlib,sys,time; time.sleep(.2); pathlib.Path(sys.argv[1]).write_text('late')"
+                    .into(),
+                marker.to_string_lossy().into_owned(),
+            ],
+        };
+
+        assert_eq!(
+            ProcessProvider
+                .run(
+                    &config,
+                    &prompt(),
+                    project.path(),
+                    Duration::from_millis(30)
+                )
+                .unwrap_err(),
+            ProviderFailure::Timeout
+        );
+        thread::sleep(Duration::from_millis(300));
+        assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_paths_with_spaces_and_hyphen_args_are_preserved() {
+        use std::os::unix::fs::symlink;
+
+        let project = TempDir::new().expect("project");
+        let resolved = Command::new("which")
+            .arg(python())
+            .output()
+            .expect("locate python");
+        assert!(resolved.status.success());
+        let executable = project.path().join("provider executable with spaces");
+        symlink(
+            String::from_utf8(resolved.stdout)
+                .expect("UTF-8 executable path")
+                .trim(),
+            &executable,
+        )
+        .expect("spaced executable symlink");
+        let config = ProviderConfig::Command {
+            executable,
+            args: vec![
+                fixture().to_string_lossy().into_owned(),
+                "--mode".into(),
+                "success".into(),
+                "--outcome".into(),
+                "continue".into(),
+            ],
+        };
+
+        let result = ProcessProvider
+            .run(&config, &prompt(), project.path(), Duration::from_secs(2))
+            .expect("provider through spaced executable path");
+        assert_eq!(result.envelope.base_revision, 0);
+    }
+
+    #[test]
     fn provider_exit_does_not_expose_stderr() {
         let project = TempDir::new().expect("project");
         let error = ProcessProvider
@@ -539,6 +641,9 @@ mod tests {
         assert!(claude
             .args
             .contains(&OsString::from("--no-session-persistence")));
+        assert!(claude
+            .args
+            .contains(&OsString::from("--exclude-dynamic-system-prompt-sections")));
 
         let codex = ProviderConfig::Codex {
             executable: PathBuf::from("codex"),
@@ -609,6 +714,19 @@ mod tests {
         assert_eq!(parsed.1.input_tokens, Some(101));
         assert_eq!(parsed.1.cache_read_input_tokens, Some(70));
         assert_eq!(parsed.1.output_tokens, Some(9));
+    }
+
+    #[test]
+    fn codex_usage_reads_current_nested_cache_counters() {
+        let raw = br#"{"type":"turn.completed","usage":{"input_tokens":15000,"input_tokens_details":{"cached_tokens":12000,"cache_write_tokens":3000},"output_tokens":100}}
+"#;
+
+        let usage = parse_codex_usage(raw);
+
+        assert_eq!(usage.input_tokens, Some(15000));
+        assert_eq!(usage.cache_read_input_tokens, Some(12000));
+        assert_eq!(usage.cache_write_input_tokens, Some(3000));
+        assert_eq!(usage.output_tokens, Some(100));
     }
 
     fn contains_pair(args: &[OsString], key: &str, value: &str) -> bool {

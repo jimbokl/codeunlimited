@@ -422,7 +422,25 @@ pub fn step(reference: &RunRef, provider: &dyn Provider) -> Result<StepReport, R
         transition.observation.as_bytes(),
         (!transition.archive.is_empty()).then_some(&transition.archive),
     ) {
-        if !control_unchanged || workspace_changed(&before_git, &after_git) {
+        let changed = !control_unchanged || workspace_changed(&before_git, &after_git);
+        let record = result_attempt(
+            &loaded.manifest,
+            &loaded.state,
+            &prompt,
+            attempt,
+            started_unix,
+            &result,
+            if changed {
+                AttemptOutcome::RecoveryRequired
+            } else {
+                AttemptOutcome::InvalidTransition
+            },
+            "state_commit_failed".into(),
+            before_git.clone(),
+            after_git.clone(),
+        );
+        store.write_attempt(attempt, &record)?;
+        if changed {
             store.write_recovery(&RecoveryRecord {
                 schema_version: RUNTIME_SCHEMA_VERSION,
                 attempt,
@@ -675,17 +693,58 @@ fn fail_transition(
 ) -> Result<StepReport, RuntimeError> {
     let after_git = git_snapshot(&manifest.project_root);
     let changed = !control_unchanged || workspace_changed(&before_git, &after_git);
-    let record = AttemptRecord {
-        schema_version: RUNTIME_SCHEMA_VERSION,
+    let record = result_attempt(
+        manifest,
+        state,
+        prompt,
         attempt,
-        base_revision: state.revision,
-        committed_revision: None,
-        outcome: if changed {
+        started_unix,
+        result,
+        if changed {
             AttemptOutcome::RecoveryRequired
         } else {
             AttemptOutcome::InvalidTransition
         },
-        error_category: Some(category.clone()),
+        category.clone(),
+        before_git.clone(),
+        after_git.clone(),
+    );
+    store.write_attempt(attempt, &record)?;
+    if changed {
+        store.write_recovery(&RecoveryRecord {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            attempt,
+            base_revision: state.revision,
+            reason: category,
+            before_git,
+            after_git,
+        })?;
+        Err(RuntimeError::RecoveryRequired)
+    } else {
+        Err(RuntimeError::ProviderFailed("invalid_transition".into()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn result_attempt(
+    manifest: &Manifest,
+    state: &CodingState,
+    prompt: &CompiledPrompt,
+    attempt: u64,
+    started_unix: i64,
+    result: &super::provider::ProviderResult,
+    outcome: AttemptOutcome,
+    category: String,
+    before_git: GitSnapshot,
+    after_git: GitSnapshot,
+) -> AttemptRecord {
+    AttemptRecord {
+        schema_version: RUNTIME_SCHEMA_VERSION,
+        attempt,
+        base_revision: state.revision,
+        committed_revision: None,
+        outcome,
+        error_category: Some(category),
         prompt_bytes: prompt.bytes.len(),
         stable_prompt_bytes: prompt.stable_bytes,
         dynamic_prompt_bytes: prompt.dynamic_bytes,
@@ -700,22 +759,8 @@ fn fail_transition(
         usage: result.usage.clone(),
         state_before_sha256: state_hash(state),
         state_after_sha256: None,
-        before_git: before_git.clone(),
-        after_git: after_git.clone(),
-    };
-    store.write_attempt(attempt, &record)?;
-    if changed {
-        store.write_recovery(&RecoveryRecord {
-            schema_version: RUNTIME_SCHEMA_VERSION,
-            attempt,
-            base_revision: state.revision,
-            reason: category,
-            before_git,
-            after_git,
-        })?;
-        Err(RuntimeError::RecoveryRequired)
-    } else {
-        Err(RuntimeError::ProviderFailed("invalid_transition".into()))
+        before_git,
+        after_git,
     }
 }
 
@@ -875,7 +920,8 @@ mod tests {
     use crate::runtime::provider::ProcessProvider;
 
     use super::{
-        init_run, recover, render_next_prompt, run_steps, status, step, InitRequest, RunRef,
+        git_snapshot, init_run, recover, render_next_prompt, run_steps, status, step, InitRequest,
+        RunRef,
     };
 
     fn python() -> PathBuf {
@@ -1064,6 +1110,35 @@ mod tests {
         ));
         assert_eq!(fs::read(&state_path).unwrap(), before);
         assert_eq!(status(&reference).unwrap().attempts, 1);
+    }
+
+    #[test]
+    fn git_unavailable_makes_a_failed_attempt_require_recovery() {
+        let (project, reference) = setup("invalid");
+        assert!(!git_snapshot(project.path()).available);
+
+        assert_eq!(
+            step(&reference, &ProcessProvider).unwrap_err(),
+            RuntimeError::RecoveryRequired
+        );
+        assert!(status(&reference).unwrap().recovery_required);
+    }
+
+    #[test]
+    fn detached_head_is_still_a_valid_git_snapshot() {
+        let (project, _reference) = setup("success");
+        initialize_git(project.path());
+        assert!(Command::new("git")
+            .args(["checkout", "--detach", "-q"])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success());
+
+        let snapshot = git_snapshot(project.path());
+        assert!(snapshot.available);
+        assert!(snapshot.head.is_some());
+        assert!(snapshot.status_sha256.is_some());
     }
 
     #[test]

@@ -387,7 +387,8 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::runtime::model::{
-        CodingState, Manifest, ProviderConfig, RecoveryRecord, RuntimeError,
+        ArchiveBatch, CodingState, CompletedItem, Manifest, ProviderConfig, RecoveryRecord,
+        RuntimeError,
     };
 
     use super::RunStore;
@@ -494,6 +495,32 @@ mod tests {
         assert_eq!(store.load().unwrap().recovery, Some(recovery));
         store.clear_recovery().expect("clear recovery");
         assert!(store.load().unwrap().recovery.is_none());
+    }
+
+    #[test]
+    fn archive_collision_preserves_existing_archive_state_and_observation() {
+        let (project, manifest, workflow, state) = fixture();
+        let store = RunStore::create(project.path(), "feature-x", &manifest, &workflow, &state)
+            .expect("create run");
+        let collision = store.paths().archive.join("00000001.json");
+        fs::write(&collision, b"keep-existing-archive").expect("collision fixture");
+        let mut next = state.clone();
+        next.revision = 1;
+        let archive = ArchiveBatch {
+            completed: vec![CompletedItem {
+                id: "old-work".into(),
+                result: "already summarized".into(),
+            }],
+            decisions: Vec::new(),
+        };
+
+        assert!(store
+            .save_transition(&next, b"new observation", Some(&archive))
+            .is_err());
+        assert_eq!(fs::read(collision).unwrap(), b"keep-existing-archive");
+        let loaded = store.load().expect("unchanged run");
+        assert_eq!(loaded.state, state);
+        assert!(loaded.observation.is_empty());
     }
 
     #[cfg(unix)]

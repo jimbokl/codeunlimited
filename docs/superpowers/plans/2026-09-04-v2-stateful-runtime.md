@@ -454,7 +454,7 @@
 - Preserves all interfaces from Tasks 1–6
 - Adds no new product feature; closes review findings only
 
-- [ ] **Step 1: Add regression tests for boundary failures**
+- [x] **Step 1: Add regression tests for boundary failures**
 
   Cover non-UTF-8 workflow/observation, read-only store, deleted provider,
   executable path with spaces, Unicode objective byte limits, stdout/stderr
@@ -462,18 +462,18 @@
   unavailable, detached HEAD, untracked-file changes, archive collisions, and
   post-provider state-write failure.
 
-- [ ] **Step 2: Witness RED for every discovered gap**
+- [x] **Step 2: Witness RED for every discovered gap**
 
   Run each new exact test before its fix and record the expected failure in the
   commit notes. Do not change production code for a test that is already green.
 
-- [ ] **Step 3: Apply minimal fixes and keep diagnostics content-free**
+- [x] **Step 3: Apply minimal fixes and keep diagnostics content-free**
 
   Change only the responsible unit. Any error type added here must expose
   category plus counts/paths, never workflow, prompt, state, observation, or
   provider output bodies.
 
-- [ ] **Step 4: Run the complete runtime suite and commit**
+- [x] **Step 4: Run the complete runtime suite and commit**
 
   Run: `cargo test runtime -- --nocapture && cargo test --test runtime_cli -- --nocapture`
 

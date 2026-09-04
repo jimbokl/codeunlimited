@@ -375,3 +375,121 @@ fn failures_use_stable_categories_without_leaking_provider_output() {
         .code(4)
         .stderr(predicate::str::contains("runtime[missing_provider]"));
 }
+
+#[test]
+fn non_utf8_workflow_and_unicode_byte_overflow_fail_without_content_echo() {
+    let project = TempDir::new().expect("project");
+    let skill = project.path().join("workflow.bin");
+    fs::write(&skill, [0xff, 0xfe, 0xfd]).expect("non UTF-8 workflow");
+    binary()
+        .args(["run", "init", "bad-workflow", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(&skill)
+        .args([
+            "--objective",
+            "bounded",
+            "--provider",
+            "command",
+            "--provider-executable",
+            python(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("runtime[invalid_input]"));
+    assert!(!project
+        .path()
+        .join(".codeunlimited/runs/bad-workflow")
+        .exists());
+
+    let project = TempDir::new().expect("project");
+    let skill = workflow(project.path());
+    let oversized = "é".repeat(4097);
+    binary()
+        .args(["run", "init", "unicode", "--project"])
+        .arg(project.path())
+        .arg("--skill")
+        .arg(skill)
+        .arg("--objective")
+        .arg(&oversized)
+        .args(["--provider", "command", "--provider-executable", python()])
+        .assert()
+        .code(6)
+        .stderr(predicate::str::contains("runtime[over_budget]"))
+        .stderr(predicate::str::contains(&oversized).not());
+}
+
+#[test]
+fn non_utf8_recovery_observation_is_rejected_without_clearing_recovery() {
+    let project = TempDir::new().expect("project");
+    let changed = project.path().join("changed.txt");
+    init_command(
+        project.path(),
+        "recover-utf8",
+        "invalid",
+        &["--change".into(), changed.to_string_lossy().into_owned()],
+    )
+    .assert()
+    .success();
+    initialize_git(project.path());
+    binary()
+        .args(["run", "step", "recover-utf8", "--project"])
+        .arg(project.path())
+        .assert()
+        .code(8);
+
+    let observation = project.path().join("recovery.bin");
+    fs::write(&observation, [0xff, 0xfe]).expect("non UTF-8 observation");
+    binary()
+        .args(["run", "recover", "recover-utf8", "--project"])
+        .arg(project.path())
+        .arg("--observation")
+        .arg(&observation)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("runtime[invalid_input]"));
+    assert!(project
+        .path()
+        .join(".codeunlimited/runs/recover-utf8/recovery.json")
+        .exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn post_provider_read_only_store_preserves_state_and_journals_the_attempt() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = TempDir::new().expect("project");
+    let capture = project.path().join("provider-ran");
+    init_command(
+        project.path(),
+        "read-only",
+        "success",
+        &["--capture".into(), capture.to_string_lossy().into_owned()],
+    )
+    .assert()
+    .success();
+    initialize_git(project.path());
+    let run = project.path().join(".codeunlimited/runs/read-only");
+    let state = run.join("state.json");
+    let before = fs::read(&state).expect("state before");
+    fs::set_permissions(&run, fs::Permissions::from_mode(0o555)).expect("read-only run");
+
+    binary()
+        .args(["run", "step", "read-only", "--project"])
+        .arg(project.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("runtime[invalid_input]"));
+
+    fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).expect("restore run");
+    assert!(capture.exists(), "failure must occur after provider launch");
+    assert_eq!(fs::read(state).expect("state after"), before);
+    assert_eq!(
+        fs::read_dir(run.join("attempts"))
+            .expect("attempt journal")
+            .count(),
+        1,
+        "every provider launch must be journaled"
+    );
+}
