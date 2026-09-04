@@ -104,7 +104,7 @@ unique within one project. `init` refuses to replace an existing run.
 The new subsystem has six boundaries:
 
 - `runtime::model`: serialized manifest, coding state, typed delta, status,
-  usage, and recovery types;
+  epistemic evidence, usage, and recovery types;
 - `runtime::validate`: all field, transition, path, and byte-budget checks;
 - `runtime::prompt`: deterministic, cache-friendly construction from exactly
   workflow + state + latest observation;
@@ -138,6 +138,9 @@ Every provider invocation must satisfy all of these rules:
 7. A response cannot mutate immutable manifest fields or counters. Only a
    validated typed delta can advance the state revision.
 8. Invalid output never replaces the last valid state.
+9. Durable claims are typed as hypothesis, observed, verified, or disputed.
+   Observation, check, and artifact evidence is resolved by the runtime;
+   verified knowledge must become disputed before it can be retired.
 
 These are local, testable guarantees. Provider-side hidden system prompts and
 provider-side context usage remain outside codeunlimited's control and are
@@ -194,7 +197,7 @@ credentials must come from the provider's environment or existing auth store.
 ```text
 schema_version, revision, status, focus, memory_summary,
 queue, completed, decisions, blockers, active_files,
-checks, artifacts, archive_count, archive_hash
+checks, artifacts, epistemic, archive_count, archive_hash
 ```
 
 Paths in `active_files` and `artifacts` are project-relative, normalized, and
@@ -217,7 +220,8 @@ Default field caps are 1 KiB for `focus`, 4 KiB for `memory_summary`, 512 bytes
 for an item description, and 1 KiB for an observation or check summary. The
 visible collections allow 64 queued items, 32 completed items, 32 decisions,
 16 blockers, 32 active files, 16 checks, and 32 artifacts. Validation measures
-UTF-8 bytes, not characters or estimated tokens.
+UTF-8 bytes, not characters or estimated tokens. The epistemic ledger permits
+32 hot claims and eight evidence references per claim.
 
 ## Typed state delta
 
@@ -237,7 +241,14 @@ The provider's structured final message is a `StepEnvelope`:
     "decisions_add": [],
     "blockers_replace": [],
     "active_files_replace": ["src/parser.rs", "tests/parser.rs"],
-    "artifacts_add": [{"path":"docs/parser-contract.md","purpose":"Parser contract"}]
+    "artifacts_add": [{"path":"docs/parser-contract.md","purpose":"Parser contract"}],
+    "epistemic_upsert": [{
+      "id":"parser-contract",
+      "claim":"The parser contract is covered by a passing check",
+      "status":"verified",
+      "evidence":[{"kind":"check","revision":4}]
+    }],
+    "epistemic_retire": []
   }
 }
 ```
@@ -256,6 +267,14 @@ as `running` when verification fails, and the failure becomes the next
 observation. Without a configured verification command, `complete` is rejected
 unless the manifest records `allow_unverified_completion`. `blocked` requires a
 non-empty blocker.
+
+Epistemic upserts are selective rather than whole-ledger replacement. A
+hypothesis may be recorded without evidence. An observed claim cites either
+the hash of the latest observation or the current bounded step summary. A
+verified claim cites a runtime-observed passing check or content-addressed
+artifact. Status cannot regress, verified claims must be disputed before
+retirement, retirement requires an updated memory summary, and retired claims
+enter the same hash-chained archive as compacted state history.
 
 When bounded lists reach their cap, the oldest detailed entries are written to
 an immutable archive record and removed from the prompt-visible state only if
@@ -291,6 +310,8 @@ Version 2.0 adds four savings mechanisms beyond simple transcript removal:
 - **cache-aligned prompts:** immutable bytes precede the changing suffix;
 - **hard context admission:** an over-budget prompt fails locally before a
   provider request can spend tokens.
+- **epistemic retention:** the agent selects decision-relevant claims while
+  the runtime validates provenance and blocks silent loss of verified facts.
 
 The runtime never performs automatic semantic truncation. If state cannot fit,
 it stops with a diagnostic identifying the oversized fields. Silent truncation
@@ -398,8 +419,8 @@ user commits or otherwise shares `.codeunlimited/`.
 All implementation behavior is test-driven and requires no model calls:
 
 - model tests cover strict deserialization, field caps, ID uniqueness,
-  append/replace semantics, completion guards, archive rules, and stale
-  revisions;
+  append/replace semantics, completion guards, epistemic promotion and
+  retirement, archive rules, and stale revisions;
 - prompt golden tests prove deterministic ordering, canonical JSON, stable
   prefix hashes, absence of previous transcript text, and hard budget refusal;
 - store tests cover symlink rejection, corrupt-state preservation, atomic
@@ -443,6 +464,9 @@ editing user-owned ignore rules.
 - A valid typed delta advances exactly one revision through an atomic state
   replacement; malformed, stale, or invalid deltas preserve the previous
   bytes.
+- A locally tested two-process flow carries a bounded hypothesis into a fresh
+  process and promotes it to verified only through a passing runtime check;
+  forged evidence and premature retirement are rejected.
 - Concurrent steps for one run cannot both invoke providers.
 - Repository changes plus an uncommitted state transition force explicit
   recovery and are never automatically reverted.

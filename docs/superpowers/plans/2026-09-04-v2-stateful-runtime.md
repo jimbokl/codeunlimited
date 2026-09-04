@@ -582,24 +582,62 @@
 - Branch: `codex/v2-state-runtime`
 - No release tag or merge is created without a separate explicit publication decision
 
-- [ ] **Step 1: Map every spec acceptance criterion to evidence**
+- [x] **Step 1: Map every spec acceptance criterion to evidence**
 
   Add a checklist to the implementation notes identifying the exact test or
   command for each criterion. Fix uncovered criteria test-first.
 
-- [ ] **Step 2: Run format and lint gates**
+  Acceptance evidence map:
+
+  - [x] No transcript or resumable built-in session: prompt
+        `old_transcript_has_no_input_channel`; provider
+        `built_in_commands_enforce_ephemeral_flags` and
+        `continuation_secret_and_required_override_args_are_rejected`.
+  - [x] Deterministic rendering and stable prefix: prompt
+        `prompt_is_deterministic_minified_and_normalized` and
+        `stable_prefix_is_identical_across_state_revisions`.
+  - [x] Hard prompt admission: prompt
+        `prompt_budget_accepts_exact_boundary_and_rejects_one_byte_less` and
+        CLI `non_utf8_workflow_and_unicode_byte_overflow_fail_without_content_echo`.
+  - [x] One-revision atomic typed transition: validation
+        `continue_advances_exactly_one_revision`, `stale_delta_preserves_revision_contract`,
+        provider `invalid_json_is_a_content_free_error`, and store
+        `transition_updates_state_and_observation`.
+  - [x] Single writer: store `second_lock_is_busy_without_waiting` and CLI
+        status busy reporting.
+  - [x] Ambiguous mutation recovery: engine
+        `changed_repo_plus_invalid_output_requires_explicit_recovery` and CLI
+        `recover_requires_an_ambiguous_attempt_and_a_bounded_regular_observation`.
+  - [x] Finite auto termination: engine
+        `auto_is_finite_and_uses_fresh_revision_each_step`; CLI
+        `auto_requires_a_bound_and_never_exceeds_it` and
+        `auto_stops_when_a_run_becomes_terminal`.
+  - [x] Prompt/provider accounting distinction: CLI
+        `status_json_is_versioned_strict_and_reports_provider_isolation` and
+        provider Claude/Codex usage-parser tests.
+  - [x] All three adapters without live calls: provider command, Claude, and
+        Codex unit tests plus `tests/fixtures/runtime_driver.py`.
+  - [x] Epistemic survival and provenance: CLI
+        `fresh_provider_steps_promote_bounded_knowledge_from_hypothesis_to_verified`
+        plus validation forged-evidence, item-cap, promotion, and retirement tests.
+  - [x] Legacy compatibility: complete release Rust/Python suites in Steps 2-4.
+  - [x] Version/privacy/claims: `release_metadata`, `tests.test_release_tooling`,
+        `scripts/check_release.py --expected 2.0.0`, and
+        `scripts/check_release.sh 2.0`.
+
+- [x] **Step 2: Run format and lint gates**
 
   Run: `cargo fmt --all -- --check`
 
   Run: `cargo clippy --all-targets --locked -- -D warnings`
 
-- [ ] **Step 3: Run all Rust and Python tests**
+- [x] **Step 3: Run all Rust and Python tests**
 
   Run: `cargo test --release --all-targets --locked`
 
   Run: `python3 -m unittest discover -s tests -p 'test_*.py' -v`
 
-- [ ] **Step 4: Run compatibility and package gates**
+- [x] **Step 4: Run compatibility and package gates**
 
   Run: `cargo +1.82.0 check --all-targets --locked` when installed.
 
@@ -607,7 +645,7 @@
 
   Run: `cargo package --locked`
 
-- [ ] **Step 5: Inspect the complete change set**
+- [x] **Step 5: Inspect the complete change set**
 
   Run: `git diff --check`
 
