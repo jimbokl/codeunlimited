@@ -672,6 +672,13 @@ fn fifo_work_plan_is_rejected_without_blocking_on_open() {
 fn private_task_report_is_neither_tracked_nor_packaged() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let report = ".superpowers/sdd/2026-09-04-v2.2-delivery/task-2-report.md";
+    if root.join("Cargo.toml.orig").is_file() {
+        assert!(
+            !root.join(".superpowers").exists(),
+            "private reports must be absent from extracted package sources"
+        );
+        return;
+    }
     let tracked = ProcessCommand::new("git")
         .args(["ls-files", "--error-unmatch", report])
         .current_dir(root)
