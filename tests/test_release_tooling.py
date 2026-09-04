@@ -189,6 +189,16 @@ class PythonMatrixTests(unittest.TestCase):
         )
         self.assertNotIn("matrix.python-version == '3.10'", workflow)
 
+    def test_ci_and_release_audit_the_exact_crate_archive(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release = (root / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("bash scripts/audit-package.sh 1.9", ci)
+        self.assertIn('bash scripts/audit-package.sh "$version"', release)
+
 
 __all__ = [
     "BenchmarkOutputTests",

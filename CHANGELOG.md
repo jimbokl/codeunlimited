@@ -14,7 +14,8 @@
   positive-result filter. It now includes favorable and unfavorable sessions,
   exposes accounting completeness, keeps identifiers private, and labels the
   early-context counterfactual as modeled rather than exact savings. Invalid
-  UTF-8 now aborts instead of silently dropping bytes from the accounting.
+  UTF-8 now aborts instead of silently dropping bytes from the accounting;
+  malformed top-level JSON is counted and failure diagnostics redact paths.
 - Added a strict paired-task experiment analyzer with an exact sign-flip test.
   The historical controlled run is reported as a negative total-token result
   (approximately +17.4% for treatment), and its invalid request-level
@@ -22,11 +23,12 @@
 - Unix and PowerShell installers now require a valid sha256 asset, smoke-test
   the download, and finish fallible setup before atomically replacing an
   existing installation. Unix prints PATH guidance; PowerShell updates user
-  PATH idempotently.
+  PATH idempotently and rolls it back if the final replacement fails.
 - CI explicitly discovers the complete Python suite, validates historical
   evidence against immutable release commits, tests installers on their native
   runners, and smoke-tests the `techniques` command in release artifacts.
-  Python 3.10 and 3.12 now execute the identical discovered suite.
+  Python 3.10 and 3.12 now execute the identical discovered suite, and both CI
+  and tagged releases audit and retest the exact unpacked crate archive.
 - Public documentation and graphics now distinguish exact observed counters,
   modeled counterfactuals, detector estimates, and realized observational
   outcomes. Console, Markdown, HTML, badge, and JSON output label detector

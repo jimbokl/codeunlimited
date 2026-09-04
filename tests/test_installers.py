@@ -162,6 +162,10 @@ class PowerShellInstallerStructureTests(unittest.TestCase):
         self.assertLess(script.index("SetEnvironmentVariable"), replace)
         self.assertLess(script.index("& $download --version"), replace)
         self.assertNotIn("& $exe --version", script)
+        self.assertIn("if (-not $committed -and $pathChanged)", script)
+        self.assertIn(
+            "SetEnvironmentVariable('Path', $originalUserPath, 'User')", script
+        )
 
 
 if __name__ == "__main__":

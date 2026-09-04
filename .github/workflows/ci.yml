@@ -60,6 +60,7 @@ jobs:
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - run: bash scripts/check_release.sh 1.9
       - run: cargo package --locked
+      - run: bash scripts/audit-package.sh 1.9
 
   python-tests:
     name: python ${{ matrix.python-version }}

@@ -18,6 +18,10 @@ $temp = Join-Path $dest ('.codeunlimited-download-' + [Guid]::NewGuid())
 $download = Join-Path $temp $asset
 $sumFile = "$download.sha256"
 $staged = Join-Path $dest ('.codeunlimited-install-' + [Guid]::NewGuid() + '.exe')
+$originalUserPath = $null
+$originalProcessPath = $env:Path
+$pathChanged = $false
+$committed = $false
 
 try {
     New-Item -ItemType Directory -Force -Path $temp | Out-Null
@@ -45,29 +49,43 @@ try {
         throw 'Downloaded binary failed its smoke test - preserving the existing installation.'
     }
 
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $pathEntries = @($userPath -split ';' | Where-Object { $_ })
+    Copy-Item -LiteralPath $download -Destination $staged
+
+    $originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $pathEntries = @($originalUserPath -split ';' | Where-Object { $_ })
     if ($pathEntries -notcontains $dest) {
-        $nextUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) {
+        $nextUserPath = if ([string]::IsNullOrWhiteSpace($originalUserPath)) {
             $dest
         } else {
-            "$userPath;$dest"
+            "$originalUserPath;$dest"
         }
+        $pathChanged = $true
         [Environment]::SetEnvironmentVariable('Path', $nextUserPath, 'User')
         $env:Path = "$env:Path;$dest"
         Write-Host "Added to user PATH (new terminals pick it up automatically)."
     }
 
-    Copy-Item -LiteralPath $download -Destination $staged
     if (Test-Path -LiteralPath $exe -PathType Leaf) {
         [IO.File]::Replace($staged, $exe, $null)
     } else {
         [IO.File]::Move($staged, $exe)
     }
+    $committed = $true
 
     Write-Host "Installed: $exe"
     Write-Host $versionOutput
     Write-Host 'Next: codeunlimited audit'
+} catch {
+    $failure = $_
+    if (-not $committed -and $pathChanged) {
+        try {
+            [Environment]::SetEnvironmentVariable('Path', $originalUserPath, 'User')
+            $env:Path = $originalProcessPath
+        } catch {
+            Write-Warning 'Installation failed and the user PATH rollback also failed.'
+        }
+    }
+    throw $failure
 } finally {
     Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue

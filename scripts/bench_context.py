@@ -42,7 +42,7 @@ def _token(value: object) -> int:
 def load_sessions(root: pathlib.Path) -> LoadResult:
     root = root.expanduser()
     if not root.is_dir():
-        raise FileNotFoundError(f"Claude projects root does not exist: {root}")
+        raise FileNotFoundError("Claude projects root does not exist")
 
     sessions: dict[SessionKey, list[Turn]] = defaultdict(list)
     seen: set[tuple[SessionKey, str]] = set()
@@ -60,6 +60,9 @@ def load_sessions(root: pathlib.Path) -> LoadResult:
                 try:
                     record = json.loads(line)
                 except (json.JSONDecodeError, TypeError):
+                    malformed += 1
+                    continue
+                if not isinstance(record, dict):
                     malformed += 1
                     continue
                 if record.get("type") != "assistant":
@@ -183,6 +186,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _safe_input_error(error: OSError | UnicodeError) -> str:
+    if isinstance(error, UnicodeError):
+        return "a log file is not valid UTF-8"
+    if isinstance(error, FileNotFoundError):
+        return "Claude projects root does not exist"
+    if isinstance(error, PermissionError):
+        return "a log file cannot be read (permission denied)"
+    return f"log input could not be read ({type(error).__name__})"
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -193,7 +206,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         loaded = load_sessions(args.root)
     except (OSError, UnicodeError) as error:
-        print(f"benchmark failed: {error}", file=sys.stderr)
+        print(f"benchmark failed: {_safe_input_error(error)}", file=sys.stderr)
         return 2
     result = analyze(
         loaded.sessions,

@@ -38,6 +38,11 @@ jobs:
       - run: cargo test --release --all-targets --locked
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: cargo package --locked
+      - name: Audit exact packaged archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bash scripts/audit-package.sh "$version"
       - name: Install packaged source and smoke-test it
         shell: bash
         run: |

@@ -1,4 +1,5 @@
 import datetime as dt
+import pathlib
 import unittest
 
 from codeunlimited.detectors import context_tax
@@ -30,6 +31,13 @@ class ReferenceLanguageTests(unittest.TestCase):
             self.assertIn("Batch small related tasks", text)
             self.assertIn("prior context", text)
             self.assertNotIn("New task = new session", text)
+
+    def test_handoff_labels_the_context_counterfactual_as_modeled(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        handoff = (root / "docs" / "HANDOFF-CODEX.md").read_text(encoding="utf-8")
+
+        self.assertRegex(handoff, r"modeled\s+bounded-context counterfactual")
+        self.assertNotIn("bounded-context vs actual", handoff)
 
 
 if __name__ == "__main__":

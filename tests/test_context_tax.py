@@ -122,6 +122,17 @@ class ContextTaxTests(unittest.TestCase):
         self.assertNotIn("secret-session", serialized)
         self.assertNotIn("private-model", serialized)
 
+    def test_non_object_json_candidate_is_counted_as_malformed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            self.write_log(root, "project-a", ['["assistant", "usage"]'])
+
+            loaded = bench_context.load_sessions(root)
+
+        self.assertEqual(loaded.malformed_candidates, 1)
+        self.assertEqual(loaded.recognized_records, 0)
+        self.assertEqual(loaded.sessions, {})
+
     def test_missing_root_fails_instead_of_looking_like_zero_usage(self) -> None:
         missing = pathlib.Path(tempfile.gettempdir()) / "codeunlimited-missing-context-root"
         with self.assertRaises(FileNotFoundError):
@@ -132,6 +143,7 @@ class ContextTaxTests(unittest.TestCase):
             status = bench_context.main(["--root", str(missing)])
         self.assertEqual(status, 2)
         self.assertIn("does not exist", stderr.getvalue())
+        self.assertNotIn(str(missing), stderr.getvalue())
 
     def test_invalid_utf8_fails_instead_of_silently_dropping_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
