@@ -42,13 +42,30 @@ hours of work are left before the wall - and how much a fix moves it".
 Each finding is reported in **limit currency**: tokens reclaimed, % of your
 weekly volume, extra agent answers that fit into the same limit.
 
+## Install (one command)
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jimbokl/codeunlimited/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/jimbokl/codeunlimited/main/install.ps1 | iex
+```
+
+Both fetch the latest release binary for your platform, verify its sha256,
+and put it on PATH. Alternatives: `cargo install codeunlimited --locked` or
+a binary straight from GitHub Releases.
+
 ## Quick start
 
 The core is a single **Rust** binary designed for multi-gigabyte local histories,
 with no runtime dependencies. Benchmark it on your own logs:
 
 ```bash
-cargo install codeunlimited --locked  # or grab a binary from GitHub Releases
 
 codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md

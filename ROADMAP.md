@@ -4,6 +4,28 @@ Mission: **fit more useful agent work into the subscription limits people
 already pay for.** The Rust CLI is the product. The Python package remains a
 legacy detector prototype and has a separate distribution name.
 
+## Sprint v1.9 (Sep 5-7, 2026) — launch weekend
+
+Polish Friday-Sunday, public launch Monday Sep 7.
+
+- [ ] **One-command install**: `install.sh` (curl | sh) and `install.ps1`
+      (irm | iex) - latest release binary, sha256 verification, PATH setup;
+      README leads with it.
+- [ ] **Rules v2** in init blocks (researched techniques): manual /compact
+      with direction before autocompact, /clear between tasks, answer-only
+      subagents for bulk-mechanical work, @file references over pasted
+      content, model routing (top tier only for architecture), lean
+      CLAUDE.md/AGENTS.md (they bill every turn), .claudeignore for
+      scan-heavy repos, Codex config hints (tool_output_token_limit,
+      model_reasoning_effort).
+- [ ] **fix v2**: oversized CLAUDE.md/AGENTS.md warning; Codex config.toml
+      suggestions (read-only, never auto-edited).
+- [ ] Compaction-marathon detector if compact events are detectable in logs.
+- [ ] Dogfood snapshots Sat/Sun (`report --all`); merge new codex/* branches.
+- [ ] Mon Sep 7: freeze -> v1.9.0 tag -> CI binaries -> cargo publish ->
+      verify installers against the live release -> owner posts
+      (docs/launch/).
+
 ## Shipped through 1.8
 
 - Fast local parsing for Claude Code and Codex logs, project-scoped audit,
