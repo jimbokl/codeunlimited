@@ -657,7 +657,7 @@
   persistence, shell invocation, destructive Git operations, unsupported
   savings claims, and unrelated edits.
 
-- [ ] **Step 6: Push the implementation branch**
+- [x] **Step 6: Push the implementation branch**
 
   Push `codex/v2-state-runtime` and report the branch/commit plus every local
   verification result. Do not run a live provider, create a tag, or merge as
