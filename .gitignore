@@ -5,6 +5,7 @@ build/
 *.egg-info/
 .venv/
 target/
+.codegraph/
 
 # Local agent handoff (never commit)
 /HANDOFF.md
