@@ -18,8 +18,8 @@
   original bytes; experiment output excludes prompts, responses, models,
   project paths, hostnames, and raw log records.
 - The bounded one-sprint-per-arm evidence recorded 39,110,299 control input
-  tokens and 38,263,622 treatment input tokens: an observed difference of
-  -846,677 input tokens per completed task (-2.2%) and +2.2% observed
+  tokens and 47,368,983 treatment input tokens: an observed difference of
+  +8,258,684 input tokens per completed task (+21.1%) and -17.4% observed
   capacity. This low-confidence historical comparison does not attribute the
   difference to codeunlimited.
 
