@@ -49,7 +49,10 @@ try {
     if ((Invoke-Installer) -ne 0) { throw 'Valid installer run failed' }
     if ((Invoke-Installer) -ne 0) { throw 'Idempotent installer rerun failed' }
     $version = & (Join-Path $dest 'codeunlimited.exe') --version
-    if ($version -ne 'codeunlimited 2.0.0') { throw "Unexpected installed version: $version" }
+    $manifest = Get-Content (Join-Path $PSScriptRoot '..\Cargo.toml') -Raw
+    if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw 'Could not read version from Cargo.toml' }
+    $expected = "codeunlimited $($Matches[1])"
+    if ($version -ne $expected) { throw "Unexpected installed version: $version (expected $expected)" }
     $pathEntries = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
     if (($pathEntries | Where-Object { $_ -eq $dest }).Count -ne 1) {
         throw 'Installer did not add exactly one user PATH entry'
