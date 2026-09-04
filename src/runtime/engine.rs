@@ -94,6 +94,15 @@ pub struct RunStatusView {
     pub stable_prompt_bytes: usize,
     pub dynamic_prompt_bytes: usize,
     pub usage: ProviderUsage,
+    pub provider: ProviderStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProviderStatus {
+    pub kind: String,
+    pub executable: String,
+    pub args: Vec<String>,
+    pub isolation: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -571,7 +580,22 @@ fn status_for_store(store: &RunStore) -> Result<RunStatusView, RuntimeError> {
         stable_prompt_bytes: prompt.stable_bytes,
         dynamic_prompt_bytes: prompt.dynamic_bytes,
         usage: aggregate_usage(&attempts),
+        provider: provider_status(&loaded.manifest.provider),
     })
+}
+
+fn provider_status(provider: &ProviderConfig) -> ProviderStatus {
+    let (kind, isolation) = match provider {
+        ProviderConfig::Claude { .. } => ("claude", "ephemeral provider process"),
+        ProviderConfig::Codex { .. } => ("codex", "ephemeral provider process"),
+        ProviderConfig::Command { .. } => ("command", "external-process isolation"),
+    };
+    ProviderStatus {
+        kind: kind.into(),
+        executable: provider.executable().to_string_lossy().into_owned(),
+        args: provider.args().to_vec(),
+        isolation: isolation.into(),
+    }
 }
 
 fn resolve_artifacts(

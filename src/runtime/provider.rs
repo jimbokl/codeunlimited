@@ -613,6 +613,6 @@ mod tests {
 
     fn contains_pair(args: &[OsString], key: &str, value: &str) -> bool {
         args.windows(2)
-            .any(|pair| pair[0] == OsString::from(key) && pair[1] == OsString::from(value))
+            .any(|pair| pair[0] == key && pair[1] == value)
     }
 }

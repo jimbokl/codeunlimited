@@ -403,32 +403,32 @@
 - Supports: `--json` on status/step/auto and exact provider/verification argv flags
 - Maps: stable runtime error categories to non-zero process exits without content leaks
 
-- [ ] **Step 1: Add failing CLI help and init/status tests**
+- [x] **Step 1: Add failing CLI help and init/status tests**
 
   Assert all subcommands appear, `run init` performs no fixture-provider call,
   duplicate names fail, status JSON is strict/versioned, and the printed ignore
   guidance is exactly `.codeunlimited/runs/`.
 
-- [ ] **Step 2: Add failing prompt/step/auto/recover tests**
+- [x] **Step 2: Add failing prompt/step/auto/recover tests**
 
   Use the command fixture to prove prompt is read-only, step invokes exactly
   once, auto invokes no more than `--steps`, terminal state stops early,
   missing `--steps` is a clap failure, and recovery requires an existing
   recovery record plus a bounded regular observation file.
 
-- [ ] **Step 3: Witness RED**
+- [x] **Step 3: Witness RED**
 
   Run: `cargo test --test runtime_cli -- --nocapture`
 
   Expected: clap rejects the absent `run` command.
 
-- [ ] **Step 4: Implement clap types and thin dispatch**
+- [x] **Step 4: Implement clap types and thin dispatch**
 
   Add a `RunCmd` enum and argument structs in `runtimecmd.rs`; keep `main.rs` to
   one `Cmd::Run { command } => exit(runtimecmd::run(command))` dispatch arm.
   Resolve paths once and render human/JSON results from typed engine reports.
 
-- [ ] **Step 5: Implement exit and redaction contract**
+- [x] **Step 5: Implement exit and redaction contract**
 
   Use stable exit categories for invalid input, busy, provider failure,
   over-budget, invalid transition, and recovery required. Redact values after
@@ -436,7 +436,7 @@
   Never print raw provider stdout/stderr or compiled prompts except the explicit
   local `run prompt` command.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
   Run: `cargo test --test runtime_cli -- --nocapture`
 

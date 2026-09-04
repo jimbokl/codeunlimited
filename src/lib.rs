@@ -16,6 +16,7 @@ pub mod registry;
 pub mod report;
 pub mod reportcmd;
 pub mod runtime;
+pub mod runtimecmd;
 pub mod safeio;
 pub mod scan_index;
 pub mod schedule;

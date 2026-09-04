@@ -1,6 +1,6 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, schedule, skillcmd, techniques,
+    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques,
 };
 
 use std::io::IsTerminal;
@@ -174,6 +174,11 @@ enum Cmd {
         #[command(subcommand)]
         command: ExperimentCmd,
     },
+    /// Run bounded stateful coding work in fresh provider processes
+    Run {
+        #[command(subcommand)]
+        command: runtimecmd::RunCmd,
+    },
     /// List every efficiency technique with on/off status and how to toggle it
     Techniques {
         /// Evaluate against this project's config (default: current directory)
@@ -307,6 +312,9 @@ fn main() {
                 } => experiment::compare(&control, &treatment, &path, json),
                 ExperimentCmd::List { path, json } => experiment::list(&path, json),
             });
+        }
+        Cmd::Run { command } => {
+            std::process::exit(runtimecmd::run(command));
         }
         Cmd::Techniques { path } => {
             let root = path.canonicalize().ok();
