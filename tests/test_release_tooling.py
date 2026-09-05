@@ -196,8 +196,21 @@ class PythonMatrixTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("bash scripts/audit-package.sh 2.1", ci)
+        self.assertIn("bash scripts/audit-package.sh 2.2", ci)
         self.assertIn('bash scripts/audit-package.sh "$version"', release)
+
+    def test_python_matrix_builds_the_real_cli_before_packet_benchmarks(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[1]
+        ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release = (root / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+
+        python_job = ci.split("  python-tests:\n", 1)[1].split("\n  msrv:", 1)[0]
+        self.assertIn("cargo build --locked", python_job)
+        self.assertIn("CODEUNLIMITED_BIN: target/debug/codeunlimited", python_job)
+        self.assertIn("cargo build --release --locked", release)
+        self.assertIn("CODEUNLIMITED_BIN: target/release/codeunlimited", release)
 
 
 __all__ = [

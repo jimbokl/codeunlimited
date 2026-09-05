@@ -1,6 +1,6 @@
 # Stateful orchestration runtime
 
-Version 2.1 builds on the bounded stateful runtime introduced in 2.0. Its
+Version 2.2 builds on the bounded stateful runtime introduced in 2.0. Its
 primary execution layer uses existing Claude Code and Codex subscription
 logins. An optional, separately configured OpenAI/Anthropic API layer uses
 metered API credentials. The local auditor remains offline.
@@ -42,6 +42,42 @@ codeunlimited run prompt sprint-2 --project .
 codeunlimited run step sprint-2 --project . --json
 codeunlimited run auto sprint-2 --project . --steps 4 --json
 ```
+
+### Immutable work plans and packet preview
+
+Pass `--work-plan FILE` to opt into managed packets. The runtime accepts a
+regular JSON file no larger than 32 KiB, validates the whole plan before
+creating a run, and stores an immutable snapshot:
+
+```json
+{"schema_version":1,"max_packet_tasks":4,"tasks":[
+  {"id":"a","task":"Update parser fixture","group":"parser","depends_on":[],"scope":["tests/parser.rs"],"risk":"low"},
+  {"id":"b","task":"Update parser error case","group":"parser","depends_on":["a"],"scope":["tests/parser.rs"],"risk":"low"}
+]}
+```
+
+A plan has 1 to 32 tasks and a packet cap from 1 to 8. Task text is limited to
+512 UTF-8 bytes. Each task has at most 16 unique safe project-relative scope
+paths, a safe ID and group, unique known dependencies, and a `low`, `medium`,
+or `high` risk. Unknown fields, cycles, duplicate IDs, dependencies or paths,
+empty values, and unsafe paths are rejected. Scope is scheduling metadata; it
+does not restrict filesystem access or grant permission.
+
+Selection starts with the first remaining dependency-ready task in declaration
+order. It then adds ready tasks with the same group, risk, and scope set until
+the cap. Dependencies may be satisfied earlier in the same packet. Preview the
+selection without starting a worker:
+
+```bash
+codeunlimited run packet sprint-2 --project . --json
+```
+
+Managed packets use one frozen verification program and argv. A worker may
+accept only a nonempty ordered prefix of its selected IDs, except that a
+`blocked` outcome may accept none. Verification runs before acceptance; the
+runtime also derives the remaining queue from the immutable plan. The frozen
+argv does not freeze mutable test files or the executable environment, so use a
+trusted verifier outside worker-editable scope when that distinction matters.
 
 The built-in providers are `claude` and `codex`. `command` accepts an explicit
 executable implementing the same JSON envelope contract and is useful for
@@ -124,6 +160,7 @@ state.json          current validated hot state
 observation.txt     latest bounded observation
 lock                exclusive run lock
 attempts/           immutable metadata-only attempt records
+attempt-intent.json present only while dispatch/finalization is unresolved
 archive/            compacted completed items and decisions
 recovery.json       present only after an ambiguous attempt
 ```
@@ -158,6 +195,32 @@ defaults to 100 total attempts, and a revision defaults to two failed attempts.
 
 `run auto` is always finite (`--steps 1..100`) and also respects the run-wide
 limits. Terminal or exhausted runs do not invoke another provider.
+
+Optional `run init --max-total-tokens N` is a soft next-call admission limit
+over complete reported worker-attempt counters. The first attempt is allowed.
+A worker already running may overshoot the cap and is not killed. Unknown usage
+stops the next worker instead of being treated as zero. Without the option,
+admission behavior is unchanged.
+
+## Attempt ledger
+
+Before dispatch, the runtime atomically records an intent with the attempt,
+base revision, provider/configuration and prompt digests, byte counts, and start
+time. Finalization writes an immutable attempt record before clearing that
+intent. Inspect all attempts without invoking a provider:
+
+```bash
+codeunlimited run ledger sprint-2 --project . --json
+```
+
+Each attempt normalizes its own provider counters before aggregation. One
+unknown attempt makes the complete total null, and overflow also invalidates
+the total. Zero attempts is explicitly no evidence. Busy or pending runs cannot
+claim complete coverage. Cache probes are excluded. Accepted task IDs are
+reported only for planned, verified transitions; tokens per accepted task is
+null without a plan, accepted tasks, or complete accounting. These counters
+describe reported worker attempts, not hidden provider internals or subscription
+quota.
 
 ## Provider isolation and prompt caching
 
@@ -288,9 +351,15 @@ codeunlimited run recover sprint-2 \
 ```
 
 Recovery preserves repository changes and advances the durable revision; it
-does not roll back user work. The runtime records Git HEAD and a content-free
-status digest when Git is available. If Git is unavailable, a failed provider
-attempt is conservatively treated as ambiguous.
+does not roll back user work. Stop any old worker before recovering, then
+inspect the repository and record only the state you accept. The runtime
+records Git HEAD and a content-free status digest when Git is available. If
+Git is unavailable, a failed provider attempt is conservatively treated as
+ambiguous.
+
+Recovery applies to interrupted or ambiguous attempts, not to a normal
+`blocked` result. `blocked` is terminal. After resolving its blocker, an
+operator may initialize a new run rather than treating recovery as resume.
 
 ## Security and evidence boundary
 
@@ -311,6 +380,12 @@ auditor's privacy boundary.
 Local tests prove deterministic prompt construction, exclusion of prior
 orchestration transcripts, hard byte and attempt bounds, fresh-process flags,
 strict state validation, atomic control-state updates, and recovery behavior.
+The offline packet fixture also demonstrates the process boundary: four
+one-task packets require four successful deterministic fixture starts, while
+one four-task packet requires one, and both produce the same independently
+checked files. `run prompt` bytes recorded before those starts are rendered
+inspection bytes, not tokens or hidden provider traffic. No provider/model or
+competent native-agent arm is run, and larger packets may increase repair cost.
 That structural evidence **does not prove realized token savings**. The
 SKILL.state paper reports large savings in its own warehouse and benchmark
 setups, but those results are not a product guarantee for a coding repository.

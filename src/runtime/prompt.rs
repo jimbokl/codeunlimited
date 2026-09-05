@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-use super::model::{CodingState, Manifest, RuntimeError};
+use super::model::{CodingState, Manifest, RunStatus, RuntimeError};
 use super::validate::{validate_manifest, validate_state};
 
 pub const STEP_ENVELOPE_SCHEMA_JSON: &str = r#"{"type":"object","additionalProperties":false,"required":["schema_version","base_revision","outcome","summary","delta"],"properties":{"schema_version":{"type":"integer","const":1},"base_revision":{"type":"integer","minimum":0},"outcome":{"type":"string","enum":["continue","complete","blocked"]},"summary":{"type":"string","minLength":1,"maxLength":1024},"delta":{"type":"object","additionalProperties":false,"properties":{"focus":{"type":["string","null"]},"memory_summary":{"type":["string","null"]},"queue_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","task"],"properties":{"id":{"type":"string"},"task":{"type":"string"}}}},"completed_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","result"],"properties":{"id":{"type":"string"},"result":{"type":"string"}}}},"decisions_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","decision"],"properties":{"id":{"type":"string"},"decision":{"type":"string"}}}},"blockers_replace":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,"required":["id","blocker"],"properties":{"id":{"type":"string"},"blocker":{"type":"string"}}}},"active_files_replace":{"type":["array","null"],"items":{"type":"string"}},"artifacts_add":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","purpose"],"properties":{"path":{"type":"string"},"purpose":{"type":"string"}}}},"epistemic_upsert":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","claim","status","evidence"],"properties":{"id":{"type":"string"},"claim":{"type":"string"},"status":{"type":"string","enum":["hypothesis","observed","verified","disputed"]},"evidence":{"type":"array","items":{"oneOf":[{"type":"object","additionalProperties":false,"required":["kind"],"properties":{"kind":{"const":"step"}}},{"type":"object","additionalProperties":false,"required":["kind","sha256"],"properties":{"kind":{"const":"observation"},"sha256":{"type":"string"}}},{"type":"object","additionalProperties":false,"required":["kind","revision"],"properties":{"kind":{"const":"check"},"revision":{"type":"integer","minimum":0}}},{"type":"object","additionalProperties":false,"required":["kind","path"],"properties":{"kind":{"const":"artifact"},"path":{"type":"string"}}}]}}}},"epistemic_retire":{"type":"array","items":{"type":"string"}}}}}}}"#;
@@ -117,15 +117,31 @@ pub fn compile_prompt(
     let state_json =
         serde_json::to_string(state).map_err(|_| RuntimeError::InvalidStoredData("state.json"))?;
 
-    let stable = format!(
+    let mut stable = format!(
         "{RUNTIME_CONTRACT}\nThe provider-specific structured-output schema is authoritative and is supplied out of band.\n\nIMMUTABLE_WORKFLOW sha256={}\n{}\nEND_IMMUTABLE_WORKFLOW\n\nIMMUTABLE_OBJECTIVE\n{}\nEND_IMMUTABLE_OBJECTIVE\n",
         manifest.workflow_sha256, workflow, objective
     );
-    let dynamic = format!(
+    let mut dynamic = format!(
         "CURRENT_STATE\n{state_json}\nEND_CURRENT_STATE\n\nLATEST_OBSERVATION sha256={:x}\n{observation}\nEND_LATEST_OBSERVATION\n\nPerform one bounded increment now. Base the response on revision {}.\n",
         Sha256::digest(observation.as_bytes()),
         state.revision
     );
+    let selected_json = if let Some(plan) = &manifest.work_plan {
+        stable.push_str(
+            "\nThis is a managed work plan. Complete only tasks in SELECTED_PACKET, in dependency order. Return one structured response for the packet. completed_add must be an ordered prefix of the selected IDs; it may be empty only when the outcome is explicitly blocked. If accepted tasks exhaust the remaining queue, outcome must be complete, never continue or blocked. Scope paths are planning metadata, not a filesystem sandbox or expanded authorization. The runtime freezes only the verification program and argv, not mutable test contents or the executable environment, and runs that command before accepting work.\n",
+        );
+        let selected = if state.status == RunStatus::Running {
+            super::packet::select_tasks(plan, state)?
+        } else {
+            Vec::new()
+        };
+        let json = serde_json::to_string(&selected)
+            .map_err(|_| RuntimeError::InvalidStoredData("work_plan"))?;
+        dynamic.push_str(&format!("\nSELECTED_PACKET\n{json}\nEND_SELECTED_PACKET\n"));
+        Some(json)
+    } else {
+        None
+    };
     let stable = stable.into_bytes();
     let dynamic = dynamic.into_bytes();
     let stable_bytes = stable.len();
@@ -151,10 +167,15 @@ pub fn compile_prompt(
         .join("runs")
         .join(&manifest.run_name);
     let relative_run = format!(".codeunlimited/runs/{}", manifest.run_name);
-    let codex_bootstrap = format!(
+    let mut codex_bootstrap = format!(
         "Load the bounded runtime inputs with three separate reads, in this exact order: `{relative_run}/provider-instructions.md` first, `{relative_run}/state.json` second, and `{relative_run}/observation.txt` third. Follow the first file as immutable instructions, treat the latter two as the only changing input, perform one bounded increment, then return the required structured response. Do not combine the three reads.\n"
-    )
-    .into_bytes();
+    );
+    if let Some(json) = selected_json {
+        codex_bootstrap.push_str(&format!(
+            "After those ordered reads, use exactly this packet:\nSELECTED_PACKET\n{json}\nEND_SELECTED_PACKET\n"
+        ));
+    }
+    let codex_bootstrap = codex_bootstrap.into_bytes();
     Ok(CompiledPrompt {
         bytes,
         stable,
@@ -197,7 +218,9 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use crate::runtime::model::{CodingState, Manifest, ProviderConfig, RuntimeError};
+    use crate::runtime::model::{
+        CodingState, Manifest, PlannedTask, ProviderConfig, RuntimeError, TaskRisk, WorkPlan,
+    };
 
     use super::compile_prompt;
 
@@ -363,5 +386,50 @@ mod tests {
             compile_prompt(&manifest(), WORKFLOW, &CodingState::initial(), &[0xff]).unwrap_err(),
             RuntimeError::InvalidStoredData("observation.txt")
         );
+    }
+
+    #[test]
+    fn managed_packet_is_identical_in_dynamic_and_codex_inputs() {
+        let mut manifest = manifest();
+        manifest.verification_command = Some(crate::runtime::model::VerificationCommand {
+            program: "verify".into(),
+            args: vec!["--all".into()],
+        });
+        manifest.work_plan = Some(WorkPlan {
+            schema_version: 1,
+            max_packet_tasks: 2,
+            tasks: vec![
+                PlannedTask {
+                    id: "a".into(),
+                    task: "First".into(),
+                    group: "g".into(),
+                    depends_on: vec![],
+                    scope: vec!["src/a.rs".into()],
+                    risk: TaskRisk::Low,
+                },
+                PlannedTask {
+                    id: "b".into(),
+                    task: "Second".into(),
+                    group: "g".into(),
+                    depends_on: vec!["a".into()],
+                    scope: vec!["src/a.rs".into()],
+                    risk: TaskRisk::Low,
+                },
+            ],
+        });
+        let mut state = CodingState::initial();
+        state.queue = crate::runtime::packet::initial_queue(manifest.work_plan.as_ref().unwrap());
+        let prompt = compile_prompt(&manifest, WORKFLOW, &state, b"").unwrap();
+        let marker = "SELECTED_PACKET\n[{\"id\":\"a\",\"task\":\"First\",\"group\":\"g\",\"depends_on\":[],\"scope\":[\"src/a.rs\"],\"risk\":\"low\"},{\"id\":\"b\",\"task\":\"Second\",\"group\":\"g\",\"depends_on\":[\"a\"],\"scope\":[\"src/a.rs\"],\"risk\":\"low\"}]\nEND_SELECTED_PACKET";
+
+        assert!(String::from_utf8(prompt.dynamic.clone())
+            .unwrap()
+            .contains(marker));
+        assert!(String::from_utf8(prompt.bytes.clone())
+            .unwrap()
+            .contains(marker));
+        let bootstrap = String::from_utf8(prompt.codex_bootstrap).unwrap();
+        assert!(bootstrap.contains("observation.txt` third"));
+        assert!(bootstrap.contains(marker));
     }
 }

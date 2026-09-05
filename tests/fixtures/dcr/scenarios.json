@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "source": "decimal-v1",
+    "config.whitespace": "trim",
+    "spec.empty": "error",
+    "spec.negative": "allow",
+    "README": "Synthetic parser fixture, not executable source."
+  },
+  "training": {
+    "id": "isolated-whitespace-counterexample",
+    "updates": {"config.whitespace": "strict"},
+    "input": " 12 ",
+    "before_expected": "12",
+    "after_expected": "invalid"
+  },
+  "holdout": [
+    {"id": "unchanged", "input": " 12 ", "updates": {}, "expected": "12", "route": "reuse"},
+    {"id": "docs-only", "input": " 12 ", "updates": {"README": "Unrelated doc update."}, "expected": "12", "route": "reuse"},
+    {"id": "new-argument", "input": "19", "updates": {}, "expected": "19", "route": "reuse"},
+    {"id": "negative-argument", "input": "-7", "updates": {}, "expected": "-7", "route": "reuse"},
+    {"id": "invalid-argument", "input": "oops", "updates": {}, "expected": "invalid", "route": "reuse"},
+    {"id": "blank-argument", "input": " ", "updates": {}, "expected": "empty", "route": "reuse"},
+    {"id": "docs-removed", "input": "12", "updates": {}, "remove": ["README"], "expected": "12", "route": "reuse"},
+    {"id": "strict-tabs", "input": "\t14\n", "updates": {"config.whitespace": "strict"}, "expected": "invalid", "route": "reconsider"},
+    {"id": "empty-is-zero", "input": " ", "updates": {"spec.empty": "zero"}, "expected": "0", "route": "reconsider"},
+    {"id": "negative-disallowed", "input": "-7", "updates": {"spec.negative": "reject"}, "expected": "invalid", "route": "reconsider"},
+    {"id": "source-hex", "input": "ff", "updates": {"source": "hex-v1"}, "expected": "255", "route": "reconsider"},
+    {"id": "combined-policy-change", "input": " ", "updates": {"config.whitespace": "strict", "spec.empty": "zero"}, "expected": "invalid", "route": "reconsider"},
+    {"id": "missing-config", "input": "12", "updates": {}, "remove": ["config.whitespace"], "expected": null, "route": "abstain"},
+    {"id": "unknown-environment", "input": "12", "updates": {"env.hidden": "override"}, "expected": null, "route": "abstain"},
+    {"id": "unsupported-source", "input": "12", "updates": {"source": "dynamic-plugin"}, "expected": null, "route": "abstain"},
+    {"id": "unreviewed-contract", "input": "12", "updates": {}, "complete": false, "expected": "12", "route": "abstain"},
+    {"id": "insufficient-context-budget", "input": "12", "updates": {}, "context_budget_bytes": 1, "expected": "12", "route": "abstain"}
+  ]
+}

@@ -7,9 +7,10 @@ an ever-growing orchestration transcript.**
 
 `codeunlimited` has two product surfaces. Its local auditor separates what was
 **observed** from what is **modeled**, sums local log counters exactly, and
-measures input tokens per comparable completed task. Its 2.1 stateful runtime
-executes long work as fresh provider processes connected by a bounded,
-validated state. Neither surface promises a fixed savings percentage. A
+measures input tokens per comparable completed task. Its 2.2 stateful runtime
+adds immutable work plans, deterministic packet selection, and an all-attempt
+ledger to fresh provider processes connected by bounded, validated state.
+Neither surface promises a fixed savings percentage. A
 historical selected-session snapshot reported an x6.8 observed/model ratio;
 that number remains counterfactual exposure, not realized savings
 ([methodology](docs/BENCHMARK.md)).
@@ -94,7 +95,7 @@ could trade output quality for tokens are marked, phrased with explicit
 limits, and the aggressive ones default to off — built for smart,
 token-hungry next-gen models.
 
-## Stateful runtime (2.1): subscription CLIs first
+## Stateful runtime (2.2): explicit work packets
 
 For work that spans many agent increments, `codeunlimited run` holds only an
 immutable workflow, the current structured state, and the latest observation
@@ -102,11 +103,17 @@ at each orchestration boundary. It never inserts earlier orchestration prompts,
 reasoning, responses, or tool transcripts into the next prompt, and it starts a
 fresh Claude Code, Codex, or explicit command process for every step.
 
+An optional JSON work plan declares up to 32 tasks, their dependency order,
+group, risk, scope metadata, and a packet cap from 1 to 8. `run packet` previews
+the next deterministic packet without starting a provider. Every accepted
+packet runs one frozen verification command; scope paths describe intent but
+are not a filesystem sandbox.
+
 The primary path uses your existing Claude Code or Codex subscription login.
 Stable instructions and changing state have separate transport channels.
 `standard` preserves integrations; opt into `lean` to reduce the integration
 surface when the task does not need it. External OpenAI and Anthropic APIs are
-a separate, optional metered layer, with no local coding tools in 2.1.
+a separate, optional metered layer with no local coding tools.
 
 ```bash
 codeunlimited run init sprint-2 --skill workflow.md \
@@ -122,14 +129,26 @@ codeunlimited run auto sprint-2 --steps 4 --json
 State, prompt, observation, output, timeout, and attempt budgets are hard
 limits. Structured transitions are revision-checked; terminal completion can
 require an external verification command; ambiguous repository mutations stop
-for explicit recovery instead of being retried blindly. See the complete
+for explicit recovery instead of being retried blindly. `run ledger` reports
+every worker attempt and keeps missing usage unknown. A configured total-token
+cap is a soft next-call admission boundary, not a hard kill switch for a worker
+already running. See the complete
 [runtime contract, storage layout, caching semantics, and recovery guide](docs/RUNTIME.md).
 
-This proves bounded context transport at orchestration-step boundaries, not at
-every tool action inside the provider and not yet as realized token savings.
+The included offline fixture produces the same four literal files using either
+four one-task worker starts or one four-task worker start. That is a mechanism
+check, not a native-agent comparison or a measurement of model requests, model
+quality, tokens, or realized savings. Reproduce it with a built binary:
+
+```bash
+python3 scripts/benchmark_packets.py --binary target/release/codeunlimited --json
+```
+
+The runtime proves bounded context transport at orchestration-step boundaries,
+not at every tool action inside the provider and not yet as realized token savings.
 The next evidence milestone is a matched-quality, increasing-horizon comparison
 against a full-history agent.
-See [2.1 changes and evidence limits](docs/VERSION-2.1.md).
+See [2.2 changes and evidence limits](docs/VERSION-2.2.md).
 
 ## Install (one command)
 

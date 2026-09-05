@@ -1,0 +1,58 @@
+{
+  "arms": {
+    "four_task_packet": {
+      "accepted_task_ids": [
+        "unit-a",
+        "unit-b",
+        "unit-c",
+        "unit-d"
+      ],
+      "attempt_count": 1,
+      "final_tree_sha256": "fa9402c38361da88f1b9042458c03575d18a0ad803ce0379a0fa79a828e73064",
+      "max_packet_tasks": 4,
+      "process_count_basis": "successful_deterministic_fixture_attempts",
+      "prompt_bytes_total": 5519,
+      "worker_process_count": 1
+    },
+    "one_task_packets": {
+      "accepted_task_ids": [
+        "unit-a",
+        "unit-b",
+        "unit-c",
+        "unit-d"
+      ],
+      "attempt_count": 4,
+      "final_tree_sha256": "fa9402c38361da88f1b9042458c03575d18a0ad803ce0379a0fa79a828e73064",
+      "max_packet_tasks": 1,
+      "process_count_basis": "successful_deterministic_fixture_attempts",
+      "prompt_bytes_total": 21741,
+      "worker_process_count": 4
+    }
+  },
+  "equivalent_final_files": true,
+  "evidence_scope": "synthetic_offline",
+  "fixture_objective": "produce_four_literal_files",
+  "identical_final_tree_sha256": "fa9402c38361da88f1b9042458c03575d18a0ad803ce0379a0fa79a828e73064",
+  "limitations": [
+    "Process counts are successful deterministic fixture starts, not model requests.",
+    "Prompt bytes are rendered CLI inspection bytes, not tokens or hidden provider traffic.",
+    "No competent native-agent arm or provider/model call was run.",
+    "The caller-supplied binary digest does not attest its source revision."
+  ],
+  "model_request_count": null,
+  "native_agent_comparison": "not_run",
+  "prompt_byte_semantics": "rendered run prompt bytes before each successful fixture step",
+  "provenance": {
+    "benchmark_script_sha256": "c7285c731bc2e354db51d884f94647a992949a372afe9591e689cb73f361e409",
+    "binary_sha256": "ed9bceeaaa6fbd9185e24ea74ec1096c21fc6db855e8196066d59b37ff07f227",
+    "binary_source_attestation": "not_available_for_caller_supplied_binary",
+    "binary_version": "codeunlimited 2.2.0",
+    "fixture_sha256": "046942d515eabd86b445a0d69f85edf080f807222417c175705a0a5e4607b3ce",
+    "source_dirty": false,
+    "source_revision": "0515050b463093c82d46986172bf16b3922044ed"
+  },
+  "provider_model_calls": "none",
+  "real_token_savings_percent": null,
+  "real_token_totals": null,
+  "schema_version": 1
+}

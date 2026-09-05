@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.0 - 2026-09-04
+
+- Added immutable, opt-in work plans and deterministic dependency-aware packet
+  selection. `run packet` previews the next packet without invoking a provider.
+- Added pre-dispatch attempt intents, immutable all-attempt records, explicit
+  interrupted-attempt recovery, and `run ledger` accounting. Missing or
+  incomplete provider counters remain unknown.
+- Added an optional soft total-token admission cap. The first attempt is
+  allowed, a running attempt is never killed at the boundary, and unknown
+  usage stops further admission.
+- Required frozen verification for managed plans and accepted only an ordered
+  prefix of the selected packet. Scope paths remain planning metadata, not an
+  operating-system sandbox.
+- Added a deterministic offline public-CLI fixture. It demonstrates four
+  one-task worker starts versus one four-task worker start with identical final
+  files; it makes no model-call, native-agent, or realized-token-savings claim.
+- Extended CI and crate auditing to build the CLI before Python packet tests,
+  exercise packaged packet integration tests, and exclude private task reports.
+
 ## 2.1.0 - 2026-09-04
 
 - Made subscription CLIs the primary runtime path, with immutable instruction

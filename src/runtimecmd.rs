@@ -1,5 +1,5 @@
-use std::fs;
-use std::io::{self, Write};
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -7,14 +7,14 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
 use crate::runtime::engine::{
-    cache_probe, init_run, recover, render_next_prompt, run_steps, status, step, InitRequest,
-    RunRef, RunStatusView,
+    cache_probe, init_run, ledger, packet, recover, render_next_prompt, run_steps, status, step,
+    InitRequest, RunRef, RunStatusView,
 };
 use crate::runtime::model::{
-    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand,
+    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand, WorkPlan,
     DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
     DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
-    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES,
+    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES, MAX_WORK_PLAN_BYTES,
 };
 use crate::runtime::provider::ProcessProvider;
 
@@ -133,6 +133,9 @@ pub enum RunCmd {
         /// Provider prompt-cache TTL
         #[arg(long, value_enum)]
         cache_ttl: Option<CacheTtlArg>,
+        /// Bounded JSON work plan to snapshot into the run manifest
+        #[arg(long, value_name = "FILE")]
+        work_plan: Option<PathBuf>,
         /// Verification executable (no shell)
         #[arg(long, value_name = "PROGRAM")]
         verify_program: Option<PathBuf>,
@@ -148,6 +151,9 @@ pub enum RunCmd {
         /// Maximum provider attempts for the complete run
         #[arg(long, default_value_t = DEFAULT_MAX_STEPS)]
         max_steps: u64,
+        /// Soft admission boundary for observed input plus output tokens
+        #[arg(long, value_name = "N")]
+        max_total_tokens: Option<u64>,
         /// Maximum failed attempts against one state revision
         #[arg(long, default_value_t = DEFAULT_MAX_ATTEMPTS_PER_REVISION)]
         max_attempts_per_revision: u64,
@@ -169,6 +175,22 @@ pub enum RunCmd {
     },
     /// Show bounded state, prompt sizes, attempts, usage, and provider isolation
     Status {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show immutable worker-attempt counters and aggregate coverage
+    Ledger {
+        #[command(flatten)]
+        target: TargetArgs,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Preview the next deterministic work packet without invoking a provider
+    Packet {
         #[command(flatten)]
         target: TargetArgs,
         /// Machine-readable output
@@ -243,11 +265,13 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             api_endpoint,
             api_key_env,
             cache_ttl,
+            work_plan,
             verify_program,
             verify_arg,
             verify_every_step,
             allow_unverified_completion,
             max_steps,
+            max_total_tokens,
             max_attempts_per_revision,
             provider_timeout_seconds,
             workflow_budget_bytes,
@@ -327,6 +351,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             });
             let mut request = InitRequest::new(project, name, skill, objective, provider);
             request.max_steps = max_steps;
+            request.max_total_tokens = max_total_tokens;
             request.max_attempts_per_revision = max_attempts_per_revision;
             request.provider_timeout_seconds = provider_timeout_seconds;
             request.workflow_budget_bytes = workflow_budget_bytes;
@@ -336,6 +361,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             request.verification_command = verification_command;
             request.verify_every_step = verify_every_step;
             request.allow_unverified_completion = allow_unverified_completion;
+            request.work_plan = work_plan.as_deref().map(read_work_plan).transpose()?;
             let view = init_run(request)?;
             println!(
                 "Initialized run {} at revision {}.\nRecommended .gitignore entry: .codeunlimited/runs/",
@@ -349,6 +375,46 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 print_json(&view)?;
             } else {
                 print_status(&view);
+            }
+        }
+        RunCmd::Ledger { target, json } => {
+            let report = ledger(&reference(target)?)?;
+            if json {
+                print_json(&report)?;
+            } else {
+                println!(
+                    "run={} provider={} attempts={} complete={} observed_total_tokens={} total_tokens={} cap={}",
+                    report.run_name,
+                    report.provider,
+                    report.coverage.attempt_count,
+                    report.coverage.complete,
+                    report
+                        .coverage
+                        .observed_total_tokens
+                        .map_or_else(|| "overflow".into(), |value| value.to_string()),
+                    report
+                        .coverage
+                        .total_tokens
+                        .map_or_else(|| "unknown".into(), |value| value.to_string()),
+                    report
+                        .max_total_tokens
+                        .map_or_else(|| "none".into(), |value| value.to_string()),
+                );
+            }
+        }
+        RunCmd::Packet { target, json } => {
+            let preview = packet(&reference(target)?)?;
+            if json {
+                print_json(&preview)?;
+            } else {
+                println!(
+                    "run={} revision={} selected={} remaining={} reason={}",
+                    preview.run_name,
+                    preview.revision,
+                    preview.selected_task_ids.join(","),
+                    preview.remaining_count,
+                    preview.reason
+                );
             }
         }
         RunCmd::Prompt { target } => {
@@ -466,6 +532,39 @@ fn read_observation(path: &Path) -> Result<Vec<u8>, RunCliError> {
     fs::read(path).map_err(|_| RunCliError::Input("observation file could not be read"))
 }
 
+fn read_work_plan(path: &Path) -> Result<WorkPlan, RunCliError> {
+    let link_metadata = fs::symlink_metadata(path)
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    if link_metadata.file_type().is_symlink()
+        || !link_metadata.is_file()
+        || link_metadata.len() > MAX_WORK_PLAN_BYTES as u64
+    {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    let file = File::open(path)
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| RunCliError::Input("work plan must be a readable regular file"))?;
+    if !metadata.is_file() || metadata.len() > MAX_WORK_PLAN_BYTES as u64 {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(MAX_WORK_PLAN_BYTES + 1));
+    file.take((MAX_WORK_PLAN_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| RunCliError::Input("work plan file could not be read"))?;
+    if bytes.len() > MAX_WORK_PLAN_BYTES {
+        return Err(RunCliError::Input(
+            "work plan must be a bounded regular JSON file",
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| RunCliError::Input("work plan must be valid JSON"))
+}
+
 fn print_json(value: &impl Serialize) -> Result<(), RunCliError> {
     let rendered = serde_json::to_string_pretty(value).map_err(|_| RunCliError::Output)?;
     println!("{rendered}");
@@ -570,7 +669,9 @@ fn runtime_exit(error: &RuntimeError) -> (i32, &'static str) {
         RuntimeError::RecoveryRequired => (EXIT_RECOVERY_REQUIRED, "recovery_required"),
         RuntimeError::FieldTooLarge { .. }
         | RuntimeError::TooManyItems { .. }
-        | RuntimeError::StateBudgetExceeded { .. } => (EXIT_OVER_BUDGET, "over_budget"),
+        | RuntimeError::StateBudgetExceeded { .. }
+        | RuntimeError::TokenCapReached { .. }
+        | RuntimeError::TokenCapUsageUnknown => (EXIT_OVER_BUDGET, "over_budget"),
         RuntimeError::ProviderFailed(category) if category == "missing_executable" => {
             (EXIT_MISSING_PROVIDER, "missing_provider")
         }
@@ -578,7 +679,9 @@ fn runtime_exit(error: &RuntimeError) -> (i32, &'static str) {
             (EXIT_TIMEOUT, "timeout")
         }
         RuntimeError::ProviderFailed(category)
-            if category == "invalid_output" || category.starts_with("verification_") =>
+            if category == "invalid_output"
+                || category == "invalid_transition"
+                || category.starts_with("verification_") =>
         {
             (EXIT_INVALID_TRANSITION, "invalid_transition")
         }

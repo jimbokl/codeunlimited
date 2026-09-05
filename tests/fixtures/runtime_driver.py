@@ -29,6 +29,7 @@ def main() -> int:
     parser.add_argument("--outcome", default="continue")
     parser.add_argument("--capture")
     parser.add_argument("--change")
+    parser.add_argument("--mutate-intent-attempt")
     parser.add_argument("--sleep", type=float, default=2.0)
     args = parser.parse_args()
 
@@ -42,7 +43,14 @@ def main() -> int:
     if args.capture:
         pathlib.Path(args.capture).write_bytes(prompt)
     if args.change:
-        pathlib.Path(args.change).write_text("changed\n", encoding="utf-8")
+        # Binary write: text mode would translate \n to \r\n on Windows and
+        # break byte-exact assertions in the tamper tests.
+        pathlib.Path(args.change).write_bytes(b"changed\n")
+    if args.mutate_intent_attempt:
+        intent_path = pathlib.Path(args.mutate_intent_attempt)
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+        intent["attempt"] += 1
+        intent_path.write_text(json.dumps(intent), encoding="utf-8")
 
     if args.mode == "success":
         json.dump(envelope(revision, args.outcome), sys.stdout, separators=(",", ":"))
