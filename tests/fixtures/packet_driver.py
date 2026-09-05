@@ -39,7 +39,9 @@ def write_unit(task_id: str, wrong: bool = False) -> None:
     relative, contents = EXPECTED[task_id]
     path = pathlib.Path(relative)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("wrong\n" if wrong else contents, encoding="utf-8")
+    # Binary write: text mode would translate \n to \r\n on Windows and break
+    # the byte-exact file assertions in the packet tests.
+    path.write_bytes(("wrong\n" if wrong else contents).encode("utf-8"))
 
 
 def worker(mode: str, block_attempt_record: str | None = None) -> int:
@@ -115,7 +117,7 @@ def worker(mode: str, block_attempt_record: str | None = None) -> int:
 
 def verify(capture: str | None) -> int:
     if capture is not None:
-        pathlib.Path(capture).write_text("verification invoked\n", encoding="utf-8")
+        pathlib.Path(capture).write_bytes(b"verification invoked\n")
     for task_id, (relative, contents) in EXPECTED.items():
         path = pathlib.Path(relative)
         if path.exists() and path.read_text(encoding="utf-8") != contents:

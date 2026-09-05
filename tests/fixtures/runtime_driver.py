@@ -43,7 +43,9 @@ def main() -> int:
     if args.capture:
         pathlib.Path(args.capture).write_bytes(prompt)
     if args.change:
-        pathlib.Path(args.change).write_text("changed\n", encoding="utf-8")
+        # Binary write: text mode would translate \n to \r\n on Windows and
+        # break byte-exact assertions in the tamper tests.
+        pathlib.Path(args.change).write_bytes(b"changed\n")
     if args.mutate_intent_attempt:
         intent_path = pathlib.Path(args.mutate_intent_attempt)
         intent = json.loads(intent_path.read_text(encoding="utf-8"))

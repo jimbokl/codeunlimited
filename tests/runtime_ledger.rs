@@ -190,10 +190,16 @@ fn snapshot_regular_files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
             if metadata.is_dir() {
                 visit(root, &path, result);
             } else if metadata.is_file() {
-                result.insert(
-                    path.strip_prefix(root).unwrap().to_path_buf(),
-                    fs::read(path).unwrap(),
-                );
+                match fs::read(&path) {
+                    Ok(bytes) => {
+                        result.insert(path.strip_prefix(root).unwrap().to_path_buf(), bytes);
+                    }
+                    // The live worker holds an exclusive lock on the run lock
+                    // file; Windows denies reads of exclusively locked regions
+                    // (ERROR_LOCK_VIOLATION), while Unix flock stays advisory.
+                    Err(error) if error.raw_os_error() == Some(33) => {}
+                    Err(error) => panic!("read {}: {error}", path.display()),
+                }
             }
         }
     }
