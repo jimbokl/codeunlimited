@@ -17,6 +17,53 @@ use crate::types::Request;
 pub const DEFAULT_MIN_TURNS: usize = 30;
 pub const DEFAULT_EARLY_TURNS: usize = 5;
 
+/// Real-world logs are never byte-perfect: a handful of malformed lines in a
+/// multi-year history must not withhold the whole verdict, or the first-install
+/// experience dies on virtually every real machine. Malformed records up to
+/// this share of the retained scope are DISCLOSED (exact count and share in
+/// every rendering) instead of withholding; anything larger, or any failure
+/// whose magnitude is unknowable (unreadable files, discovery errors, counter
+/// overflow, missing timestamps), still withholds the model entirely.
+pub const MAX_DISCLOSED_MALFORMED_SHARE: f64 = 0.001;
+
+/// Completeness gate shared by `verdict` and the `init` baseline.
+#[derive(Debug, PartialEq)]
+pub enum AccountingGate {
+    Complete,
+    /// Only bounded malformed records; safe to proceed with disclosure.
+    Disclosed {
+        malformed: u64,
+        share: f64,
+    },
+    Withheld,
+}
+
+pub fn accounting_gate(stats: &parsers::ScanStats, retained: usize) -> AccountingGate {
+    if stats.complete_accounting() {
+        return AccountingGate::Complete;
+    }
+    let only_malformed = stats.files_failed == 0
+        && stats.discovery_errors == 0
+        && !stats.counter_overflow
+        && stats.malformed_records > 0;
+    if !only_malformed {
+        return AccountingGate::Withheld;
+    }
+    let denominator = (retained as u64).saturating_add(stats.malformed_records);
+    if denominator == 0 {
+        return AccountingGate::Withheld;
+    }
+    let share = stats.malformed_records as f64 / denominator as f64;
+    if share <= MAX_DISCLOSED_MALFORMED_SHARE {
+        AccountingGate::Disclosed {
+            malformed: stats.malformed_records,
+            share,
+        }
+    } else {
+        AccountingGate::Withheld
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Verdict {
     pub sessions_total: usize,
@@ -205,27 +252,54 @@ fn report_value(
     missing_ts: usize,
 ) -> serde_json::Value {
     let complete = stats.complete_accounting() && !verdict.overflow && missing_ts == 0;
-    let eligible = complete && verdict.sessions_included > 0;
-    let mut warnings = Vec::new();
-    if !stats.complete_accounting() {
-        warnings.push("Incomplete scan: invalid records or file/discovery errors; model withheld.");
+    let gate = if verdict.overflow || missing_ts > 0 {
+        AccountingGate::Withheld
+    } else {
+        accounting_gate(stats, verdict.requests_total)
+    };
+    let disclosed_share = match gate {
+        AccountingGate::Disclosed { share, .. } => Some(share),
+        _ => None,
+    };
+    let usable = complete || disclosed_share.is_some();
+    let eligible = usable && verdict.sessions_included > 0;
+    let mut warnings: Vec<String> = Vec::new();
+    if let AccountingGate::Disclosed { malformed, share } = gate {
+        warnings.push(format!(
+            "Bounded incompleteness disclosed: {malformed} malformed records \
+             ({:.4}% of retained scope) are excluded from exact totals and the \
+             model; every other counter is complete.",
+            share * 100.0
+        ));
+    } else if !stats.complete_accounting() {
+        warnings.push(
+            "Incomplete scan: invalid records or file/discovery errors; model withheld.".into(),
+        );
     }
     if verdict.overflow {
-        warnings.push("Counter aggregation overflow: exact totals and model withheld.");
+        warnings.push("Counter aggregation overflow: exact totals and model withheld.".into());
     }
     if missing_ts > 0 {
-        warnings.push("Missing timestamps: early-context ordering is unknown; model withheld.");
+        warnings
+            .push("Missing timestamps: early-context ordering is unknown; model withheld.".into());
     }
     if stats.usage_without_cumulative_counters > 0 {
-        warnings.push("Some Codex records lack cumulative counters; no deduplication is inferred for those records.");
+        warnings.push(
+            "Some Codex records lack cumulative counters; no deduplication is inferred for those records."
+                .into(),
+        );
     }
     if stats.cumulative_resets > 0 {
-        warnings.push("Codex cumulative decreases were retained as new counter epochs, not reconstructed requests.");
+        warnings.push(
+            "Codex cumulative decreases were retained as new counter epochs, not reconstructed requests."
+                .into(),
+        );
     }
     serde_json::json!({
         "schema_version": 2,
-        "status": if !complete { "incomplete" } else if eligible { "ok" } else { "no_eligible_sessions" },
+        "status": if !usable { "incomplete" } else if verdict.sessions_included == 0 { "no_eligible_sessions" } else if disclosed_share.is_some() { "disclosed_incomplete" } else { "ok" },
         "complete_accounting": complete,
+        "disclosed_malformed_share": disclosed_share,
         "overflow": verdict.overflow,
         "records_without_timestamp": missing_ts,
         "scan": stats,
@@ -279,11 +353,11 @@ pub fn run(project: Option<&Path>, min_turns: usize, early_turns: usize, json: b
     let verdict = summarize(&reqs, min_turns, early_turns);
     let missing_ts = reqs.iter().filter(|r| r.ts.is_none()).count();
     let value = report_value(&verdict, min_turns, early_turns, &stats, missing_ts);
-    let complete = value["complete_accounting"] == true;
+    let withheld = value["status"] == "incomplete";
     if json {
         println!("{value}");
     } else {
-        if !complete {
+        if withheld {
             println!("Incomplete accounting: modeled verdict withheld; inspect `verdict --json`.");
         } else if verdict.sessions_included == 0 {
             println!("No session in the scanned history exceeds {min_turns} retained usage records; nothing to model yet ({} records observed).", verdict.requests_total);
@@ -294,10 +368,10 @@ pub fn run(project: Option<&Path>, min_turns: usize, early_turns: usize, json: b
             println!("warning: {}", warning.as_str().unwrap_or_default());
         }
     }
-    if complete {
-        0
-    } else {
+    if withheld {
         2
+    } else {
+        0
     }
 }
 

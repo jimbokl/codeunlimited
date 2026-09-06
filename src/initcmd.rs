@@ -153,8 +153,21 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
     };
     let claude_scan = parsers::scan_claude(&options);
     let codex_scan = parsers::scan_codex(&options);
-    if !claude_scan.stats.complete_accounting() || !codex_scan.stats.complete_accounting() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "incomplete accounting; baseline and retro verdict withheld (run `codeunlimited verdict --json` for diagnostics)"));
+    let mut stats = claude_scan.stats;
+    stats += codex_scan.stats;
+    let retained = claude_scan.requests.len() + codex_scan.requests.len();
+    match crate::verdictcmd::accounting_gate(&stats, retained) {
+        crate::verdictcmd::AccountingGate::Complete => {}
+        crate::verdictcmd::AccountingGate::Disclosed { malformed, share } => {
+            println!(
+                "  disclosed: {malformed} malformed records ({:.4}% of retained scope) \
+                 excluded; all other counters are complete",
+                share * 100.0
+            );
+        }
+        crate::verdictcmd::AccountingGate::Withheld => {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "incomplete accounting; baseline and retro verdict withheld (run `codeunlimited verdict --json` for diagnostics)"));
+        }
     }
     let mut reqs = claude_scan.requests;
     let mut codex = codex_scan.requests;

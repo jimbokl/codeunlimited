@@ -349,3 +349,54 @@ fn overflowing_counters_cannot_create_a_baseline_or_complete_audit() {
         .failure();
     assert!(!project.path().join(".codeunlimited.baseline.json").exists());
 }
+
+#[test]
+fn bounded_malformed_share_is_disclosed_not_withheld() {
+    let root = TempDir::new().unwrap();
+    // 1500 valid rows (one long session) + 1 malformed row = 0.067% share,
+    // under the 0.1% disclosure bound.
+    let mut rows: Vec<Value> = (0..1500)
+        .map(|i| {
+            json!({
+                "type": "assistant", "sessionId": "s",
+                "timestamp": format!("2026-01-01T{:02}:{:02}:{:02}Z", i / 3600, (i / 60) % 60, i % 60),
+                "message": {"id": format!("m{i}"), "model": "test",
+                            "usage": {"input_tokens": 10_000 + i, "output_tokens": 1}}
+            })
+        })
+        .collect();
+    rows.push(json!({
+        "type": "assistant", "sessionId": "s", "timestamp": "2026-01-01T01:00:00Z",
+        "message": {"id": "bad", "model": "test",
+                    "usage": {"input_tokens": "bad-private-body", "output_tokens": 1}}
+    }));
+    write_rows(&root.path().join("claude/projects/p/s.jsonl"), &rows);
+
+    let v = verdict(root.path(), 0);
+    assert_eq!(v["status"], "disclosed_incomplete");
+    assert_eq!(v["complete_accounting"], false);
+    assert_eq!(v["scan"]["malformed_records"], 1);
+    let share = v["disclosed_malformed_share"].as_f64().unwrap();
+    assert!(share > 0.0 && share <= 0.001, "share {share}");
+    assert!(v["modeled_difference_tokens"].is_number());
+    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w
+        .as_str()
+        .unwrap_or_default()
+        .contains("Bounded incompleteness disclosed")));
+    assert!(!v.to_string().contains("bad-private-body"));
+}
+
+#[test]
+fn unbounded_malformed_share_is_still_withheld() {
+    let root = TempDir::new().unwrap();
+    let mut values = vec![json!(10_000); 40];
+    values[0] = json!("bad-private-body");
+    write_rows(
+        &root.path().join("claude/projects/p2/s.jsonl"),
+        &claude_rows(&values),
+    );
+    let v = verdict(root.path(), 2);
+    assert_eq!(v["status"], "incomplete");
+    assert!(v["disclosed_malformed_share"].is_null());
+    assert!(v["modeled_difference_tokens"].is_null());
+}
