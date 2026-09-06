@@ -878,6 +878,11 @@ mod tests {
             .collect()
     }
 
+    // The Unix-adapter tests below create fixture directories whose names are
+    // legal on Unix but rejected by Windows (quotes, angle brackets) or assert
+    // forward-slash path renderings; the adapters they cover never run on
+    // Windows, and the ubuntu/macos CI jobs keep them exercised.
+    #[cfg(unix)]
     #[test]
     fn launchagent_passes_hostile_paths_as_six_literal_arguments_and_runs_daily() {
         let (_tmp, ctx, exe, state) = fixture(Platform::Mac);
@@ -912,6 +917,7 @@ mod tests {
             ]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn systemd_escapes_specifiers_variables_quotes_and_backslashes() {
         let (_tmp, ctx, exe, state) = fixture(Platform::Linux);
@@ -1121,6 +1127,7 @@ mod tests {
         assert!(!state.join(MANIFEST).exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn systemd_disables_environment_expansion_for_dollars_in_executable_and_state() {
         let (_tmp, ctx, exe, state) = fixture(Platform::Linux);
