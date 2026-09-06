@@ -1,11 +1,17 @@
 # codeunlimited
 
-**Measure token waste, then run long coding work with bounded state instead of
-an ever-growing orchestration transcript.**
+**Install once. Efficiency defaults load automatically in new local Claude Code
+and Codex sessions, across your projects.**
+
+Version 2.4.0 removes the per-project activation step from the normal installer.
+It installs compact global workflow rules and a Codex tool-output history cap
+of 4,000 tokens when you have not set your own. Keep using your usual agent;
+no background daemon, API key, or recurring audit command is required.
+[Install](#install-one-command) · [What is automatic, and what is not](docs/VERSION-2.4.md)
 
 ![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 
-`codeunlimited` has two product surfaces. Its local auditor separates what was
+Alongside automatic setup, `codeunlimited` has two advanced surfaces. Its local auditor separates what was
 **observed** from what is **modeled**, sums recognized local usage counters,
 and measures input tokens per comparable completed task. Version 2.3.1 reports
 accounting gaps and suppresses retrospective models on incomplete input.
@@ -167,13 +173,40 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/jimbokl/codeunlimited/main/install.ps1 | iex
 ```
 
-Both require the release's sha256 before replacing an installed binary.
+Both verify the release's sha256 before replacing an installed binary, then
+activate global defaults automatically. New local sessions pick them up; an
+already-open chat is not restarted. Project/profile overrides and host limits
+can take precedence. These defaults guide the agent, not guarantee its behavior.
+
+Setup preserves existing instructions, model choices, permissions, hooks, and
+explicit output-limit settings. The new cap bounds tool output stored in Codex
+history; it can omit diagnostics, so the rules require keeping verbose output in
+logs and retrieving needed detail. It is not a model-output or total-session cap.
+
 PowerShell adds the verified directory to user PATH idempotently; the Unix
 installer uses `~/.local/bin` and prints the exact export when that directory
-is not already on PATH. Alternatives: `cargo install codeunlimited --locked`
-or a binary straight from GitHub Releases.
+is not already on PATH. Global defaults work even before you add the CLI to PATH.
 
-## Quick start
+For an existing binary, `cargo install`, or a manually downloaded release, run
+`codeunlimited setup` once. Optional controls:
+
+```bash
+codeunlimited setup --status       # read-only installation check
+codeunlimited setup --remove       # remove owned defaults; keep your edits/backups
+codeunlimited setup --no-tool-limit # install rules without adding the Codex cap
+```
+
+`CODEUNLIMITED_SKIP_SETUP=1` opts out of automatic activation in either installer.
+On Unix, pass it to the shell running the installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jimbokl/codeunlimited/main/install.sh | CODEUNLIMITED_SKIP_SETUP=1 sh
+```
+
+If activation fails, the installer returns an error and prints a repair command;
+the verified binary remains installed. See [setup, removal and repair details](docs/VERSION-2.4.md).
+
+## Optional diagnostics and advanced workflows
 
 The core is a single **Rust** binary designed for multi-gigabyte local histories,
 with no additional runtime for local auditing. Subscription execution requires
@@ -182,7 +215,7 @@ the selected provider CLI. Benchmark the auditor on your own logs:
 ```bash
 
 codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
-codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
+codeunlimited init myproject/     # optional project-specific rules and baseline
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # before/after tracking since init's baseline
 codeunlimited verdict             # retro verdict: modeled exposure had rules run from day one

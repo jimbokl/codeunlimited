@@ -20,6 +20,7 @@ pub mod runtimecmd;
 pub mod safeio;
 pub mod scan_index;
 pub mod schedule;
+pub mod setupcmd;
 pub mod skillcmd;
 pub mod techniques;
 pub mod types;

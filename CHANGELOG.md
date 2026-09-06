@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.4.0 - 2026-09-06
+
+- Both binary installers now activate global efficiency defaults after checksum
+  verification and binary installation. No per-project init is required for
+  new local Claude Code/Codex sessions. Binary-only installs remain available
+  with `CODEUNLIMITED_SKIP_SETUP=1`.
+- Added `setup`, read-only `setup --status [--json]`, and `setup --remove`.
+  Honor provider home overrides, cover Codex's existing non-empty global
+  override file, preserve user text and first backups, and reject malformed
+  markers, invalid text/configuration and symlinked targets before mutation.
+- Add Codex's top-level `tool_output_token_limit = 4000` only when unset.
+  Existing explicit settings stay unchanged; `--no-tool-limit` skips adding it.
+  Removal keeps later user edits and refuses to erase an edited managed cap.
+- Global rules encourage scoped reads, concise tool output with recoverable
+  logs, compact state for repetitive work, and context-aware handoffs. Models,
+  permissions, hooks and project files are not changed. No daemon, provider
+  call, automatic session reset or realized-savings claim is introduced.
+- Added isolated public-CLI and real-binary installer activation regressions,
+  including a native Windows installer harness for CI.
+
 ## 2.3.1 - 2026-09-06
 
 - Preserved signed observed-minus-modeled differences, including negative

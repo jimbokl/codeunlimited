@@ -21,6 +21,9 @@ $port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
 $listener.Stop()
 $server = Start-Process python -ArgumentList @('-m', 'http.server', "$port", '--bind', '127.0.0.1') -WorkingDirectory $release -WindowStyle Hidden -PassThru
 $oldUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$oldClaudeConfig = $env:CLAUDE_CONFIG_DIR
+$oldCodexHome = $env:CODEX_HOME
+$oldSkipSetup = $env:CODEUNLIMITED_SKIP_SETUP
 
 function Invoke-Installer {
     $process = Start-Process powershell -ArgumentList @(
@@ -46,8 +49,14 @@ try {
 
     $env:CODEUNLIMITED_DOWNLOAD_BASE_URL = "http://127.0.0.1:$port"
     $env:CODEUNLIMITED_INSTALL_DIR = $dest
+    $env:CLAUDE_CONFIG_DIR = Join-Path $temp 'claude'
+    $env:CODEX_HOME = Join-Path $temp 'codex'
+    $env:CODEUNLIMITED_SKIP_SETUP = '0'
     if ((Invoke-Installer) -ne 0) { throw 'Valid installer run failed' }
     if ((Invoke-Installer) -ne 0) { throw 'Idempotent installer rerun failed' }
+    $status = & (Join-Path $dest 'codeunlimited.exe') setup --status --json | ConvertFrom-Json
+    if (-not $status.enabled) { throw 'Installer did not activate global defaults' }
+    if ($status.codex_tool_output_token_limit -ne 4000) { throw 'Missing automatic tool-output cap' }
     $version = & (Join-Path $dest 'codeunlimited.exe') --version
     $manifest = Get-Content (Join-Path $PSScriptRoot '..\Cargo.toml') -Raw
     if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw 'Could not read version from Cargo.toml' }
@@ -56,6 +65,24 @@ try {
     $pathEntries = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
     if (($pathEntries | Where-Object { $_ -eq $dest }).Count -ne 1) {
         throw 'Installer did not add exactly one user PATH entry'
+    }
+
+    $env:CLAUDE_CONFIG_DIR = Join-Path $temp 'skip-claude'
+    $env:CODEX_HOME = Join-Path $temp 'skip-codex'
+    $env:CODEUNLIMITED_SKIP_SETUP = '1'
+    if ((Invoke-Installer) -ne 0) { throw 'Binary-only installation failed' }
+    if ((Test-Path $env:CLAUDE_CONFIG_DIR) -or (Test-Path $env:CODEX_HOME)) {
+        throw 'Binary-only installer changed provider homes'
+    }
+    $env:CODEUNLIMITED_SKIP_SETUP = '0'
+    New-Item -ItemType Directory -Force -Path $env:CODEX_HOME | Out-Null
+    [IO.File]::WriteAllText((Join-Path $env:CODEX_HOME 'config.toml'), 'invalid = [')
+    if ((Invoke-Installer) -eq 0) { throw 'Activation failure was reported as success' }
+    if (Test-Path (Join-Path $env:CLAUDE_CONFIG_DIR 'CLAUDE.md')) {
+        throw 'Failed preflight changed Claude instructions'
+    }
+    if ((Get-FileHash -LiteralPath (Join-Path $dest 'codeunlimited.exe') -Algorithm SHA256).Hash.ToLower() -ne $digest) {
+        throw 'Activation failure damaged the verified binary'
     }
 
     $failureDest = Join-Path $temp 'rollback-bin'
@@ -81,6 +108,9 @@ try {
     }
 } finally {
     [Environment]::SetEnvironmentVariable('Path', $oldUserPath, 'User')
+    $env:CLAUDE_CONFIG_DIR = $oldClaudeConfig
+    $env:CODEX_HOME = $oldCodexHome
+    $env:CODEUNLIMITED_SKIP_SETUP = $oldSkipSetup
     Remove-Item Env:CODEUNLIMITED_DOWNLOAD_BASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:CODEUNLIMITED_INSTALL_DIR -ErrorAction SilentlyContinue
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

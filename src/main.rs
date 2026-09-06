@@ -1,6 +1,6 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques, verdictcmd,
+    parsers, report, reportcmd, runtimecmd, schedule, setupcmd, skillcmd, techniques, verdictcmd,
 };
 
 use std::io::IsTerminal;
@@ -89,6 +89,21 @@ enum ExperimentCmd {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Enable automatic efficiency defaults for all new local Claude/Codex sessions
+    Setup {
+        /// Remove only codeunlimited's managed global defaults
+        #[arg(long, conflicts_with_all = ["status", "no_tool_limit"])]
+        remove: bool,
+        /// Check current activation without changing any file (exit 1 if inactive)
+        #[arg(long, conflicts_with = "no_tool_limit")]
+        status: bool,
+        /// Machine-readable installation/activation result
+        #[arg(long)]
+        json: bool,
+        /// Do not add the Codex tool-output history cap (existing settings stay intact)
+        #[arg(long)]
+        no_tool_limit: bool,
+    },
     /// Find estimated reclaimable opportunities (offline, local logs only)
     Audit {
         #[arg(long, value_enum, default_value = "all")]
@@ -207,6 +222,14 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Setup {
+            remove,
+            status,
+            json,
+            no_tool_limit,
+        } => {
+            std::process::exit(setupcmd::run(remove, status, json, no_tool_limit));
+        }
         Cmd::Audit {
             source,
             project,
