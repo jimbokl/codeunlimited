@@ -365,8 +365,16 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
 
 pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
     let root = claude_root();
+    scan_claude_root(&root, options, false)
+}
+
+pub(crate) fn scan_claude_at(root: &Path, options: &ScanOptions) -> ClaudeScan {
+    scan_claude_root(root, options, true)
+}
+
+fn scan_claude_root(root: &Path, options: &ScanOptions, monitor_identity: bool) -> ClaudeScan {
     let mut stats = ScanStats::default();
-    if !source_available(&root, &mut stats) {
+    if !source_available(root, &mut stats) {
         return ClaudeScan {
             requests: vec![],
             stats,
@@ -376,7 +384,7 @@ pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
         Some(p) => {
             let key = claude_project_key(p).to_lowercase();
             let mut files = Vec::new();
-            match std::fs::read_dir(&root) {
+            match std::fs::read_dir(root) {
                 Ok(entries) => {
                     for entry in entries {
                         match entry {
@@ -393,12 +401,30 @@ pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
             files.sort_unstable();
             files
         }
-        None => jsonl_files(&root, &mut stats),
+        None => jsonl_files(root, &mut stats),
     };
     stats.files_discovered = files.len() as u64;
     let parsed: Vec<ClaudeFileScan> = files
         .par_iter()
-        .map(|f| parse_claude_file(f, options.since))
+        .map(|f| {
+            let (mut rows, stats) = parse_claude_file(f, options.since)?;
+            if monitor_identity {
+                let project: Arc<str> = f
+                    .strip_prefix(root)
+                    .ok()
+                    .and_then(|p| p.components().next())
+                    .map(|p| Arc::from(p.as_os_str().to_string_lossy().as_ref()))
+                    .unwrap_or_else(|| Arc::from("?"));
+                let session: Arc<str> = monitor_file_identity(f).into();
+                for (_, row) in &mut rows {
+                    if let Some(r) = row {
+                        r.project = project.clone();
+                        r.session = session.clone();
+                    }
+                }
+            }
+            Ok((rows, stats))
+        })
         .collect();
     // Streamed chunks repeat the same message id - keep the first occurrence.
     let mut seen = HashSet::new();
@@ -536,6 +562,10 @@ fn path_key(path: &Path) -> String {
     normalize_path_text(&canonical.to_string_lossy())
 }
 
+pub(crate) fn monitor_file_identity(path: &Path) -> String {
+    path_key(path)
+}
+
 fn project_label(cwd: &str) -> String {
     normalize_path_text(cwd)
         .rsplit('/')
@@ -585,16 +615,28 @@ fn codex_snapshot(usage: &Value) -> CodexSnapshot {
 }
 
 fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
+    parse_codex_file_mode(path, want, since, false)
+}
+
+fn parse_codex_file_mode(
+    path: &Path,
+    want: Option<&str>,
+    since: Option<i64>,
+    monitor_identity: bool,
+) -> CodexFileScan {
     let f = File::open(path)?;
     let mut stats = ScanStats {
         files_opened: 1,
         ..ScanStats::default()
     };
-    let session: Arc<str> = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("?")
-        .into();
+    let session: Arc<str> = if monitor_identity {
+        monitor_file_identity(path).into()
+    } else {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .into()
+    };
     let mut model: Arc<str> = Arc::from("?");
     let mut project: Arc<str> = Arc::from("?");
     let mut cwd_key = String::new();
@@ -629,7 +671,12 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
             }
             if let Some(value) = payload.get("cwd").and_then(Value::as_str) {
                 cwd_key = path_key(Path::new(value));
-                project = project_label(value).into();
+                project = if monitor_identity {
+                    cwd_key.clone()
+                } else {
+                    project_label(value)
+                }
+                .into();
                 observation.cwd_keys.insert(cwd_key.clone());
             }
             continue;
@@ -741,13 +788,14 @@ fn parse_codex_batch(
     candidates: &[CodexCandidate],
     want: Option<&str>,
     since: Option<i64>,
+    monitor_identity: bool,
 ) -> Vec<ParsedCandidate> {
     candidates
         .par_iter()
         .map(|candidate| ParsedCandidate {
             key: candidate.key.clone(),
             fingerprint: candidate.fingerprint.clone(),
-            scan: parse_codex_file(&candidate.path, want, since),
+            scan: parse_codex_file_mode(&candidate.path, want, since, monitor_identity),
         })
         .collect()
 }
@@ -755,8 +803,16 @@ fn parse_codex_batch(
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
 pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let root = codex_root();
+    scan_codex_root(&root, options, false)
+}
+
+pub(crate) fn scan_codex_at(root: &Path, options: &ScanOptions) -> CodexScan {
+    scan_codex_root(root, options, true)
+}
+
+fn scan_codex_root(root: &Path, options: &ScanOptions, monitor_identity: bool) -> CodexScan {
     let mut stats = ScanStats::default();
-    if !source_available(&root, &mut stats) {
+    if !source_available(root, &mut stats) {
         return CodexScan {
             requests: vec![],
             series: vec![],
@@ -764,7 +820,7 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
         };
     }
     let want = options.project.as_deref().map(path_key);
-    let files = jsonl_files(&root, &mut stats);
+    let files = jsonl_files(root, &mut stats);
     stats.files_discovered = files.len() as u64;
     let mut index = if options.use_index {
         IndexAccess::load()
@@ -812,7 +868,7 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let batch_size = rayon::current_num_threads().max(1).saturating_mul(2);
     let mut aggregate = CodexAggregate::default();
     for batch in candidates.chunks(batch_size) {
-        for parsed in parse_codex_batch(batch, want.as_deref(), options.since) {
+        for parsed in parse_codex_batch(batch, want.as_deref(), options.since, monitor_identity) {
             let Ok((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
                 aggregate.stats.files_failed += 1;
                 continue;
@@ -992,7 +1048,7 @@ mod tests {
             },
         ];
 
-        let parsed = parse_codex_batch(&candidates, None, None);
+        let parsed = parse_codex_batch(&candidates, None, None, false);
         let sessions: Vec<_> = parsed
             .into_iter()
             .map(|candidate| candidate.scan.expect("parsed candidate"))

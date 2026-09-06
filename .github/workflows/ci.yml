@@ -38,6 +38,8 @@ jobs:
       - run: cargo test --release --all-targets --locked
       - run: cargo build --release --locked
       - if: runner.os == 'Linux'
+        env:
+          CODEUNLIMITED_BIN: target/release/codeunlimited
         run: python -m unittest -v tests.test_installers
       - if: runner.os == 'Windows'
         shell: powershell
@@ -58,9 +60,9 @@ jobs:
         with:
           python-version: "3.12"
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
-      - run: bash scripts/check_release.sh 2.3.1
+      - run: bash scripts/check_release.sh 2.4.0
       - run: cargo package --locked
-      - run: bash scripts/audit-package.sh 2.3.1
+      - run: bash scripts/audit-package.sh 2.4.0
 
   python-tests:
     name: python ${{ matrix.python-version }}

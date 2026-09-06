@@ -4,6 +4,7 @@ import http.server
 import os
 import pathlib
 import platform
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -68,6 +69,13 @@ class UnixInstallerTests(unittest.TestCase):
             f"http://127.0.0.1:{self.server.server_port}"
         )
         env["CODEUNLIMITED_INSTALL_DIR"] = str(self.destination)
+        env["CODEUNLIMITED_SKIP_SETUP"] = "1"
+        # Real CLI tests never register jobs on the host. Mock CLI tests below
+        # explicitly enable the ordinary installer path.
+        env["CODEUNLIMITED_SKIP_MONITOR"] = "1"
+        env["CLAUDE_CONFIG_DIR"] = str(self.root / "claude")
+        env["CODEX_HOME"] = str(self.root / "codex")
+        env["CODEUNLIMITED_HOME"] = str(self.root / "state")
         env.update(extra_env or {})
         return subprocess.run(
             ["sh", "install.sh"],
@@ -81,6 +89,71 @@ class UnixInstallerTests(unittest.TestCase):
 
     def installed_bytes(self) -> bytes:
         return (self.destination / "codeunlimited").read_bytes()
+
+    def use_real_binary(self) -> None:
+        binary = pathlib.Path(os.environ.get("CODEUNLIMITED_BIN", ROOT / "target/debug/codeunlimited"))
+        if not binary.is_absolute():
+            binary = ROOT / binary
+        self.assertTrue(binary.is_file(), f"Build the CLI before installer tests: {binary}")
+        shutil.copyfile(binary, self.asset)
+        self.asset.chmod(0o755)
+        self.write_checksum()
+
+    def test_default_install_activates_both_providers_with_real_binary(self) -> None:
+        self.use_real_binary()
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for provider, name in [("claude", "CLAUDE.md"), ("codex", "AGENTS.md")]:
+            self.assertTrue((self.root / provider / name).is_file())
+        original = (self.root / "codex/AGENTS.md").read_bytes()
+        second = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0"})
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual((self.root / "codex/AGENTS.md").read_bytes(), original)
+
+    def test_default_install_enables_monitor_using_the_installed_binary(self) -> None:
+        self.write_asset('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEUNLIMITED_CALL_LOG"\n')
+        self.write_checksum()
+        calls = self.root / "calls.txt"
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0", "CODEUNLIMITED_SKIP_MONITOR": "0", "CODEUNLIMITED_CALL_LOG": str(calls)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls.read_text().splitlines(), ["--version", "setup", "monitor enable"])
+
+    def test_monitor_failure_is_actionable_and_keeps_verified_binary(self) -> None:
+        self.write_asset('#!/bin/sh\nif [ "$1" = monitor ]; then exit 7; fi\necho ok\n')
+        self.write_checksum()
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0", "CODEUNLIMITED_SKIP_MONITOR": "0"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
+        self.assertIn("monitor enable", result.stderr)
+
+    def test_full_opt_out_does_not_enable_monitor(self) -> None:
+        self.write_asset('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEUNLIMITED_CALL_LOG"\n')
+        self.write_checksum()
+        calls = self.root / "calls.txt"
+        result = self.run_installer({"CODEUNLIMITED_SKIP_MONITOR": "0", "CODEUNLIMITED_CALL_LOG": str(calls)})
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(calls.read_text().splitlines(), ["--version"])
+
+    def test_binary_only_opt_out_has_no_provider_side_effects(self) -> None:
+        self.use_real_binary()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.root / "claude").exists())
+        self.assertFalse((self.root / "codex").exists())
+        self.assertNotIn("Ready for new local", result.stdout)
+        self.assertNotIn("Automatic defaults installed", result.stdout)
+
+    def test_activation_failure_is_reported_after_verified_binary_install(self) -> None:
+        self.use_real_binary()
+        (self.root / "codex").mkdir()
+        config = self.root / "codex/config.toml"
+        config.write_text("invalid = [", encoding="utf-8")
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0"})
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
+        self.assertEqual(config.read_text(), "invalid = [")
+        self.assertFalse((self.root / "claude/CLAUDE.md").exists())
+        self.assertIn("activation failed", result.stderr.lower())
 
     def install_sentinel(self) -> bytes:
         self.destination.mkdir(parents=True, exist_ok=True)

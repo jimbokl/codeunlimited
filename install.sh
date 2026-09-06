@@ -71,4 +71,21 @@ case ":$PATH:" in
   *":$DEST:"*) ;;
   *) echo "Note: add it to PATH ->  export PATH=\"$DEST:\$PATH\"" ;;
 esac
-echo "Next: codeunlimited audit"
+if [ "${CODEUNLIMITED_SKIP_SETUP:-0}" = "1" ]; then
+  echo "Automatic setup skipped (CODEUNLIMITED_SKIP_SETUP=1)."
+else
+  if ! "$DEST/codeunlimited" setup; then
+    echo "Binary installed, but automatic activation failed. Your existing settings were preserved or backed up." >&2
+    echo "Fix the reported conflict, then run: \"$DEST/codeunlimited\" setup" >&2
+    exit 1
+  fi
+  echo "Automatic defaults installed. Optional diagnostics: codeunlimited setup --status"
+  if [ "${CODEUNLIMITED_SKIP_MONITOR:-0}" = "1" ]; then
+    echo "Local monitoring skipped (CODEUNLIMITED_SKIP_MONITOR=1)."
+  elif ! "$DEST/codeunlimited" monitor enable; then
+    echo "Binary and defaults installed, but local monitoring could not start." >&2
+    echo "Fix the reported scheduler/log issue, then run: \"$DEST/codeunlimited\" monitor enable" >&2
+    echo "For an existing scheduler, use monitor enable --no-schedule and schedule monitor check yourself." >&2
+    exit 1
+  fi
+fi

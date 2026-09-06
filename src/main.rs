@@ -1,6 +1,7 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques, verdictcmd,
+    monitor, parsers, report, reportcmd, runtimecmd, schedule, setupcmd, skillcmd, techniques,
+    verdictcmd,
 };
 
 use std::io::IsTerminal;
@@ -88,7 +89,50 @@ enum ExperimentCmd {
 }
 
 #[derive(Subcommand)]
+enum MonitorCmd {
+    /// Freeze a baseline and register a daily local job (no LLM calls)
+    Enable {
+        /// Use an existing scheduler instead of registering a native job
+        #[arg(long)]
+        no_schedule: bool,
+    },
+    /// Scan local usage and update the bounded daily report
+    Check {
+        /// Suppress success output; failures still go to stderr
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Read the saved monitor status as JSON, without scanning
+    Status,
+    /// Stop collection and remove the owned native job; keep reports
+    Disable,
+}
+
+#[derive(Subcommand)]
 enum Cmd {
+    /// Automatic offline usage monitoring across every local project
+    Monitor {
+        /// Absolute private monitor directory (default: ~/.codeunlimited/monitor)
+        #[arg(long, global = true)]
+        state_dir: Option<PathBuf>,
+        #[command(subcommand)]
+        command: MonitorCmd,
+    },
+    /// Enable automatic efficiency defaults for all new local Claude/Codex sessions
+    Setup {
+        /// Remove only codeunlimited's managed global defaults
+        #[arg(long, conflicts_with_all = ["status", "no_tool_limit"])]
+        remove: bool,
+        /// Check current activation without changing any file (exit 1 if inactive)
+        #[arg(long, conflicts_with = "no_tool_limit")]
+        status: bool,
+        /// Machine-readable installation/activation result
+        #[arg(long)]
+        json: bool,
+        /// Do not add the Codex tool-output history cap (existing settings stay intact)
+        #[arg(long)]
+        no_tool_limit: bool,
+    },
     /// Find estimated reclaimable opportunities (offline, local logs only)
     Audit {
         #[arg(long, value_enum, default_value = "all")]
@@ -207,6 +251,23 @@ enum Cmd {
 fn main() {
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::Monitor { state_dir, command } => {
+            let (action, no_schedule, quiet) = match command {
+                MonitorCmd::Enable { no_schedule } => ("enable", no_schedule, false),
+                MonitorCmd::Check { quiet } => ("check", false, quiet),
+                MonitorCmd::Status => ("status", false, false),
+                MonitorCmd::Disable => ("disable", false, false),
+            };
+            std::process::exit(monitor::run(action, state_dir, no_schedule, quiet));
+        }
+        Cmd::Setup {
+            remove,
+            status,
+            json,
+            no_tool_limit,
+        } => {
+            std::process::exit(setupcmd::run(remove, status, json, no_tool_limit));
+        }
         Cmd::Audit {
             source,
             project,
