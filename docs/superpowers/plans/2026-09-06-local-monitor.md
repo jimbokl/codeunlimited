@@ -60,4 +60,4 @@ unreleased PR, rather than creating a second release on top of it.
 - [x] Run `cargo fmt --check`, `cargo test --all-targets --locked -- --test-threads=2`, `cargo clippy --all-targets --all-features --locked -- -D warnings`, Python regression tests and release metadata checks.
 - [x] Review the diff independently, address findings, repeat affected tests.
 - [x] Build release binary, install locally atomically, run `monitor enable --no-schedule`; update the existing heartbeat to call `monitor check --quiet` and read the compact report. Do not add a duplicate native job.
-- [ ] Commit only source/docs/tests, push HEAD to `codex/install-once` using the existing SSH remote and verify GitHub PR14 contains the new commit.
+- [x] Commit only source/docs/tests and push to `codex/install-once` using the existing SSH remote. Implementation delivered as `16a28cd`; PR14 remains unmerged, with no release tag.
