@@ -28,6 +28,23 @@ pub struct ScanStats {
     pub files_skipped_by_date: u64,
     pub files_skipped_by_index: u64,
     pub usage_records: u64,
+    pub malformed_records: u64,
+    pub files_failed: u64,
+    pub discovery_errors: u64,
+    pub duplicate_usage_records: u64,
+    pub usage_without_cumulative_counters: u64,
+    pub cumulative_resets: u64,
+    pub counter_overflow: bool,
+}
+
+impl ScanStats {
+    /// Completeness of the recognized counters, not proof of request identity.
+    pub fn complete_accounting(&self) -> bool {
+        self.malformed_records == 0
+            && self.files_failed == 0
+            && self.discovery_errors == 0
+            && !self.counter_overflow
+    }
 }
 
 impl AddAssign for ScanStats {
@@ -41,6 +58,19 @@ impl AddAssign for ScanStats {
             .files_skipped_by_index
             .saturating_add(rhs.files_skipped_by_index);
         self.usage_records = self.usage_records.saturating_add(rhs.usage_records);
+        self.malformed_records = self.malformed_records.saturating_add(rhs.malformed_records);
+        self.files_failed = self.files_failed.saturating_add(rhs.files_failed);
+        self.discovery_errors = self.discovery_errors.saturating_add(rhs.discovery_errors);
+        self.duplicate_usage_records = self
+            .duplicate_usage_records
+            .saturating_add(rhs.duplicate_usage_records);
+        self.usage_without_cumulative_counters = self
+            .usage_without_cumulative_counters
+            .saturating_add(rhs.usage_without_cumulative_counters);
+        self.cumulative_resets = self.cumulative_resets.saturating_add(rhs.cumulative_resets);
+        if rhs.counter_overflow {
+            self.counter_overflow = true;
+        }
     }
 }
 
@@ -49,13 +79,26 @@ pub struct ClaudeScan {
     pub stats: ScanStats,
 }
 
+/// Validate aggregate representability before presenting or persisting totals.
+pub fn counters_overflow<'a>(requests: impl IntoIterator<Item = &'a Request>) -> bool {
+    requests
+        .into_iter()
+        .try_fold(0u64, |total, r| {
+            [r.unc_in, r.cached_in, r.w5, r.w1h, r.out]
+                .into_iter()
+                .try_fold(total, u64::checked_add)
+        })
+        .is_none()
+}
+
 pub struct CodexScan {
     pub requests: Vec<Request>,
     pub series: LimitSeries,
     pub stats: ScanStats,
 }
 
-type ClaudeRecord = (Option<String>, Option<Request>);
+type ClaudeMessageId = (Arc<str>, Arc<str>, String);
+type ClaudeRecord = (Option<ClaudeMessageId>, Option<Request>);
 type ClaudeFileScan = io::Result<(Vec<ClaudeRecord>, ScanStats)>;
 
 #[derive(Default)]
@@ -139,14 +182,20 @@ pub fn claude_project_key(project: &Path) -> String {
         .collect()
 }
 
-fn jsonl_files(base: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<_> = WalkDir::new(base)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
-        .map(|e| e.into_path())
-        .collect();
+fn jsonl_files(base: &Path, stats: &mut ScanStats) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in WalkDir::new(base) {
+        match entry {
+            Ok(e)
+                if e.file_type().is_file()
+                    && e.path().extension().is_some_and(|x| x == "jsonl") =>
+            {
+                files.push(e.into_path())
+            }
+            Ok(_) => {}
+            Err(_) => stats.discovery_errors += 1,
+        }
+    }
     files.sort_unstable();
     files
 }
@@ -172,6 +221,30 @@ fn u64_of(v: &Value, key: &str) -> u64 {
     v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
+fn valid_counters(v: &Value, fields: &[&str]) -> bool {
+    v.is_object()
+        && fields
+            .iter()
+            .all(|key| v.get(key).is_none_or(|n| n.as_u64().is_some()))
+}
+
+fn has_required_counters(v: &Value) -> bool {
+    ["input_tokens", "output_tokens"]
+        .iter()
+        .all(|key| v.get(key).and_then(Value::as_u64).is_some())
+}
+
+fn source_available(root: &Path, stats: &mut ScanStats) -> bool {
+    match std::fs::metadata(root) {
+        Ok(m) if m.is_dir() => true,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        _ => {
+            stats.discovery_errors += 1;
+            false
+        }
+    }
+}
+
 fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
     let project: Arc<str> = path
         .parent()
@@ -191,17 +264,23 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
     let mut out = Vec::new();
     for line in BufReader::new(f).lines() {
         let line = line?;
-        if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
+        if !line.contains("\"assistant\"") {
             continue;
         }
         let Ok(d) = serde_json::from_str::<Value>(&line) else {
+            stats.malformed_records += 1;
             continue;
         };
+        if !d.is_object() {
+            stats.malformed_records += 1;
+            continue;
+        }
         if d.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
         let msg = d.get("message").unwrap_or(&Value::Null);
         let Some(u) = msg.get("usage").filter(|u| u.is_object()) else {
+            stats.malformed_records += 1;
             continue;
         };
         let model: Arc<str> = msg
@@ -216,11 +295,39 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
             .get("timestamp")
             .and_then(Value::as_str)
             .and_then(parse_ts);
-        let mid = msg.get("id").and_then(Value::as_str).map(str::to_string);
+        let session = d
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(Arc::from)
+            .unwrap_or_else(|| Arc::clone(&file_session));
+        let mid = msg
+            .get("id")
+            .and_then(Value::as_str)
+            .map(|id| (Arc::clone(&project), Arc::clone(&session), id.to_string()));
         if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
             // Keep the id so global first-seen deduplication stays identical to
             // an unfiltered scan, without retaining the excluded request.
             out.push((mid, None));
+            continue;
+        }
+        if !has_required_counters(u)
+            || !valid_counters(
+                u,
+                &[
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                ],
+            )
+            || u.get("cache_creation").is_some_and(|cc| {
+                !valid_counters(
+                    cc,
+                    &["ephemeral_1h_input_tokens", "ephemeral_5m_input_tokens"],
+                )
+            })
+        {
+            stats.malformed_records += 1;
             continue;
         }
         let cw = u64_of(u, "cache_creation_input_tokens");
@@ -230,16 +337,18 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
             .get("ephemeral_5m_input_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(cw.saturating_sub(w1h));
+        if w5.checked_add(w1h).is_none()
+            || (u.get("cache_creation_input_tokens").is_some() && w5.checked_add(w1h) != Some(cw))
+        {
+            stats.malformed_records += 1;
+            continue;
+        }
         out.push((
             mid,
             Some(Request {
                 source: "claude",
                 project: Arc::clone(&project),
-                session: d
-                    .get("sessionId")
-                    .and_then(Value::as_str)
-                    .map(Arc::from)
-                    .unwrap_or_else(|| Arc::clone(&file_session)),
+                session,
                 ts,
                 model,
                 unc_in: u64_of(u, "input_tokens"),
@@ -256,41 +365,54 @@ fn parse_claude_file(path: &Path, since: Option<i64>) -> ClaudeFileScan {
 
 pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
     let root = claude_root();
-    if !root.is_dir() {
+    let mut stats = ScanStats::default();
+    if !source_available(&root, &mut stats) {
         return ClaudeScan {
             requests: vec![],
-            stats: ScanStats::default(),
+            stats,
         };
     }
     let files: Vec<PathBuf> = match options.project.as_deref() {
         Some(p) => {
             let key = claude_project_key(p).to_lowercase();
-            std::fs::read_dir(&root)
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .filter(|e| e.file_name().to_string_lossy().to_lowercase() == key)
-                .flat_map(|e| jsonl_files(&e.path()))
-                .collect()
+            let mut files = Vec::new();
+            match std::fs::read_dir(&root) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(e) if e.file_name().to_string_lossy().to_lowercase() == key => {
+                                files.extend(jsonl_files(&e.path(), &mut stats))
+                            }
+                            Ok(_) => {}
+                            Err(_) => stats.discovery_errors += 1,
+                        }
+                    }
+                }
+                Err(_) => stats.discovery_errors += 1,
+            }
+            files.sort_unstable();
+            files
         }
-        None => jsonl_files(&root),
+        None => jsonl_files(&root, &mut stats),
     };
-    let mut stats = ScanStats {
-        files_discovered: files.len() as u64,
-        ..ScanStats::default()
-    };
+    stats.files_discovered = files.len() as u64;
     let parsed: Vec<ClaudeFileScan> = files
         .par_iter()
         .map(|f| parse_claude_file(f, options.since))
         .collect();
     // Streamed chunks repeat the same message id - keep the first occurrence.
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen = HashSet::new();
     let mut out = Vec::new();
-    for (chunk, file_stats) in parsed.into_iter().flatten() {
+    for scan in parsed {
+        let Ok((chunk, file_stats)) = scan else {
+            stats.files_failed += 1;
+            continue;
+        };
         stats += file_stats;
         for (mid, request) in chunk {
             if let Some(id) = mid {
                 if !seen.insert(id) {
+                    stats.duplicate_usage_records += 1;
                     continue;
                 }
             }
@@ -299,6 +421,7 @@ pub fn scan_claude(options: &ScanOptions) -> ClaudeScan {
             }
         }
     }
+    stats.counter_overflow |= counters_overflow(&out);
     ClaudeScan {
         requests: out,
         stats,
@@ -344,7 +467,13 @@ pub fn iter_claude_checked(project: Option<&Path>) -> io::Result<Vec<Request>> {
     let mut seen = HashSet::new();
     let mut requests = Vec::new();
     for scan in parsed {
-        let (records, _) = scan?;
+        let (records, stats) = scan?;
+        if !stats.complete_accounting() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed Claude usage counters",
+            ));
+        }
         for (message_id, request) in records {
             if let Some(message_id) = message_id {
                 if !seen.insert(message_id) {
@@ -355,6 +484,12 @@ pub fn iter_claude_checked(project: Option<&Path>) -> io::Result<Vec<Request>> {
                 requests.push(request);
             }
         }
+    }
+    if counters_overflow(&requests) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Claude counter aggregation overflow",
+        ));
     }
     Ok(requests)
 }
@@ -421,6 +556,7 @@ pub fn peak(series: &LimitSeries) -> LimitPeak {
         .map(|&(_, u, w)| (u, w))
 }
 
+#[cfg(test)]
 fn leading_timestamp(line: &str) -> Option<i64> {
     const PREFIX: &str = r#"{"timestamp":""#;
     if !line.starts_with(PREFIX) || line.matches("\"timestamp\"").count() != 1 {
@@ -431,6 +567,21 @@ fn leading_timestamp(line: &str) -> Option<i64> {
         return None;
     }
     parse_ts(value)
+}
+
+const CODEX_COUNTERS: [&str; 7] = [
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+    "cache_write_input_tokens",
+    "cached_tokens",
+];
+type CodexSnapshot = [Option<u64>; 7];
+
+fn codex_snapshot(usage: &Value) -> CodexSnapshot {
+    CODEX_COUNTERS.map(|key| usage.get(key).and_then(Value::as_u64))
 }
 
 fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> CodexFileScan {
@@ -450,24 +601,27 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
     let mut out = Vec::new();
     let mut series: LimitSeries = Vec::new();
     let mut observation = FileObservation::default();
+    // Track before project/date filtering: a later rate-limit event may repeat
+    // usage from outside the requested window. Missing counters break the chain.
+    let mut previous_usage: Option<(CodexSnapshot, CodexSnapshot)> = None;
     for line in BufReader::new(f).lines() {
         let line = line?;
-        if !line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
+        if !line.contains("\"token_count\"")
+            && !line.contains("\"turn_context\"")
+            && !line.contains("\"event_msg\"")
+        {
             continue;
-        }
-        if let Some(cutoff) = since {
-            if line.contains("\"token_count\"") && !line.contains("\"turn_context\"") {
-                if let Some(ts) = leading_timestamp(&line) {
-                    observation.observe_ts(Some(ts));
-                    if ts < cutoff {
-                        continue;
-                    }
-                }
-            }
         }
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
+            stats.malformed_records += 1;
+            previous_usage = None;
             continue;
         };
+        if !record.is_object() {
+            stats.malformed_records += 1;
+            previous_usage = None;
+            continue;
+        }
         let payload = record.get("payload").unwrap_or(&Value::Null);
         if record.get("type").and_then(Value::as_str) == Some("turn_context") {
             if let Some(value) = payload.get("model").and_then(Value::as_str) {
@@ -485,20 +639,15 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
             .and_then(Value::as_str)
             .and_then(parse_ts);
         observation.observe_ts(ts);
-        if since.is_some_and(|cutoff| ts.is_none_or(|value| value < cutoff)) {
-            continue;
-        }
         if payload.get("type").and_then(Value::as_str) != Some("token_count") {
             continue;
         }
-        if let Some(w) = want {
-            if cwd_key != w {
-                continue;
-            }
-        }
+        let in_scope = since.is_none_or(|cutoff| ts.is_some_and(|value| value >= cutoff))
+            && want.is_none_or(|w| cwd_key == w);
         if let Some(primary) = payload
             .get("rate_limits")
             .and_then(|limits| limits.get("primary"))
+            .filter(|_| in_scope)
         {
             series.push((
                 ts.unwrap_or(0),
@@ -517,8 +666,58 @@ fn parse_codex_file(path: &Path, want: Option<&str>, since: Option<i64>) -> Code
             .and_then(|info| info.get("last_token_usage"))
             .filter(|usage| usage.is_object())
         else {
+            if payload.get("info").is_some_and(|info| !info.is_null()) {
+                stats.malformed_records += 1;
+                previous_usage = None;
+            }
             continue;
         };
+        let cumulative = payload
+            .get("info")
+            .and_then(|info| info.get("total_token_usage"))
+            .filter(|v| !v.is_null());
+        if !has_required_counters(usage)
+            || !valid_counters(usage, &CODEX_COUNTERS)
+            || cumulative.is_some_and(|u| {
+                !valid_counters(u, &CODEX_COUNTERS)
+                    || u64_of(u, "cached_input_tokens") > u64_of(u, "input_tokens")
+            })
+            || u64_of(usage, "cached_input_tokens") > u64_of(usage, "input_tokens")
+        {
+            stats.malformed_records += 1;
+            previous_usage = None;
+            continue;
+        }
+        if let Some(total) = cumulative.filter(|u| {
+            u.get("input_tokens").and_then(Value::as_u64).is_some()
+                && u.get("output_tokens").and_then(Value::as_u64).is_some()
+        }) {
+            let current = (codex_snapshot(total), codex_snapshot(usage));
+            if previous_usage.as_ref() == Some(&current) {
+                if in_scope {
+                    stats.duplicate_usage_records += 1;
+                }
+                continue;
+            }
+            if previous_usage.as_ref().is_some_and(|old| {
+                old.0
+                    .iter()
+                    .zip(current.0)
+                    .any(|(a, b)| matches!((a, b), (Some(a), Some(b)) if b < *a))
+            }) && in_scope
+            {
+                stats.cumulative_resets += 1;
+            }
+            previous_usage = Some(current);
+        } else {
+            previous_usage = None;
+            if in_scope {
+                stats.usage_without_cumulative_counters += 1;
+            }
+        }
+        if !in_scope {
+            continue;
+        }
         let input_tokens = u64_of(usage, "input_tokens");
         let cached_input_tokens = u64_of(usage, "cached_input_tokens");
         out.push(Request {
@@ -556,19 +755,17 @@ fn parse_codex_batch(
 /// Full Codex scan: requests plus the observed rate-limit series (ts-sorted).
 pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     let root = codex_root();
-    if !root.is_dir() {
+    let mut stats = ScanStats::default();
+    if !source_available(&root, &mut stats) {
         return CodexScan {
             requests: vec![],
             series: vec![],
-            stats: ScanStats::default(),
+            stats,
         };
     }
     let want = options.project.as_deref().map(path_key);
-    let files = jsonl_files(&root);
-    let mut stats = ScanStats {
-        files_discovered: files.len() as u64,
-        ..ScanStats::default()
-    };
+    let files = jsonl_files(&root, &mut stats);
+    stats.files_discovered = files.len() as u64;
     let mut index = if options.use_index {
         IndexAccess::load()
     } else {
@@ -617,12 +814,16 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     for batch in candidates.chunks(batch_size) {
         for parsed in parse_codex_batch(batch, want.as_deref(), options.since) {
             let Ok((mut reqs, mut series, file_stats, observation)) = parsed.scan else {
+                aggregate.stats.files_failed += 1;
                 continue;
             };
             aggregate.stats += file_stats;
             aggregate.requests.append(&mut reqs);
             aggregate.series.append(&mut series);
-            if let Some(fingerprint) = parsed.fingerprint {
+            if let Some(fingerprint) = parsed
+                .fingerprint
+                .filter(|_| file_stats.complete_accounting())
+            {
                 aggregate
                     .observations
                     .push((parsed.key, fingerprint, observation));
@@ -643,6 +844,7 @@ pub fn scan_codex(options: &ScanOptions) -> CodexScan {
     }
     index.save();
     series.sort_unstable_by_key(|&(t, _, _)| t);
+    stats.counter_overflow |= counters_overflow(&out);
     CodexScan {
         requests: out,
         series,
@@ -685,8 +887,20 @@ pub fn iter_codex_checked(project: Option<&Path>) -> io::Result<Vec<Request>> {
         .collect();
     let mut requests = Vec::new();
     for scan in parsed {
-        let (mut file_requests, _, _, _) = scan?;
+        let (mut file_requests, _, stats, _) = scan?;
+        if !stats.complete_accounting() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed Codex usage counters",
+            ));
+        }
         requests.append(&mut file_requests);
+    }
+    if counters_overflow(&requests) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Codex counter aggregation overflow",
+        ));
     }
     Ok(requests)
 }

@@ -242,12 +242,34 @@ fn main() {
             }
             let cfg = config::Config::load_for(p);
             reqs.retain(|r| !cfg.is_ignored(&r.project));
-            let findings = detectors::run_all(&reqs, &cfg);
+            stats.counter_overflow |= parsers::counters_overflow(&reqs);
+            let findings = if stats.complete_accounting() {
+                detectors::run_all(&reqs, &cfg)
+            } else {
+                Vec::new()
+            };
+            if !stats.complete_accounting() {
+                eprintln!("warning: incomplete accounting; invalid records, scan errors, or overflow; opportunity estimates withheld");
+            }
             if json {
-                println!(
-                    "{}",
-                    report::render_json(&reqs, &findings, scan_stats.then_some(&stats))
-                );
+                let mut value: serde_json::Value = serde_json::from_str(&report::render_json(
+                    &reqs,
+                    &findings,
+                    scan_stats.then_some(&stats),
+                ))
+                .expect("serialized audit");
+                value["accounting"] = serde_json::json!({
+                    "complete": stats.complete_accounting(),
+                    "record_unit": "retained usage records; not guaranteed distinct model requests",
+                    "malformed_records": stats.malformed_records,
+                    "files_failed": stats.files_failed,
+                    "discovery_errors": stats.discovery_errors,
+                    "duplicate_usage_records": stats.duplicate_usage_records,
+                    "usage_without_cumulative_counters": stats.usage_without_cumulative_counters,
+                    "cumulative_resets": stats.cumulative_resets,
+                    "counter_overflow": stats.counter_overflow,
+                });
+                println!("{value}");
             } else {
                 if let Some(p) = p {
                     println!("[scope: {}]", p.display());
@@ -261,8 +283,10 @@ fn main() {
                         win as f64 / 1440.0
                     );
                 }
-                for line in forecast::forecast(&reqs, &series) {
-                    println!(" Forecast: {line}");
+                if stats.complete_accounting() {
+                    for line in forecast::forecast(&reqs, &series) {
+                        println!(" Forecast: {line}");
+                    }
                 }
             }
         }

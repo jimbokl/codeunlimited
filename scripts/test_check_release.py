@@ -22,7 +22,7 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("2.3.0")
+        result = self.run_checker("2.3.1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checker_does_not_require_python_311_tomllib(self) -> None:
@@ -40,9 +40,9 @@ class ReleaseCheckerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("9.9.9", result.stdout + result.stderr)
 
-    def test_shell_wrapper_accepts_minor_release(self) -> None:
+    def test_shell_wrapper_accepts_patch_release(self) -> None:
         result = subprocess.run(
-            ["bash", str(CHECKER_SH), "2.3"],
+            ["bash", str(CHECKER_SH), "2.3.1"],
             cwd=ROOT,
             check=False,
             capture_output=True,

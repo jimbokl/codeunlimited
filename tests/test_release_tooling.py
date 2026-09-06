@@ -196,7 +196,7 @@ class PythonMatrixTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("bash scripts/audit-package.sh 2.3", ci)
+        self.assertIn("bash scripts/audit-package.sh 2.3.1", ci)
         self.assertIn('bash scripts/audit-package.sh "$version"', release)
 
     def test_python_matrix_builds_the_real_cli_before_packet_benchmarks(self) -> None:

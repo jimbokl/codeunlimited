@@ -6,8 +6,10 @@ an ever-growing orchestration transcript.**
 ![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 
 `codeunlimited` has two product surfaces. Its local auditor separates what was
-**observed** from what is **modeled**, sums local log counters exactly, and
-measures input tokens per comparable completed task. Its 2.2 stateful runtime
+**observed** from what is **modeled**, sums recognized local usage counters,
+and measures input tokens per comparable completed task. Version 2.3.1 reports
+accounting gaps and suppresses retrospective models on incomplete input.
+Its stateful runtime
 adds immutable work plans, deterministic packet selection, and an all-attempt
 ledger to fresh provider processes connected by bounded, validated state.
 Neither surface promises a fixed savings percentage. A
@@ -208,12 +210,21 @@ README; `--anonymize` hashes project names so reports can be shared publicly.
 
 `verdict` answers the first-install question "what would this have changed?":
 it replays every long session in your existing history as if each request had
-carried that session's early-request mean context (the exact
+carried that session's early-request mean context (the
 [BENCHMARK.md](docs/BENCHMARK.md) Layer 1 model) and prints the difference.
 `init` on a project with history ends with the same one-line verdict. The
-number is always labeled modeled counterfactual exposure - it is not realized
-savings, and sessions below the measured break-even (~7 requests) are excluded
-because restarting those costs more than it saves.
+number is always labeled modeled counterfactual exposure, not realized
+savings. The default floor is >30 retained usage records; it is an analysis
+filter, not a universal measured break-even.
+
+In 2.3.1, `verdict --json` uses schema 2, retains negative differences, and
+includes scan diagnostics. Incomplete input exits with code 2 and leaves model
+fields null. Empty history uses the same JSON keys. `verdict` does not write a
+metadata cache or modify logs. Usage records are not guaranteed distinct model
+requests: repeated Codex snapshots are removed only when both cumulative and
+last-usage counters match consecutively within one file. Records without
+cumulative counters are retained and counted separately in diagnostics.
+See [the 2.3.1 accounting contract](docs/VERSION-2.3.md).
 
 `experiment` stores exact observed integer token counters for explicit
 half-open windows (`start <= request timestamp < finish`) and compares input

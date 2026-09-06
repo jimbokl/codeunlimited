@@ -146,8 +146,26 @@ fn apply_block(path: &Path, rendered: &str, current: Option<&str>) -> io::Result
 
 fn baseline(root: &Path, disp: &str) -> io::Result<()> {
     let cfg = crate::config::Config::load_for(Some(root));
-    let mut reqs = parsers::iter_claude(Some(root));
-    let codex = parsers::iter_codex(Some(root));
+    let options = parsers::ScanOptions {
+        project: Some(root.to_path_buf()),
+        since: None,
+        use_index: false,
+    };
+    let claude_scan = parsers::scan_claude(&options);
+    let codex_scan = parsers::scan_codex(&options);
+    if !claude_scan.stats.complete_accounting() || !codex_scan.stats.complete_accounting() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "incomplete accounting; baseline and retro verdict withheld (run `codeunlimited verdict --json` for diagnostics)"));
+    }
+    let mut reqs = claude_scan.requests;
+    let mut codex = codex_scan.requests;
+    reqs.retain(|r| !cfg.is_ignored(&r.project));
+    codex.retain(|r| !cfg.is_ignored(&r.project));
+    if parsers::counters_overflow(reqs.iter().chain(codex.iter())) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "counter aggregation overflow; baseline withheld",
+        ));
+    }
     // Capture the baseline once; `codeunlimited delta` compares against it.
     let bl = root.join(crate::deltacmd::BASELINE_FILE);
     if !bl.exists() {

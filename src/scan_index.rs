@@ -10,7 +10,8 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 pub const INDEX_FILE: &str = "codex-index-v1.json";
-const SCHEMA_VERSION: u64 = 1;
+// v2 invalidates entries created before malformed files were excluded.
+const SCHEMA_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FileFingerprint {
