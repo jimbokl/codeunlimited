@@ -42,7 +42,7 @@ class ReleaseCheckerTests(unittest.TestCase):
 
     def test_shell_wrapper_accepts_minor_release(self) -> None:
         result = subprocess.run(
-            ["bash", str(CHECKER_SH), "2.2"],
+            ["bash", str(CHECKER_SH), "2.3"],
             cwd=ROOT,
             check=False,
             capture_output=True,
