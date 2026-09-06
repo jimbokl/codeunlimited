@@ -23,3 +23,4 @@ pub mod schedule;
 pub mod skillcmd;
 pub mod techniques;
 pub mod types;
+pub mod verdictcmd;

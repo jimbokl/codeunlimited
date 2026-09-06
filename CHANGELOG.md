@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.0 - 2026-09-06
+
+- Added `codeunlimited verdict`: a retro verdict over existing local history
+  that models what bounded-session discipline would have changed from day one.
+  The counterfactual reuses the published field-benchmark method
+  (docs/BENCHMARK.md Layer 1: early-request mean per session, sessions above
+  the min-turns floor only) and every output labels the number as modeled
+  counterfactual exposure, never realized savings. `--json` for scripting;
+  `--min-turns` / `--early-turns` expose the model knobs.
+- `init` on a project with existing history now ends with a one-line retro
+  verdict (first-install verdict), pointing at `codeunlimited verdict` for the
+  full breakdown. Short sessions stay excluded: below the measured break-even
+  (~7 requests) a fresh session costs more than it saves.
+
 ## 2.2.0 - 2026-09-04
 
 - Added immutable, opt-in work plans and deterministic dependency-aware packet

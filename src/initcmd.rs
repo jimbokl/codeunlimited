@@ -191,6 +191,9 @@ fn baseline(root: &Path, disp: &str) -> io::Result<()> {
             top.impact_tokens as f64 / 1e6
         );
     }
+    if let Some(line) = crate::verdictcmd::first_install_line(&reqs) {
+        println!("{line}");
+    }
     println!("  full scoped report: codeunlimited audit --project \"{disp}\"");
     Ok(())
 }
