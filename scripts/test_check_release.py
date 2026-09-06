@@ -22,7 +22,7 @@ class ReleaseCheckerTests(unittest.TestCase):
         )
 
     def test_matching_release_metadata_passes(self) -> None:
-        result = self.run_checker("2.2.0")
+        result = self.run_checker("2.3.0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checker_does_not_require_python_311_tomllib(self) -> None:

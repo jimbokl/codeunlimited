@@ -182,6 +182,7 @@ codeunlimited audit               # offline scan of ~/.claude and ~/.codex logs
 codeunlimited init myproject/     # efficiency rules into CLAUDE.md + AGENTS.md
 codeunlimited audit --project .   # report scoped to one project
 codeunlimited delta myproject/    # before/after tracking since init's baseline
+codeunlimited verdict             # retro verdict: modeled exposure had rules run from day one
 codeunlimited experiment start sprint-a myproject/  # begin an observed-counter ledger
 codeunlimited experiment finish sprint-a --tasks 3 myproject/ --json
 codeunlimited experiment compare control treatment myproject/ --json
@@ -203,6 +204,15 @@ selected project's file is layered on top. See the header of
 
 `report` extras: `--badge` writes an SVG "estimated opportunity" badge for your
 README; `--anonymize` hashes project names so reports can be shared publicly.
+
+`verdict` answers the first-install question "what would this have changed?":
+it replays every long session in your existing history as if each request had
+carried that session's early-request mean context (the exact
+[BENCHMARK.md](docs/BENCHMARK.md) Layer 1 model) and prints the difference.
+`init` on a project with history ends with the same one-line verdict. The
+number is always labeled modeled counterfactual exposure - it is not realized
+savings, and sessions below the measured break-even (~7 requests) are excluded
+because restarting those costs more than it saves.
 
 `experiment` stores exact observed integer token counters for explicit
 half-open windows (`start <= request timestamp < finish`) and compares input

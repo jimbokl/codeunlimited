@@ -1,6 +1,6 @@
 use codeunlimited::{
     comparecmd, config, deltacmd, detectors, doctor, experiment, fixcmd, forecast, initcmd,
-    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques,
+    parsers, report, reportcmd, runtimecmd, schedule, skillcmd, techniques, verdictcmd,
 };
 
 use std::io::IsTerminal;
@@ -119,6 +119,23 @@ enum Cmd {
     Delta {
         #[arg(default_value = ".")]
         path: PathBuf,
+    },
+    /// Retro verdict over existing history: modeled counterfactual exposure if
+    /// bounded-session discipline had been active from the start (not realized
+    /// savings; method matches docs/BENCHMARK.md Layer 1)
+    Verdict {
+        /// Scope to one project directory (default: all local history)
+        #[arg(long, value_name = "PATH")]
+        project: Option<PathBuf>,
+        /// Only model sessions longer than this many requests
+        #[arg(long, value_name = "N", default_value_t = verdictcmd::DEFAULT_MIN_TURNS)]
+        min_turns: usize,
+        /// Early requests whose mean defines the bounded counterfactual
+        #[arg(long, value_name = "N", default_value_t = verdictcmd::DEFAULT_EARLY_TURNS)]
+        early_turns: usize,
+        /// Machine-readable output for scripting
+        #[arg(long)]
+        json: bool,
     },
     /// Write a report (Markdown + styled HTML) for a project - findings, delta,
     /// trend; each run appends a snapshot, so the trend grows over time
@@ -251,6 +268,19 @@ fn main() {
         }
         Cmd::Init { path } => {
             std::process::exit(initcmd::run(&path));
+        }
+        Cmd::Verdict {
+            project,
+            min_turns,
+            early_turns,
+            json,
+        } => {
+            std::process::exit(verdictcmd::run(
+                project.as_deref(),
+                min_turns,
+                early_turns,
+                json,
+            ));
         }
         Cmd::Delta { path } => {
             std::process::exit(deltacmd::run(&path));
