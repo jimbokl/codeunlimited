@@ -148,7 +148,8 @@ The runtime proves bounded context transport at orchestration-step boundaries,
 not at every tool action inside the provider and not yet as realized token savings.
 The next evidence milestone is a matched-quality, increasing-horizon comparison
 against a full-history agent.
-See [2.2 changes and evidence limits](docs/VERSION-2.2.md).
+See [2.3 changes and evidence limits](docs/VERSION-2.3.md) and
+[2.2 changes and evidence limits](docs/VERSION-2.2.md).
 
 ## Install (one command)
 
