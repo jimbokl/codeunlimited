@@ -6,8 +6,9 @@ and Codex sessions, across your projects.**
 Version 2.4.0 removes the per-project activation step from the normal installer.
 It installs compact global workflow rules and a Codex tool-output history cap
 of 4,000 tokens when you have not set your own. Keep using your usual agent;
-no background daemon, API key, or recurring audit command is required.
-[Install](#install-one-command) · [What is automatic, and what is not](docs/VERSION-2.4.md)
+no API key or recurring manual command is required. A daily local job records
+usage across all discovered projects and updates a private report, with no LLM calls.
+[Install](#install-one-command) · [Automatic defaults](docs/VERSION-2.4.md) · [Local monitoring](docs/MONITORING.md)
 
 ![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 
@@ -28,9 +29,9 @@ fixed — but how much *work* fits inside it is not. `codeunlimited` reads the
 session logs already on your machine, shows where limit tokens leak, and sets
 your projects up so the same subscription produces more code.
 
-> Not a usage tracker. For accounting ("how much did I use") see
-> [ccusage](https://github.com/ryoppippi/ccusage). codeunlimited answers the
-> next question: **why so much, and how to fit more work into the same limit.**
+> Beyond usage tracking: codeunlimited connects recorded consumption to
+> workflow changes. The monitor shows matched observational changes;
+> it does not turn those changes into a guaranteed savings claim.
 
 ## What it finds
 
@@ -188,15 +189,20 @@ installer uses `~/.local/bin` and prints the exact export when that directory
 is not already on PATH. Global defaults work even before you add the CLI to PATH.
 
 For an existing binary, `cargo install`, or a manually downloaded release, run
-`codeunlimited setup` once. Optional controls:
+`codeunlimited setup` and `codeunlimited monitor enable` once. Optional controls:
 
 ```bash
 codeunlimited setup --status       # read-only installation check
 codeunlimited setup --remove       # remove owned defaults; keep your edits/backups
 codeunlimited setup --no-tool-limit # install rules without adding the Codex cap
+codeunlimited monitor status        # all-project usage and latest check, saved JSON
+codeunlimited monitor disable       # stop local monitoring, keep its reports
 ```
 
-`CODEUNLIMITED_SKIP_SETUP=1` opts out of automatic activation in either installer.
+`CODEUNLIMITED_SKIP_SETUP=1` opts out of activation and monitoring in either installer.
+`CODEUNLIMITED_SKIP_MONITOR=1` skips only monitoring. The native daily job requires
+LaunchAgent, user systemd or Windows Task Scheduler; [existing schedulers](docs/MONITORING.md#existing-scheduler-and-installer-opt-outs)
+can call the same offline collector without registering a second job.
 On Unix, pass it to the shell running the installer:
 
 ```bash

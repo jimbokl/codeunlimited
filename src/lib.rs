@@ -11,6 +11,8 @@ pub mod forecast;
 pub mod html;
 pub mod initcmd;
 pub mod metrics;
+pub mod monitor;
+pub mod monitor_schedule;
 pub mod parsers;
 pub mod registry;
 pub mod report;

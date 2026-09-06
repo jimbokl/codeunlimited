@@ -5,6 +5,11 @@ activate efficiency defaults. Open your next local Claude Code or Codex session
 as usual. There is no per-project `init`, recurring `audit`, workflow manifest,
 API key, or background service to configure for these defaults.
 
+The installers also register a daily offline usage monitor across all discovered
+projects. It runs once, updates a private report and exits; no LLM is involved.
+See [monitoring, storage and opt-out controls](MONITORING.md). `setup` itself
+still only manages defaults; manual installs also need `monitor enable`.
+
 ## What setup changes
 
 | Target | Change |

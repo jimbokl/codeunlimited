@@ -24,6 +24,8 @@ $oldUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $oldClaudeConfig = $env:CLAUDE_CONFIG_DIR
 $oldCodexHome = $env:CODEX_HOME
 $oldSkipSetup = $env:CODEUNLIMITED_SKIP_SETUP
+$oldSkipMonitor = $env:CODEUNLIMITED_SKIP_MONITOR
+$oldCodeunlimitedHome = $env:CODEUNLIMITED_HOME
 
 function Invoke-Installer {
     $process = Start-Process powershell -ArgumentList @(
@@ -52,6 +54,9 @@ try {
     $env:CLAUDE_CONFIG_DIR = Join-Path $temp 'claude'
     $env:CODEX_HOME = Join-Path $temp 'codex'
     $env:CODEUNLIMITED_SKIP_SETUP = '0'
+    # This integration test verifies the installer, not the host's scheduler.
+    $env:CODEUNLIMITED_SKIP_MONITOR = '1'
+    $env:CODEUNLIMITED_HOME = Join-Path $temp 'state'
     if ((Invoke-Installer) -ne 0) { throw 'Valid installer run failed' }
     if ((Invoke-Installer) -ne 0) { throw 'Idempotent installer rerun failed' }
     $status = & (Join-Path $dest 'codeunlimited.exe') setup --status --json | ConvertFrom-Json
@@ -111,6 +116,8 @@ try {
     $env:CLAUDE_CONFIG_DIR = $oldClaudeConfig
     $env:CODEX_HOME = $oldCodexHome
     $env:CODEUNLIMITED_SKIP_SETUP = $oldSkipSetup
+    $env:CODEUNLIMITED_SKIP_MONITOR = $oldSkipMonitor
+    $env:CODEUNLIMITED_HOME = $oldCodeunlimitedHome
     Remove-Item Env:CODEUNLIMITED_DOWNLOAD_BASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:CODEUNLIMITED_INSTALL_DIR -ErrorAction SilentlyContinue
     if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

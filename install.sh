@@ -80,4 +80,12 @@ else
     exit 1
   fi
   echo "Automatic defaults installed. Optional diagnostics: codeunlimited setup --status"
+  if [ "${CODEUNLIMITED_SKIP_MONITOR:-0}" = "1" ]; then
+    echo "Local monitoring skipped (CODEUNLIMITED_SKIP_MONITOR=1)."
+  elif ! "$DEST/codeunlimited" monitor enable; then
+    echo "Binary and defaults installed, but local monitoring could not start." >&2
+    echo "Fix the reported scheduler/log issue, then run: \"$DEST/codeunlimited\" monitor enable" >&2
+    echo "For an existing scheduler, use monitor enable --no-schedule and schedule monitor check yourself." >&2
+    exit 1
+  fi
 fi

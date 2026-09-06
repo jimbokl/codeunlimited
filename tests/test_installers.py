@@ -70,6 +70,9 @@ class UnixInstallerTests(unittest.TestCase):
         )
         env["CODEUNLIMITED_INSTALL_DIR"] = str(self.destination)
         env["CODEUNLIMITED_SKIP_SETUP"] = "1"
+        # Real CLI tests never register jobs on the host. Mock CLI tests below
+        # explicitly enable the ordinary installer path.
+        env["CODEUNLIMITED_SKIP_MONITOR"] = "1"
         env["CLAUDE_CONFIG_DIR"] = str(self.root / "claude")
         env["CODEX_HOME"] = str(self.root / "codex")
         env["CODEUNLIMITED_HOME"] = str(self.root / "state")
@@ -106,6 +109,30 @@ class UnixInstallerTests(unittest.TestCase):
         second = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0"})
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual((self.root / "codex/AGENTS.md").read_bytes(), original)
+
+    def test_default_install_enables_monitor_using_the_installed_binary(self) -> None:
+        self.write_asset('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEUNLIMITED_CALL_LOG"\n')
+        self.write_checksum()
+        calls = self.root / "calls.txt"
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0", "CODEUNLIMITED_SKIP_MONITOR": "0", "CODEUNLIMITED_CALL_LOG": str(calls)})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls.read_text().splitlines(), ["--version", "setup", "monitor enable"])
+
+    def test_monitor_failure_is_actionable_and_keeps_verified_binary(self) -> None:
+        self.write_asset('#!/bin/sh\nif [ "$1" = monitor ]; then exit 7; fi\necho ok\n')
+        self.write_checksum()
+        result = self.run_installer({"CODEUNLIMITED_SKIP_SETUP": "0", "CODEUNLIMITED_SKIP_MONITOR": "0"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.installed_bytes(), self.asset.read_bytes())
+        self.assertIn("monitor enable", result.stderr)
+
+    def test_full_opt_out_does_not_enable_monitor(self) -> None:
+        self.write_asset('#!/bin/sh\nprintf "%s\\n" "$*" >> "$CODEUNLIMITED_CALL_LOG"\n')
+        self.write_checksum()
+        calls = self.root / "calls.txt"
+        result = self.run_installer({"CODEUNLIMITED_SKIP_MONITOR": "0", "CODEUNLIMITED_CALL_LOG": str(calls)})
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(calls.read_text().splitlines(), ["--version"])
 
     def test_binary_only_opt_out_has_no_provider_side_effects(self) -> None:
         self.use_real_binary()

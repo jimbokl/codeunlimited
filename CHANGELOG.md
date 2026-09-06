@@ -2,6 +2,14 @@
 
 ## 2.4.0 - 2026-09-06
 
+- Added install-once local monitoring across all discovered Claude/Codex projects:
+  `monitor enable/check/status/disable`, a frozen baseline, bounded daily reports,
+  new-session filtering and source/model/project-matched observational changes.
+- Standard installers also enable a native daily job; external schedulers and
+  monitor-only opt-out are supported. Collection uses no LLM or provider API.
+- Incomplete accounting and small/unmatched samples suppress the percentage;
+  task quality and causal subscription savings remain explicitly unverified.
+
 - Both binary installers now activate global efficiency defaults after checksum
   verification and binary installation. No per-project init is required for
   new local Claude Code/Codex sessions. Binary-only installs remain available

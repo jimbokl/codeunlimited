@@ -83,6 +83,14 @@ try {
             throw "Binary installed, but automatic activation failed. Fix the reported conflict, then run: & '$exe' setup"
         }
         Write-Host 'Automatic defaults installed. Optional diagnostics: codeunlimited setup --status'
+        if ($env:CODEUNLIMITED_SKIP_MONITOR -eq '1') {
+            Write-Host 'Local monitoring skipped (CODEUNLIMITED_SKIP_MONITOR=1).'
+        } else {
+            & $exe monitor enable
+            if ($LASTEXITCODE -ne 0) {
+                throw "Binary and defaults installed, but local monitoring could not start. Fix the scheduler/log issue, then run: & '$exe' monitor enable. For an existing scheduler use monitor enable --no-schedule and schedule monitor check yourself."
+            }
+        }
     }
 } catch {
     $failure = $_
