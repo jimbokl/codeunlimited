@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.3.1 - 2026-09-06
+
+- Preserved signed observed-minus-modeled differences, including negative
+  sessions. Removed the universal seven-request break-even claim.
+- Added `verdict` JSON schema 2 with a stable shape for empty and incomplete
+  histories, diagnostic counters, explicit record units, and null model fields
+  when input integrity or timestamp ordering is unknown. Aggregate overflow
+  reports an error instead of panicking, wrapping, or claiming an exact total.
+- Rejected malformed, missing core, and inconsistent cache counters. File and
+  discovery failures no longer disappear from verdicts. `audit` exposes
+  accounting diagnostics and withholds opportunity estimates on scan errors;
+  `init` does not save an incomplete baseline. Strict experiment scans reject
+  malformed usage rather than recording a partial total as complete.
+- Deduplicated consecutive Codex snapshots only when both cumulative and
+  last-usage counters match, before date/project filtering. Equal-sized calls
+  with advancing counters, observed resets, and records without cumulative
+  counters remain included. Claude message identities are project/session scoped.
+- Made `verdict` genuinely read-only, validated zero early-turns and invalid
+  project paths, and invalidated old metadata index entries. Added public-CLI
+  regressions and differential checks against the Python context model.
+- No new optimizer, paid-provider experiment, or realized-savings claim.
+
 ## 2.3.0 - 2026-09-06
 
 - Added `codeunlimited verdict`: a retro verdict over existing local history
@@ -11,8 +33,8 @@
   `--min-turns` / `--early-turns` expose the model knobs.
 - `init` on a project with existing history now ends with a one-line retro
   verdict (first-install verdict), pointing at `codeunlimited verdict` for the
-  full breakdown. Short sessions stay excluded: below the measured break-even
-  (~7 requests) a fresh session costs more than it saves.
+  full breakdown. The original seven-request break-even statement was too
+  broad; 2.3.1 replaces it with an explicit analysis-floor description.
 
 ## 2.2.0 - 2026-09-04
 

@@ -146,8 +146,39 @@ fn apply_block(path: &Path, rendered: &str, current: Option<&str>) -> io::Result
 
 fn baseline(root: &Path, disp: &str) -> io::Result<()> {
     let cfg = crate::config::Config::load_for(Some(root));
-    let mut reqs = parsers::iter_claude(Some(root));
-    let codex = parsers::iter_codex(Some(root));
+    let options = parsers::ScanOptions {
+        project: Some(root.to_path_buf()),
+        since: None,
+        use_index: false,
+    };
+    let claude_scan = parsers::scan_claude(&options);
+    let codex_scan = parsers::scan_codex(&options);
+    let mut stats = claude_scan.stats;
+    stats += codex_scan.stats;
+    let retained = claude_scan.requests.len() + codex_scan.requests.len();
+    match crate::verdictcmd::accounting_gate(&stats, retained) {
+        crate::verdictcmd::AccountingGate::Complete => {}
+        crate::verdictcmd::AccountingGate::Disclosed { malformed, share } => {
+            println!(
+                "  disclosed: {malformed} malformed records ({:.4}% of retained scope) \
+                 excluded; all other counters are complete",
+                share * 100.0
+            );
+        }
+        crate::verdictcmd::AccountingGate::Withheld => {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "incomplete accounting; baseline and retro verdict withheld (run `codeunlimited verdict --json` for diagnostics)"));
+        }
+    }
+    let mut reqs = claude_scan.requests;
+    let mut codex = codex_scan.requests;
+    reqs.retain(|r| !cfg.is_ignored(&r.project));
+    codex.retain(|r| !cfg.is_ignored(&r.project));
+    if parsers::counters_overflow(reqs.iter().chain(codex.iter())) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "counter aggregation overflow; baseline withheld",
+        ));
+    }
     // Capture the baseline once; `codeunlimited delta` compares against it.
     let bl = root.join(crate::deltacmd::BASELINE_FILE);
     if !bl.exists() {

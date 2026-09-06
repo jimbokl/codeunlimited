@@ -189,7 +189,7 @@ fn repeated_scope_uses_index() {
     let raw = fs::read_to_string(state.path().join("state/codex-index-v1.json"))
         .expect("Codex metadata index");
     let index: Value = serde_json::from_str(&raw).expect("index JSON");
-    assert_eq!(index["schema_version"], 1);
+    assert_eq!(index["schema_version"], 2);
     assert!(!raw.contains("gpt-target"));
     assert!(!raw.contains("gpt-other"));
     for private_usage_field in [
@@ -303,7 +303,7 @@ fn invalid_json_index_is_rebuilt_without_changing_results() {
     assert_eq!(rebuilt["scan"]["files_opened"], 2);
     let index: Value = serde_json::from_slice(&fs::read(index_path).expect("rebuilt index"))
         .expect("valid rebuilt index");
-    assert_eq!(index["schema_version"], 1);
+    assert_eq!(index["schema_version"], 2);
 }
 
 #[cfg(unix)]
@@ -444,7 +444,7 @@ fn claude_deduplicates_before_applying_the_time_cutoff() {
 }
 
 #[test]
-fn malformed_known_codex_fields_do_not_hide_other_usage_metadata() {
+fn malformed_codex_counters_are_not_coerced_to_zero_or_cached() {
     let state = TempDir::new().expect("fixture root");
     let session = state.path().join("codex/sessions/2099/01/session.jsonl");
     fs::create_dir_all(session.parent().expect("Codex session parent"))
@@ -464,8 +464,9 @@ fn malformed_known_codex_fields_do_not_hide_other_usage_metadata() {
     let first = run(state.path(), &args);
     let warm = run(state.path(), &args);
 
-    assert_eq!(first["sources"]["codex"]["requests"], 1);
-    assert_eq!(first["sources"]["codex"]["prompt_tokens"], 5);
+    assert!(first["sources"].get("codex").is_none());
+    assert_eq!(first["scan"]["malformed_records"], 1);
+    assert_eq!(first["accounting"]["complete"], false);
     assert_eq!(warm["sources"], first["sources"]);
     assert_eq!(warm["scan"]["files_opened"], 1);
 }
