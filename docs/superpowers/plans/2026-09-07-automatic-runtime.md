@@ -38,6 +38,7 @@
 - `setup --autopilot` installs both layers of instructions and config only, never invokes a provider. Plain setup retains an already-installed autopilot policy. `setup --remove` removes owned autopilot and ordinary setup blocks while preserving user bytes.
 - Native config is 64_000 tokens counted as body_after_prefix. If either key already exists outside our block, preserve both user keys, install no half-policy, report user-managed/default values.
 - Status declares `autopilot.enabled`, `autopilot.routing = "host_agent_instructions"`, `autopilot.desktop_interception = false`; compaction exposes configured threshold/scope/ownership and a runtime statement that setup does not mean a managed run is active.
+- Before a new Start worker dispatch, safely write a private ignore-all .gitignore within its newly created run directory; preserve root .gitignore and existing runs. Test real git check-ignore/status, not just file text.
 
 - [ ] **Step 1: Write RED setup behavior tests.**
 Use existing `command(root)` subprocess helper, compare parsed TOML and actual file preservation rather than source-code strings:

@@ -9,6 +9,7 @@ User approved the two-level design in chat on 2026-09-07. Deliver working local 
 4. Never silently overwrite/reinitialize an existing run. Continuing a run uses the existing `run auto` only after reading its status, and never blindly retries an ambiguous dispatch. Completion, blocked, failed checks and budgets terminate a batch. Token limits cannot preempt provider-internal usage and are explicitly soft.
 5. Worker workflow makes the runtime-worker boundary explicit; never recursively launch another codeunlimited run. The provider process sets CODEUNLIMITED_RUNTIME_WORKER=1; provider-invoking start/step/auto/cache-probe reject this marker before mutation or dispatch. Read-only status/ledger/packet remain usable. Automatically persisted validated state is the checkpoint. No transcript edits, UI automation, detached infinite watcher, account workarounds, or forced restart of the current desktop chat.
 6. Status distinguishes installed policy, native compaction configuration, runtime available versus active managed run, and unsupported transparent desktop takeover. Preserve offline monitor independently.
+7. New Start runs are private-by-default: place an owned ignore-all .gitignore inside the newly created run directory before worker dispatch, without changing the user root .gitignore or existing run policy. Verify with real git check-ignore/status so state is not accidentally staged.
 
 ## Global constraints
 - Rust 1.82, existing dependencies, existing release metadata unchanged.
