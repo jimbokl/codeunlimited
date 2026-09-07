@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.5.0 - 2026-09-07
+
+- Added `run start`: a bounded subscription autopilot that initializes and
+  drives a stateful run end to end - fresh bounded worker per step, attempt
+  ledger, frozen verification, and soft total-token admission caps on every
+  step. Failed or blocked verification stops the run; provider failure,
+  unknown usage, and ambiguous output terminate finitely.
+- Added `setup --autopilot` (explicit opt-in; conflicts with remove/status):
+  installs bounded-runtime routing instructions and a native Codex compaction
+  budget. Default installers and plain `setup` do not enable it and never
+  launch providers.
+- Runtime workers carry an isolation marker and cannot dispatch runs
+  themselves; generic captured processes such as verifiers are not marked.
+- No realized-savings percentage is claimed; the autopilot spends the user's
+  own subscription quota under explicit caps (docs/VERSION-2.5.md).
+
 ## 2.4.0 - 2026-09-06
 
 - Added install-once local monitoring across all discovered Claude/Codex projects:

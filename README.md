@@ -8,7 +8,7 @@ It installs compact global workflow rules and a Codex tool-output history cap
 of 4,000 tokens when you have not set your own. Keep using your usual agent;
 no API key or recurring manual command is required. A daily local job records
 usage across all discovered projects and updates a private report, with no LLM calls.
-[Install](#install-one-command) · [Automatic defaults](docs/VERSION-2.4.md) · [Local monitoring](docs/MONITORING.md)
+[Install](#install-one-command) · [Automatic defaults](docs/VERSION-2.4.md) · [Local monitoring](docs/MONITORING.md) · [Autopilot (opt-in)](docs/VERSION-2.5.md)
 
 ![Historical experiment comparison: control used 39,110,299 observed input tokens per task, treatment used 50,720,723, a 29.7% increase; the one-task-per-arm result is low-confidence and observational](docs/assets/terminal.svg)
 

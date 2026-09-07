@@ -791,8 +791,10 @@ mod tests {
             program: python(),
             args: vec![
                 OsString::from("-c"),
+                // Binary write: print() would emit \r\n on Windows and break the
+                // byte-exact capture assertion below.
                 OsString::from(
-                    "import os; print(os.environ.get('CODEUNLIMITED_RUNTIME_WORKER', 'absent'))",
+                    "import os, sys; sys.stdout.buffer.write(os.environ.get('CODEUNLIMITED_RUNTIME_WORKER', 'absent').encode() + b'\\n')",
                 ),
             ],
         };
