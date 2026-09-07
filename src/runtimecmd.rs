@@ -82,6 +82,12 @@ pub enum ProviderKind {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StartProviderKind {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CacheTtlArg {
     #[value(name = "5m")]
     FiveMinutes,
@@ -140,7 +146,7 @@ pub struct StartArgs {
     verify_arg: Vec<String>,
     /// Subscription provider (codex or claude only)
     #[arg(long, value_enum, default_value = "codex")]
-    provider: ProviderKind,
+    provider: StartProviderKind,
     /// Optional workflow/skill file; otherwise the bounded built-in workflow is used
     #[arg(long, value_name = "FILE")]
     skill: Option<PathBuf>,
@@ -579,21 +585,16 @@ fn execute_start(args: StartArgs) -> Result<(), RunCliError> {
     reject_runtime_worker()?;
     let project = resolve_project(&args.project)?;
     let provider = match args.provider {
-        ProviderKind::Codex => ProviderConfig::Codex {
+        StartProviderKind::Codex => ProviderConfig::Codex {
             executable: args.provider_executable.unwrap_or_else(|| "codex".into()),
             args: args.provider_arg,
             subscription_profile: SubscriptionProfile::Standard,
         },
-        ProviderKind::Claude => ProviderConfig::Claude {
+        StartProviderKind::Claude => ProviderConfig::Claude {
             executable: args.provider_executable.unwrap_or_else(|| "claude".into()),
             args: args.provider_arg,
             subscription_profile: SubscriptionProfile::Standard,
         },
-        ProviderKind::Command | ProviderKind::OpenaiApi | ProviderKind::AnthropicApi => {
-            return Err(RunCliError::Input(
-                "run start supports only codex and claude subscription providers",
-            ))
-        }
     };
 
     let mut built_in = None;

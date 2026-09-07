@@ -125,16 +125,26 @@ fn policy_block(current: &str) -> String {
 
 fn policy_next(current: &str, remove: bool) -> io::Result<String> {
     let range = owned_range(current, START, END, true)?;
-    let block = if remove {
-        String::new()
+    if let Some(range) = range {
+        if current[range.clone()] != policy_block(current) {
+            return Err(invalid(
+                "Managed automatic-efficiency instructions were edited; preserve your changes by removing only their codeunlimited marker lines, then retry",
+            ));
+        }
+        if remove {
+            return Ok(format!(
+                "{}{}",
+                &current[..range.start],
+                &current[range.end..]
+            ));
+        }
+        return Ok(current.to_string());
+    }
+    if remove {
+        Ok(current.to_string())
     } else {
-        policy_block(current)
-    };
-    Ok(match range {
-        Some(r) => format!("{}{}{}", &current[..r.start], block, &current[r.end..]),
-        None if remove => current.to_string(),
-        None => format!("{current}{block}"),
-    })
+        Ok(format!("{current}{}", policy_block(current)))
+    }
 }
 
 fn autopilot_policy_block(current: &str) -> String {
@@ -379,8 +389,9 @@ fn inspect() -> io::Result<Value> {
         },
         "runtime": {
             "available": true,
-            "active_managed_run": false,
-            "statement": "Setup installs policy only; it does not start or prove an active managed run."
+            "active_managed_run": Value::Null,
+            "inspection": "not_inspected",
+            "statement": "Setup installs policy only and does not inspect project run state."
         },
         "realized_savings_verified": false,
         "scope": "Local global defaults; project/profile overrides and host instruction limits may take precedence. Existing sessions are not restarted."

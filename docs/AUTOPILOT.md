@@ -9,6 +9,8 @@ codeunlimited setup --status --json
 
 It installs two separate, reversible layers. It does not invoke a provider,
 restart the current desktop conversation, or claim that a managed run is active.
+Setup status does not inspect a project, so `active_managed_run` is `null` with
+`inspection` set to `not_inspected`; use `run status` for a named project run.
 
 ## Layer 1: native Codex compaction
 

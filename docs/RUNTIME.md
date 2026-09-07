@@ -34,6 +34,8 @@ codeunlimited run start sprint-3 \
 standard integration profile, and never resumes or overwrites an existing run.
 It uses a bounded built-in worker workflow unless `--skill FILE` is supplied.
 The verifier is mandatory and runs after every successful worker response.
+Global setup status does not inspect this project: its active-run field is null
+and marked `not_inspected`; use `run status NAME --project .` for live state.
 
 Create a small UTF-8 workflow such as `workflow.md`, then initialize a run:
 

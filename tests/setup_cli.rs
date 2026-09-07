@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -24,6 +25,25 @@ fn write(root: &Path, path: &str, text: &str) {
 
 fn read(root: &Path, path: &str) -> String {
     fs::read_to_string(root.join(path)).unwrap()
+}
+
+fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, current: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else if path.is_file() {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 #[test]
@@ -321,7 +341,8 @@ fn default_setup_does_not_enable_autopilot_and_plain_setup_preserves_opt_in() {
     assert_eq!(status["autopilot"]["routing"], "host_agent_instructions");
     assert_eq!(status["autopilot"]["desktop_interception"], false);
     assert_eq!(status["compaction"]["ownership"], "codeunlimited");
-    assert_eq!(status["runtime"]["active_managed_run"], false);
+    assert!(status["runtime"]["active_managed_run"].is_null());
+    assert_eq!(status["runtime"]["inspection"], "not_inspected");
 }
 
 #[test]
@@ -378,6 +399,35 @@ fn edited_autopilot_compaction_block_fails_closed_before_other_writes() {
     command(t.path()).arg("--remove").assert().failure();
     assert_eq!(read(t.path(), "codex/config.toml"), edited);
     assert_eq!(read(t.path(), "claude/CLAUDE.md"), claude);
+}
+
+#[test]
+fn edited_ordinary_policy_fails_closed_for_every_setup_action() {
+    for action in [vec![], vec!["--autopilot"], vec!["--remove"]] {
+        let t = TempDir::new().unwrap();
+        write(t.path(), "claude/CLAUDE.md", "Original Claude rules.\n");
+        write(t.path(), "codex/AGENTS.md", "Original Codex rules.\n");
+        command(t.path()).assert().success();
+
+        write(t.path(), "claude/CLAUDE.md", "Later Claude rules.\n");
+        let edited = read(t.path(), "codex/AGENTS.md").replace(
+            "Read only needed files and line ranges.",
+            "Read the entire workspace repeatedly.",
+        );
+        write(t.path(), "codex/AGENTS.md", &edited);
+        let before = snapshot(t.path());
+
+        command(t.path()).args(action).assert().failure();
+        assert_eq!(snapshot(t.path()), before);
+        assert_eq!(
+            read(t.path(), "claude/CLAUDE.md.codeunlimited.bak"),
+            "Original Claude rules.\n"
+        );
+        assert_eq!(
+            read(t.path(), "codex/AGENTS.md.codeunlimited.bak"),
+            "Original Codex rules.\n"
+        );
+    }
 }
 
 #[test]

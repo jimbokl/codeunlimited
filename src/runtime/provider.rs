@@ -579,7 +579,7 @@ fn run_process(
     project_root: &Path,
     timeout: Duration,
 ) -> Result<RawOutput, ProviderFailure> {
-    let output = capture_process(spec, prompt, project_root, timeout)?;
+    let output = capture_provider_process(spec, prompt, project_root, timeout)?;
     if output.exit_code != 0 {
         return Err(ProviderFailure::Exit(output.exit_code));
     }
@@ -592,14 +592,35 @@ pub(crate) fn capture_process(
     project_root: &Path,
     timeout: Duration,
 ) -> Result<RawOutput, ProviderFailure> {
+    capture_process_with_worker_marker(spec, prompt, project_root, timeout, false)
+}
+
+fn capture_provider_process(
+    spec: &CommandSpec,
+    prompt: &[u8],
+    project_root: &Path,
+    timeout: Duration,
+) -> Result<RawOutput, ProviderFailure> {
+    capture_process_with_worker_marker(spec, prompt, project_root, timeout, true)
+}
+
+fn capture_process_with_worker_marker(
+    spec: &CommandSpec,
+    prompt: &[u8],
+    project_root: &Path,
+    timeout: Duration,
+    runtime_worker: bool,
+) -> Result<RawOutput, ProviderFailure> {
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)
-        .env("CODEUNLIMITED_RUNTIME_WORKER", "1")
         .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if runtime_worker {
+        command.env("CODEUNLIMITED_RUNTIME_WORKER", "1");
+    }
     let started = Instant::now();
     let mut child = command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -762,6 +783,23 @@ mod tests {
         build_claude_command, build_codex_command, parse_claude_output, parse_codex_usage,
         provider_input, ProcessProvider, Provider, ProviderFailure,
     };
+
+    #[test]
+    fn generic_process_capture_does_not_mark_a_verifier_as_a_runtime_worker() {
+        let project = TempDir::new().unwrap();
+        let spec = super::CommandSpec {
+            program: python(),
+            args: vec![
+                OsString::from("-c"),
+                OsString::from(
+                    "import os; print(os.environ.get('CODEUNLIMITED_RUNTIME_WORKER', 'absent'))",
+                ),
+            ],
+        };
+        let output =
+            super::capture_process(&spec, b"", project.path(), Duration::from_secs(3)).unwrap();
+        assert_eq!(output.stdout, b"absent\n");
+    }
 
     fn python() -> PathBuf {
         if cfg!(windows) {

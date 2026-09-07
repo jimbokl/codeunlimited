@@ -29,6 +29,20 @@ fn start(project: &Path, name: &str, mode: &str) -> Command {
 }
 
 fn start_with_verification(project: &Path, name: &str, mode: &str, passes: bool) -> Command {
+    start_with_verification_code(
+        project,
+        name,
+        mode,
+        &format!("raise SystemExit({})", if passes { 0 } else { 1 }),
+    )
+}
+
+fn start_with_verification_code(
+    project: &Path,
+    name: &str,
+    mode: &str,
+    verification_code: &str,
+) -> Command {
     let mut command = binary();
     command
         .args(["run", "start", name, "--project"])
@@ -44,13 +58,22 @@ fn start_with_verification(project: &Path, name: &str, mode: &str, passes: bool)
             "--provider-executable",
         ])
         .arg(fixture())
-        .arg(format!(
-            "--verify-arg=raise SystemExit({})",
-            if passes { 0 } else { 1 }
-        ))
+        .arg(format!("--verify-arg={verification_code}"))
         .arg("--provider-arg=--fixture-mode")
         .arg(format!("--provider-arg={mode}"));
     command
+}
+
+#[test]
+fn start_help_lists_only_supported_subscription_providers() {
+    binary()
+        .args(["run", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("possible values: claude, codex"))
+        .stdout(predicate::str::contains("command").not())
+        .stdout(predicate::str::contains("openai-api").not())
+        .stdout(predicate::str::contains("anthropic-api").not());
 }
 
 fn json_output(mut command: Command) -> Value {
@@ -218,6 +241,39 @@ fn start_completes_with_real_verification_ledger_and_private_checkpoint() {
         .unwrap();
     assert!(status.status.success());
     assert!(status.stdout.is_empty());
+}
+
+#[test]
+fn provider_receives_worker_marker_but_real_verifier_does_not() {
+    let project = TempDir::new().unwrap();
+    let provider_capture = project
+        .path()
+        .join(".codeunlimited/runs/marker/capture.jsonl");
+    let verifier_capture = project
+        .path()
+        .join(".codeunlimited/runs/marker/verifier-marker.txt");
+    let verification_code = format!(
+        "import os,pathlib; pathlib.Path({:?}).write_text(os.environ.get('CODEUNLIMITED_RUNTIME_WORKER', 'absent'))",
+        verifier_capture.to_string_lossy()
+    );
+    let mut command =
+        start_with_verification_code(project.path(), "marker", "complete", &verification_code);
+    command
+        .arg("--provider-arg=--fixture-capture")
+        .arg(format!("--provider-arg={}", provider_capture.display()))
+        .assert()
+        .success();
+
+    let provider: Value = serde_json::from_str(
+        fs::read_to_string(provider_capture)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(provider["worker"], "1");
+    assert_eq!(fs::read_to_string(verifier_capture).unwrap(), "absent");
 }
 
 #[test]
