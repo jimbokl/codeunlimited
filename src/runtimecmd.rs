@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::runtime::engine::{
     cache_probe, init_run, ledger, packet, recover, render_next_prompt, run_steps, status, step,
-    InitRequest, RunRef, RunStatusView,
+    AutoReport, InitRequest, RunRef, RunStatusView,
 };
 use crate::runtime::model::{
     ApiCacheTtl, ProviderConfig, RunStatus, RuntimeError, SubscriptionProfile, VerificationCommand,
@@ -645,7 +645,7 @@ fn execute_start(args: StartArgs) -> Result<(), RunCliError> {
 
     let count = NonZeroUsize::new(args.max_steps)
         .ok_or(RunCliError::Input("--max-steps must be between 1 and 6"))?;
-    let report = run_steps(&reference, count, &ProcessProvider)?;
+    let report = run_start_steps(&reference, count, &ProcessProvider)?;
     if args.json {
         print_json(&report)?;
     } else {
@@ -674,6 +674,29 @@ fn execute_start(args: StartArgs) -> Result<(), RunCliError> {
             Err(RuntimeError::AttemptLimit.into())
         }
     }
+}
+
+fn run_start_steps(
+    reference: &RunRef,
+    count: NonZeroUsize,
+    provider: &ProcessProvider,
+) -> Result<AutoReport, RuntimeError> {
+    let one = NonZeroUsize::new(1).expect("one is non-zero");
+    let mut report = run_steps(reference, one, provider)?;
+    while report.steps.len() < count.get() {
+        let Some(previous) = report.steps.last() else {
+            break;
+        };
+        if previous.status != RunStatus::Running || previous.verification_passed == Some(false) {
+            break;
+        }
+        let next = run_steps(reference, one, provider)?;
+        if next.steps.is_empty() {
+            break;
+        }
+        report.steps.extend(next.steps);
+    }
+    Ok(report)
 }
 
 fn reject_runtime_worker() -> Result<(), RunCliError> {

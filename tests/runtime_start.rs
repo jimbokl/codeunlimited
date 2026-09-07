@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
@@ -22,6 +24,37 @@ fn python() -> &'static str {
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime_driver.py")
+}
+
+fn provider_launcher(project: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let launcher = project.join("runtime-driver.cmd");
+        fs::write(
+            &launcher,
+            format!(
+                "@echo off\r\n{} \"{}\" %*\r\n",
+                python(),
+                fixture().display()
+            ),
+        )
+        .unwrap();
+        launcher
+    }
+    #[cfg(unix)]
+    {
+        let launcher = project.join("runtime-driver.sh");
+        let script = fixture().to_string_lossy().replace('\'', "'\"'\"'");
+        fs::write(
+            &launcher,
+            format!("#!/bin/sh\nexec {} '{}' \"$@\"\n", python(), script),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&launcher).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&launcher, permissions).unwrap();
+        launcher
+    }
 }
 
 fn start(project: &Path, name: &str, mode: &str) -> Command {
@@ -57,7 +90,7 @@ fn start_with_verification_code(
             "codex",
             "--provider-executable",
         ])
-        .arg(fixture())
+        .arg(provider_launcher(project))
         .arg(format!("--verify-arg={verification_code}"))
         .arg("--provider-arg=--fixture-mode")
         .arg(format!("--provider-arg={mode}"));
@@ -311,9 +344,21 @@ fn start_terminates_on_blocked_failed_verification_and_soft_budget() {
         .stdout(predicate::str::contains("\"status\": \"blocked\""));
 
     let failed_check = TempDir::new().unwrap();
+    let capture = failed_check.path().join("provider-calls.jsonl");
     let mut command =
         start_with_verification(failed_check.path(), "failed-check", "complete", false);
-    command.args(["--max-steps", "2"]).assert().code(10);
+    let output = command
+        .args(["--max-steps", "2", "--json"])
+        .arg("--provider-arg=--fixture-capture")
+        .arg(format!("--provider-arg={}", capture.display()))
+        .assert()
+        .code(10)
+        .get_output()
+        .stdout
+        .clone();
+    let report: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(report["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(report["steps"][0]["verification_passed"], false);
     let attempts = fs::read_dir(
         failed_check
             .path()
@@ -321,7 +366,8 @@ fn start_terminates_on_blocked_failed_verification_and_soft_budget() {
     )
     .unwrap()
     .count();
-    assert_eq!(attempts, 2);
+    assert_eq!(attempts, 1);
+    assert_eq!(fs::read_to_string(capture).unwrap().lines().count(), 1);
 
     let budget = TempDir::new().unwrap();
     start(budget.path(), "budget", "continue")
