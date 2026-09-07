@@ -25,6 +25,7 @@
 - Modify: src/main.rs (setup flag).
 - Modify: src/setupcmd.rs; create src/autopilot.rs only if needed to keep owned policy/config logic focused; wire module in src/lib.rs if created.
 - Modify: src/runtimecmd.rs (Start command reusing engine).
+- Modify: src/runtime/provider.rs (set CODEUNLIMITED_RUNTIME_WORKER=1 for child processes; guard provider-invoking CLI commands in runtimecmd before mutation).
 - Modify: tests/setup_cli.rs; create tests/runtime_start.rs.
 - Modify: tests/runtime_ledger.rs and tests/fixtures/runtime_driver.py only to replace the named live-snapshot race with readiness/release.
 - Modify: README.md and docs/RUNTIME.md; create docs/AUTOPILOT.md.
@@ -77,7 +78,7 @@ Command::cargo_bin("codeunlimited").unwrap()
 For valid local fixture runs assert terminal state, real verifier outcome, bounded attempt count, ledger totals/unknown coverage, and unchanged state on duplicate Start. Cover failed verification, blocked worker, budget exhaustion, malformed response requiring recovery, and finite failure handling. Record RED unknown-subcommand before implementation.
 
 - [ ] **Step 4: Implement Start over existing validated engine.**
-Define a narrow Start args type, translate to InitRequest with standard Codex/Claude ProviderConfig only, validate all input before init. Snapshot an optional workflow or a built-in bounded workflow; use a temp file only if the existing init API requires a path. Built-in workflow must explicitly say it is a runtime worker and never launch a nested run; it must preserve the declared objective and verify gate. Invoke init_run then existing run_steps for the finite cap, return existing classified exit codes and truthful JSON. No second state loop, no new retry policy, no silent existing-run resume, no detached daemon. Run focused tests and existing runtime CLI/packets/ledger tests.
+Define a narrow Start args type, translate to InitRequest with standard Codex/Claude ProviderConfig only, validate all input before init. Snapshot an optional workflow or a built-in bounded workflow; use a temp file only if the existing init API requires a path. Built-in workflow must explicitly say it is a runtime worker and never launch a nested run; it must preserve the declared objective and verify gate. Set CODEUNLIMITED_RUNTIME_WORKER=1 in provider child processes and reject provider-invoking start/step/auto/cache-probe from marked workers before mutation or dispatch; retain read-only commands. Test actual fixture-observed environment and CLI refusal without run creation. Invoke init_run then existing run_steps for the finite cap, return existing classified exit codes and truthful JSON. No second state loop, no new retry policy, no silent existing-run resume, no detached daemon. Run focused tests and existing runtime CLI/packets/ledger tests.
 
 - [ ] **Step 5: Stabilize the observed live-ledger fixture race.**
 In tests/fixtures/runtime_driver.py add a bounded test-only ready/release handshake. The live-ledger test must wait for provider readiness (all engine preparation complete), inspect an unchanged live run, then release and join the worker. Keep timeout and cleanup to avoid orphan fixtures on assertion failure. Do not ignore NotFound broadly or alter production ledger semantics. Run the named test then runtime_ledger.
@@ -85,4 +86,3 @@ In tests/fixtures/runtime_driver.py add a bounded test-only ready/release handsh
 - [ ] **Step 6: Document, verify, commit, report.**
 Describe native compaction versus runtime, automatic host routing versus unsupported desktop interception, cold context costs, soft budget overshoot, checkpoint/verification gates, uninstall and platform/version compatibility (scope supported by inspected Codex 0.153.4). Explain that the user can keep ordinary chat while substantial approved execution routes to Start, but instructions are not an OS-level guarantee. Do not claim measured savings.
 Run `cargo fmt --check`, focused integration tests and full `cargo test --locked --quiet` once after integration, `cargo clippy --locked --all-targets -- -D warnings`; save verbose logs and return exact exits. Commit only owned changes; write task report with RED/GREEN evidence. Controller owns independent review and local installation.
-
