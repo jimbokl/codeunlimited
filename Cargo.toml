@@ -1,6 +1,6 @@
 [package]
 name = "codeunlimited"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 rust-version = "1.82"
 description = "Local token-efficiency auditing and bounded stateful orchestration for Claude Code and Codex CLI."

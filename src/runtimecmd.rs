@@ -8,13 +8,14 @@ use serde::Serialize;
 
 use crate::runtime::engine::{
     cache_probe, init_run, ledger, packet, recover, render_next_prompt, run_steps, status, step,
-    InitRequest, RunRef, RunStatusView,
+    AutoReport, InitRequest, RunRef, RunStatusView,
 };
 use crate::runtime::model::{
-    ApiCacheTtl, ProviderConfig, RuntimeError, SubscriptionProfile, VerificationCommand, WorkPlan,
-    DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS, DEFAULT_OBSERVATION_BUDGET_BYTES,
-    DEFAULT_PROMPT_BUDGET_BYTES, DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES,
-    DEFAULT_WORKFLOW_BUDGET_BYTES, MAX_OBSERVATION_BUDGET_BYTES, MAX_WORK_PLAN_BYTES,
+    ApiCacheTtl, ProviderConfig, RunStatus, RuntimeError, SubscriptionProfile, VerificationCommand,
+    WorkPlan, DEFAULT_MAX_ATTEMPTS_PER_REVISION, DEFAULT_MAX_STEPS,
+    DEFAULT_OBSERVATION_BUDGET_BYTES, DEFAULT_PROMPT_BUDGET_BYTES,
+    DEFAULT_PROVIDER_TIMEOUT_SECONDS, DEFAULT_STATE_BUDGET_BYTES, DEFAULT_WORKFLOW_BUDGET_BYTES,
+    MAX_OBSERVATION_BUDGET_BYTES, MAX_WORK_PLAN_BYTES,
 };
 use crate::runtime::provider::ProcessProvider;
 
@@ -27,6 +28,12 @@ const EXIT_INVALID_TRANSITION: i32 = 7;
 const EXIT_RECOVERY_REQUIRED: i32 = 8;
 const EXIT_TIMEOUT: i32 = 9;
 const EXIT_TERMINAL: i32 = 10;
+const START_DEFAULT_MAX_STEPS: usize = 6;
+const START_DEFAULT_MAX_TOTAL_TOKENS: u64 = 1_000_000;
+const START_DEFAULT_PROVIDER_TIMEOUT_SECONDS: u64 = 600;
+const RUNTIME_WORKER_ENV: &str = "CODEUNLIMITED_RUNTIME_WORKER";
+const BUILTIN_WORKER_WORKFLOW: &str = "# Bounded subscription runtime worker\n\
+You are an explicit codeunlimited runtime worker. Preserve the declared objective and acceptance checks. Complete one bounded, reviewable increment per response and return only the required StepEnvelope. Run the configured verification gate after every step. Treat persisted validated state as the checkpoint for completed and remaining work, decisions, evidence, and the next step. Never launch another codeunlimited run or a nested runtime worker.\n";
 
 fn parse_auto_steps(value: &str) -> Result<usize, String> {
     let steps = value
@@ -38,6 +45,33 @@ fn parse_auto_steps(value: &str) -> Result<usize, String> {
         .ok_or_else(|| "steps must be from 1 through 100".to_string())
 }
 
+fn parse_start_steps(value: &str) -> Result<usize, String> {
+    parse_bounded_u64(value, "max steps", START_DEFAULT_MAX_STEPS as u64)
+        .map(|value| value as usize)
+}
+
+fn parse_start_tokens(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(value, "max total tokens", START_DEFAULT_MAX_TOTAL_TOKENS)
+}
+
+fn parse_start_timeout(value: &str) -> Result<u64, String> {
+    parse_bounded_u64(
+        value,
+        "provider timeout seconds",
+        START_DEFAULT_PROVIDER_TIMEOUT_SECONDS,
+    )
+}
+
+fn parse_bounded_u64(value: &str, label: &str, maximum: u64) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{label} must be an integer from 1 through {maximum}"))?;
+    (1..=maximum)
+        .contains(&parsed)
+        .then_some(parsed)
+        .ok_or_else(|| format!("{label} must be from 1 through {maximum}"))
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ProviderKind {
     Claude,
@@ -45,6 +79,12 @@ pub enum ProviderKind {
     Command,
     OpenaiApi,
     AnthropicApi,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum StartProviderKind {
+    Claude,
+    Codex,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -91,11 +131,55 @@ pub struct TargetArgs {
     project: PathBuf,
 }
 
+#[derive(Debug, Args)]
+pub struct StartArgs {
+    /// Durable run name within the project
+    name: String,
+    /// Terminal objective supplied to every bounded step
+    #[arg(long)]
+    objective: String,
+    /// Required verification executable (no shell)
+    #[arg(long, value_name = "PROGRAM")]
+    verify_program: PathBuf,
+    /// Exact verification argument; repeat to preserve argv boundaries
+    #[arg(long, value_name = "ARG")]
+    verify_arg: Vec<String>,
+    /// Subscription provider (codex or claude only)
+    #[arg(long, value_enum, default_value = "codex")]
+    provider: StartProviderKind,
+    /// Optional workflow/skill file; otherwise the bounded built-in workflow is used
+    #[arg(long, value_name = "FILE")]
+    skill: Option<PathBuf>,
+    /// Provider binary; defaults to codex or claude
+    #[arg(long, value_name = "PROGRAM")]
+    provider_executable: Option<PathBuf>,
+    /// Exact provider argument; repeat to preserve argv boundaries
+    #[arg(long, value_name = "ARG")]
+    provider_arg: Vec<String>,
+    /// Maximum provider attempts for this run (1-6)
+    #[arg(long, default_value_t = START_DEFAULT_MAX_STEPS, value_parser = parse_start_steps)]
+    max_steps: usize,
+    /// Soft admission boundary for observed input plus output tokens
+    #[arg(long, default_value_t = START_DEFAULT_MAX_TOTAL_TOKENS, value_parser = parse_start_tokens)]
+    max_total_tokens: u64,
+    /// Hard timeout for one provider process (1-600 seconds)
+    #[arg(long, default_value_t = START_DEFAULT_PROVIDER_TIMEOUT_SECONDS, value_parser = parse_start_timeout)]
+    provider_timeout_seconds: u64,
+    /// Project root containing .codeunlimited/runs
+    #[arg(long, default_value = ".", value_name = "PATH")]
+    project: PathBuf,
+    /// Machine-readable batch report
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Subcommand)]
 // Clap parses one command per process; boxing individual CLI fields adds no
 // useful memory saving and complicates the public argument grammar.
 #[allow(clippy::large_enum_variant)]
 pub enum RunCmd {
+    /// Initialize and execute one finite subscription-only run
+    Start(StartArgs),
     /// Create durable state without invoking a provider
     Init {
         /// Durable run name within the project
@@ -252,6 +336,7 @@ pub fn run(command: RunCmd) -> i32 {
 
 fn execute(command: RunCmd) -> Result<(), RunCliError> {
     match command {
+        RunCmd::Start(args) => execute_start(args)?,
         RunCmd::Init {
             name,
             project,
@@ -424,6 +509,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 .map_err(|_| RunCliError::Output)?;
         }
         RunCmd::Step { target, json } => {
+            reject_runtime_worker()?;
             let report = step(&reference(target)?, &ProcessProvider)?;
             if json {
                 print_json(&report)?;
@@ -443,6 +529,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             steps,
             json,
         } => {
+            reject_runtime_worker()?;
             let count = NonZeroUsize::new(steps)
                 .ok_or(RunCliError::Input("--steps must be between 1 and 100"))?;
             let report = run_steps(&reference(target)?, count, &ProcessProvider)?;
@@ -457,6 +544,7 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
             }
         }
         RunCmd::CacheProbe { target, json } => {
+            reject_runtime_worker()?;
             let report = cache_probe(&reference(target)?, &ProcessProvider)?;
             if json {
                 print_json(&report)?;
@@ -489,6 +577,133 @@ fn execute(command: RunCmd) -> Result<(), RunCliError> {
                 view.run_name, view.revision
             );
         }
+    }
+    Ok(())
+}
+
+fn execute_start(args: StartArgs) -> Result<(), RunCliError> {
+    reject_runtime_worker()?;
+    let project = resolve_project(&args.project)?;
+    let provider = match args.provider {
+        StartProviderKind::Codex => ProviderConfig::Codex {
+            executable: args.provider_executable.unwrap_or_else(|| "codex".into()),
+            args: args.provider_arg,
+            subscription_profile: SubscriptionProfile::Standard,
+        },
+        StartProviderKind::Claude => ProviderConfig::Claude {
+            executable: args.provider_executable.unwrap_or_else(|| "claude".into()),
+            args: args.provider_arg,
+            subscription_profile: SubscriptionProfile::Standard,
+        },
+    };
+
+    let mut built_in = None;
+    let workflow_source = if let Some(path) = args.skill {
+        path
+    } else {
+        let mut file = tempfile::Builder::new()
+            .prefix("codeunlimited-worker-")
+            .suffix(".md")
+            .tempfile()
+            .map_err(|_| RunCliError::Input("could not prepare the built-in workflow"))?;
+        file.write_all(BUILTIN_WORKER_WORKFLOW.as_bytes())
+            .map_err(|_| RunCliError::Input("could not prepare the built-in workflow"))?;
+        file.as_file()
+            .sync_all()
+            .map_err(|_| RunCliError::Input("could not prepare the built-in workflow"))?;
+        let path = file.path().to_path_buf();
+        built_in = Some(file);
+        path
+    };
+    let reference = RunRef::new(project.clone(), args.name.clone());
+    let mut request = InitRequest::new(
+        project.clone(),
+        args.name,
+        workflow_source,
+        args.objective,
+        provider,
+    );
+    request.max_steps = args.max_steps as u64;
+    request.max_total_tokens = Some(args.max_total_tokens);
+    request.provider_timeout_seconds = args.provider_timeout_seconds;
+    request.verification_command = Some(VerificationCommand {
+        program: args.verify_program,
+        args: args.verify_arg,
+    });
+    request.verify_every_step = true;
+    request.allow_unverified_completion = false;
+    init_run(request)?;
+    drop(built_in);
+
+    let ignore = project
+        .join(".codeunlimited")
+        .join("runs")
+        .join(&reference.run_name)
+        .join(".gitignore");
+    crate::safeio::atomic_create(&ignore, b"*\n")
+        .map_err(|_| RuntimeError::Io("create run-local ignore".into()))?;
+
+    let count = NonZeroUsize::new(args.max_steps)
+        .ok_or(RunCliError::Input("--max-steps must be between 1 and 6"))?;
+    let report = run_start_steps(&reference, count, &ProcessProvider)?;
+    if args.json {
+        print_json(&report)?;
+    } else {
+        println!(
+            "run={} committed_steps={}",
+            report.run_name,
+            report.steps.len()
+        );
+    }
+    let view = status(&reference)?;
+    match view.status {
+        RunStatus::Complete => Ok(()),
+        RunStatus::Blocked => Err(RuntimeError::TerminalRun.into()),
+        RunStatus::Running => {
+            let report = ledger(&reference)?;
+            if report.cap_reached {
+                return Err(RuntimeError::TokenCapReached {
+                    limit: args.max_total_tokens,
+                    observed: report.coverage.observed_total_tokens.unwrap_or(u64::MAX),
+                }
+                .into());
+            }
+            if report.coverage.attempt_count > 0 && report.coverage.total_tokens.is_none() {
+                return Err(RuntimeError::TokenCapUsageUnknown.into());
+            }
+            Err(RuntimeError::AttemptLimit.into())
+        }
+    }
+}
+
+fn run_start_steps(
+    reference: &RunRef,
+    count: NonZeroUsize,
+    provider: &ProcessProvider,
+) -> Result<AutoReport, RuntimeError> {
+    let one = NonZeroUsize::new(1).expect("one is non-zero");
+    let mut report = run_steps(reference, one, provider)?;
+    while report.steps.len() < count.get() {
+        let Some(previous) = report.steps.last() else {
+            break;
+        };
+        if previous.status != RunStatus::Running || previous.verification_passed == Some(false) {
+            break;
+        }
+        let next = run_steps(reference, one, provider)?;
+        if next.steps.is_empty() {
+            break;
+        }
+        report.steps.extend(next.steps);
+    }
+    Ok(report)
+}
+
+fn reject_runtime_worker() -> Result<(), RunCliError> {
+    if std::env::var_os(RUNTIME_WORKER_ENV).is_some() {
+        return Err(RunCliError::Input(
+            "runtime workers cannot invoke provider-dispatching runtime commands",
+        ));
     }
     Ok(())
 }

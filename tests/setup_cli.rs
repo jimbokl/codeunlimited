@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -24,6 +25,25 @@ fn write(root: &Path, path: &str, text: &str) {
 
 fn read(root: &Path, path: &str) -> String {
     fs::read_to_string(root.join(path)).unwrap()
+}
+
+fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(root: &Path, current: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else if path.is_file() {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut files = BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 #[test]
@@ -263,4 +283,172 @@ fn symlinked_instruction_file_is_not_followed() {
     command(t.path()).assert().failure();
     assert_eq!(read(t.path(), "outside"), "private rules");
     assert!(!t.path().join("claude/CLAUDE.md").exists());
+}
+
+#[test]
+fn autopilot_installs_native_growth_budget_and_is_reversible() {
+    let t = TempDir::new().unwrap();
+    write(t.path(), "codex/config.toml", "model = \"chosen-model\"\n");
+
+    command(t.path()).arg("--autopilot").assert().success();
+    let installed = read(t.path(), "codex/config.toml");
+    let config: toml::Value = installed.parse().unwrap();
+    assert_eq!(config["model"].as_str(), Some("chosen-model"));
+    assert_eq!(
+        config["model_auto_compact_token_limit"].as_integer(),
+        Some(64_000)
+    );
+    assert_eq!(
+        config["model_auto_compact_token_limit_scope"].as_str(),
+        Some("body_after_prefix")
+    );
+    for path in ["claude/CLAUDE.md", "codex/AGENTS.md"] {
+        assert!(read(t.path(), path).contains("<!-- codeunlimited:autopilot:v1 -->"));
+    }
+
+    command(t.path()).arg("--autopilot").assert().success();
+    assert_eq!(read(t.path(), "codex/config.toml"), installed);
+    command(t.path()).arg("--remove").assert().success();
+    assert_eq!(
+        read(t.path(), "codex/config.toml"),
+        "model = \"chosen-model\"\n"
+    );
+    assert!(!read(t.path(), "claude/CLAUDE.md").contains("codeunlimited:autopilot"));
+}
+
+#[test]
+fn default_setup_does_not_enable_autopilot_and_plain_setup_preserves_opt_in() {
+    let t = TempDir::new().unwrap();
+    command(t.path()).assert().success();
+    let status = command(t.path())
+        .args(["--status", "--json"])
+        .output()
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["autopilot"]["enabled"], false);
+    assert!(status["compaction"]["threshold"].is_null());
+
+    command(t.path()).arg("--autopilot").assert().success();
+    let installed = read(t.path(), "codex/config.toml");
+    command(t.path()).assert().success();
+    assert_eq!(read(t.path(), "codex/config.toml"), installed);
+    let status = command(t.path())
+        .args(["--status", "--json"])
+        .output()
+        .unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["autopilot"]["enabled"], true);
+    assert_eq!(status["autopilot"]["routing"], "host_agent_instructions");
+    assert_eq!(status["autopilot"]["desktop_interception"], false);
+    assert_eq!(status["compaction"]["ownership"], "codeunlimited");
+    assert!(status["runtime"]["active_managed_run"].is_null());
+    assert_eq!(status["runtime"]["inspection"], "not_inspected");
+}
+
+#[test]
+fn autopilot_never_completes_a_user_owned_half_policy() {
+    for original in [
+        "model_auto_compact_token_limit = 90000\nmodel = 'mine'\n",
+        "model_auto_compact_token_limit_scope = 'entire_context'\nmodel = 'mine'\n",
+    ] {
+        let t = TempDir::new().unwrap();
+        write(t.path(), "codex/config.toml", original);
+        command(t.path()).arg("--autopilot").assert().success();
+        let installed = read(t.path(), "codex/config.toml");
+        assert!(installed.ends_with(original));
+        let config: toml::Value = installed.parse().unwrap();
+        if original.contains("token_limit =") {
+            assert!(config.get("model_auto_compact_token_limit_scope").is_none());
+        } else {
+            assert!(config.get("model_auto_compact_token_limit").is_none());
+        }
+        let status = command(t.path())
+            .args(["--status", "--json"])
+            .output()
+            .unwrap();
+        let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+        assert_eq!(status["autopilot"]["enabled"], true);
+        assert_eq!(status["compaction"]["ownership"], "user");
+    }
+}
+
+#[test]
+fn edited_autopilot_block_fails_closed_before_other_writes() {
+    let t = TempDir::new().unwrap();
+    command(t.path()).arg("--autopilot").assert().success();
+    let claude = read(t.path(), "claude/CLAUDE.md");
+    let edited = read(t.path(), "codex/AGENTS.md").replace(
+        "host may prepare a bounded workflow",
+        "host may erase the current conversation",
+    );
+    write(t.path(), "codex/AGENTS.md", &edited);
+
+    command(t.path()).arg("--remove").assert().failure();
+    assert_eq!(read(t.path(), "codex/AGENTS.md"), edited);
+    assert_eq!(read(t.path(), "claude/CLAUDE.md"), claude);
+}
+
+#[test]
+fn edited_autopilot_compaction_block_fails_closed_before_other_writes() {
+    let t = TempDir::new().unwrap();
+    command(t.path()).arg("--autopilot").assert().success();
+    let claude = read(t.path(), "claude/CLAUDE.md");
+    let edited = read(t.path(), "codex/config.toml").replace("64000", "65000");
+    write(t.path(), "codex/config.toml", &edited);
+
+    command(t.path()).arg("--remove").assert().failure();
+    assert_eq!(read(t.path(), "codex/config.toml"), edited);
+    assert_eq!(read(t.path(), "claude/CLAUDE.md"), claude);
+}
+
+#[test]
+fn edited_ordinary_policy_fails_closed_for_every_setup_action() {
+    for action in [vec![], vec!["--autopilot"], vec!["--remove"]] {
+        let t = TempDir::new().unwrap();
+        write(t.path(), "claude/CLAUDE.md", "Original Claude rules.\n");
+        write(t.path(), "codex/AGENTS.md", "Original Codex rules.\n");
+        command(t.path()).assert().success();
+
+        write(t.path(), "claude/CLAUDE.md", "Later Claude rules.\n");
+        let edited = read(t.path(), "codex/AGENTS.md").replace(
+            "Read only needed files and line ranges.",
+            "Read the entire workspace repeatedly.",
+        );
+        write(t.path(), "codex/AGENTS.md", &edited);
+        let before = snapshot(t.path());
+
+        command(t.path()).args(action).assert().failure();
+        assert_eq!(snapshot(t.path()), before);
+        assert_eq!(
+            read(t.path(), "claude/CLAUDE.md.codeunlimited.bak"),
+            "Original Claude rules.\n"
+        );
+        assert_eq!(
+            read(t.path(), "codex/AGENTS.md.codeunlimited.bak"),
+            "Original Codex rules.\n"
+        );
+    }
+}
+
+#[test]
+fn autopilot_covers_the_active_codex_override_and_preserves_crlf_bom() {
+    let t = TempDir::new().unwrap();
+    let original = "\u{feff}# Windows editor\r\nmodel = 'my-model'\r\n";
+    write(t.path(), "codex/config.toml", original);
+    write(t.path(), "codex/AGENTS.override.md", "Override rules.\r\n");
+    command(t.path()).arg("--autopilot").assert().success();
+
+    let config = read(t.path(), "codex/config.toml");
+    assert!(config.starts_with('\u{feff}'));
+    assert!(!config.replace("\r\n", "").contains('\n'));
+    let instructions = read(t.path(), "codex/AGENTS.override.md");
+    assert!(instructions.starts_with("Override rules.\r\n"));
+    assert!(instructions.contains("<!-- codeunlimited:autopilot:v1 -->\r\n"));
+
+    command(t.path()).arg("--remove").assert().success();
+    assert_eq!(read(t.path(), "codex/config.toml"), original);
+    assert_eq!(
+        read(t.path(), "codex/AGENTS.override.md"),
+        "Override rules.\r\n"
+    );
 }

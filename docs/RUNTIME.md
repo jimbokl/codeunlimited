@@ -19,6 +19,24 @@ it performs multiple tool actions inside one step.
 
 ## Quick start
 
+For one approved finite subscription run, initialize and execute in one command:
+
+```bash
+codeunlimited run start sprint-3 \
+  --project . \
+  --objective "Implement and verify the approved change" \
+  --verify-program cargo \
+  --verify-arg test \
+  --json
+```
+
+`run start` accepts only the Codex and Claude subscription adapters, uses their
+standard integration profile, and never resumes or overwrites an existing run.
+It uses a bounded built-in worker workflow unless `--skill FILE` is supplied.
+The verifier is mandatory and runs after every successful worker response.
+Global setup status does not inspect this project: its active-run field is null
+and marked `not_inspected`; use `run status NAME --project .` for live state.
+
 Create a small UTF-8 workflow such as `workflow.md`, then initialize a run:
 
 ```bash
@@ -163,12 +181,15 @@ attempts/           immutable metadata-only attempt records
 attempt-intent.json present only while dispatch/finalization is unresolved
 archive/            compacted completed items and decisions
 recovery.json       present only after an ambiguous attempt
+.gitignore          `*` for run-start checkpoints; keeps the new run private by default
 ```
 
 Control files are written with atomic replacement, regular-file checks, and
 symlink rejection. The run lock serializes state transitions. Add this local
-runtime state to the project ignore file unless the team has explicitly chosen
-another state-sharing policy:
+runtime state to the project ignore file for manually initialized runs unless
+the team has explicitly chosen another state-sharing policy. `run start` creates
+the narrow run-local ignore file before its first dispatch and never overwrites
+an existing run or user sharing policy:
 
 ```gitignore
 .codeunlimited/runs/
@@ -195,6 +216,13 @@ defaults to 100 total attempts, and a revision defaults to two failed attempts.
 
 `run auto` is always finite (`--steps 1..100`) and also respects the run-wide
 limits. Terminal or exhausted runs do not invoke another provider.
+
+`run start` has tighter convenience-command ceilings: one to six attempts,
+one to 1,000,000 reported input-plus-output tokens, and one to 600 seconds per
+provider process. Its defaults are the maxima in those ranges. The token limit
+is still a soft next-call admission boundary: provider-internal use is not
+observable in advance, so the last admitted worker can overshoot it. Missing
+usage stops the next worker rather than being counted as zero.
 
 Optional `run init --max-total-tokens N` is a soft next-call admission limit
 over complete reported worker-attempt counters. The first attempt is allowed.
@@ -252,6 +280,11 @@ state and observation. It does not replace Codex's built-in instructions with
 the stable artifact is not an AGENTS.md snapshot. Ordered reads are a worker
 instruction, not an enforced provider cache boundary. Neither adapter resumes
 a provider conversation or stores a provider session ID.
+
+Every provider child process receives `CODEUNLIMITED_RUNTIME_WORKER=1`.
+Provider-dispatching `run start`, `run step`, `run auto`, and `run cache-probe`
+commands reject that marker before creating a run or dispatching another
+worker. Read-only `status`, `ledger`, and `packet` inspection remains available.
 
 OpenAI/Codex input totals include cached input. Anthropic `input_tokens` is the
 uncached remainder, so transported input is uncached + cache read + cache write.
@@ -367,7 +400,7 @@ There are two distinct planes:
 
 - The **observation plane** (`audit`, `delta`, `report`, and experiment
   accounting) parses local metadata and makes no network requests.
-- The **execution plane** (`run step`, `run auto`, and `run cache-probe`) invokes
+- The **execution plane** (`run start`, `run step`, `run auto`, and `run cache-probe`) invokes
   the selected subscription process or optional API. A provider process inherits the user's
   environment and can read or modify project files, use its existing
   authentication, invoke tools, and make network requests according to the

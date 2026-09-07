@@ -4,7 +4,7 @@ use std::path::Path;
 fn package_declares_current_msrv_and_license() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("Cargo.toml");
-    assert!(manifest.contains("version = \"2.4.0\""));
+    assert!(manifest.contains("version = \"2.5.0\""));
     assert!(manifest.contains("rust-version = \"1.82\""));
 
     let license = std::fs::read_to_string(root.join("LICENSE")).expect("LICENSE");

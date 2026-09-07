@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::process::Stdio;
+use std::process::{Child, Command as ProcessCommand, ExitStatus};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -178,6 +178,48 @@ fn wait_for(path: &Path) {
             path.display()
         );
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+struct HandshakeChild {
+    child: Option<Child>,
+    release: PathBuf,
+}
+
+impl HandshakeChild {
+    fn new(child: Child, release: PathBuf) -> Self {
+        Self {
+            child: Some(child),
+            release,
+        }
+    }
+
+    fn release_and_wait(mut self) -> ExitStatus {
+        fs::write(&self.release, b"release\n").expect("release provider fixture");
+        self.child.take().expect("child").wait().expect("step exit")
+    }
+}
+
+impl Drop for HandshakeChild {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let _ = fs::write(&self.release, b"release\n");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -464,9 +506,15 @@ fn legacy_optional_fields_default_without_rewriting_during_inspection() {
 #[test]
 fn intent_is_visible_while_worker_runs_and_ledger_never_claims_complete() {
     let project = TempDir::new().expect("project");
-    init_command(project.path(), "busy", "sleep")
-        .arg("--provider-arg=--sleep")
-        .arg("--provider-arg=1.0")
+    let ready = project.path().join("provider.ready");
+    let release = project.path().join("provider.release");
+    init_command(project.path(), "busy", "success")
+        .arg("--provider-arg=--ready")
+        .arg(format!("--provider-arg={}", ready.display()))
+        .arg("--provider-arg=--release")
+        .arg(format!("--provider-arg={}", release.display()))
+        .arg("--provider-arg=--handshake-timeout")
+        .arg("--provider-arg=5.0")
         .assert()
         .success();
     let run = run_dir(project.path(), "busy");
@@ -477,8 +525,10 @@ fn intent_is_visible_while_worker_runs_and_ledger_never_claims_complete() {
         .arg("--json")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let mut child = step.spawn().expect("step process");
-    wait_for(&intent);
+    let child = step.spawn().expect("step process");
+    let child = HandshakeChild::new(child, release);
+    wait_for(&ready);
+    assert!(intent.exists());
 
     let before = snapshot_regular_files(&run);
     let report = ledger(project.path(), "busy");
@@ -497,7 +547,7 @@ fn intent_is_visible_while_worker_runs_and_ledger_never_claims_complete() {
     assert_eq!(status["recovery_required"], true);
     assert_eq!(snapshot_regular_files(&run), before);
 
-    assert!(child.wait().expect("step exit").success());
+    assert!(child.release_and_wait().success());
     assert!(!intent.exists());
     assert!(run.join("attempts/00000001.json").exists());
 }
