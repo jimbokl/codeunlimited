@@ -12,6 +12,12 @@ const END: &str = "<!-- /codeunlimited:auto -->";
 const CONFIG_START: &str = "# codeunlimited:auto:v1";
 const CONFIG_END: &str = "# /codeunlimited:auto";
 const CAP: &str = "tool_output_token_limit = 4000";
+const AUTOPILOT_START: &str = "<!-- codeunlimited:autopilot:v1 -->";
+const AUTOPILOT_END: &str = "<!-- /codeunlimited:autopilot -->";
+const AUTOPILOT_CONFIG_START: &str = "# codeunlimited:autopilot:v1";
+const AUTOPILOT_CONFIG_END: &str = "# codeunlimited:autopilot:end:v1";
+const COMPACTION_THRESHOLD: &str = "model_auto_compact_token_limit = 64000";
+const COMPACTION_SCOPE: &str = "model_auto_compact_token_limit_scope = \"body_after_prefix\"";
 const POLICY: &str = "## Automatic token efficiency (codeunlimited)\n\
 Apply these defaults while doing normal work; no audit or setup command is needed per task.\n\
 - Read only needed files and line ranges. Reuse fresh context; re-read when files changed or context was lost.\n\
@@ -22,6 +28,14 @@ Apply these defaults while doing normal work; no audit or setup command is neede
 - Give concise results; omit repeated plans, whole-file dumps and duplicate narration.\n\
 Keep required tests, correctness checks, model quality, permissions and user/project instructions. Do not disable integrations, delegate, switch models, or start external API calls solely to save tokens. If a project has its own codeunlimited policy, prefer it.\n\
 These are workflow defaults, not a guarantee of token or subscription-quota savings.";
+const AUTOPILOT_POLICY: &str = "## Bounded subscription runtime routing (codeunlimited)
+For already-authorized, substantial multi-step scoped coding work with a deterministic verifier, the host may prepare a bounded workflow or plan and invoke `codeunlimited run start` automatically. The invocation authorizes only that bounded work.
+- Do not route ordinary conversation, read-only status or review, or trivial work into the runtime.
+- Never launch a codeunlimited runtime command from inside an explicit runtime worker.
+- Preserve the user's objective, acceptance checks, permissions and integrations. Retain an explicitly selected model and reasoning effort through supported provider arguments; otherwise do not silently switch them.
+- Treat validated runtime state as the checkpoint. It records the objective, completed and remaining work, decisions, evidence, and next step.
+- Never clear, restart, or edit the live desktop conversation.
+This is host-agent guidance, not transparent desktop interception. The runtime is finite and subscription-only; setup itself does not start a managed run.";
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
@@ -123,16 +137,97 @@ fn policy_next(current: &str, remove: bool) -> io::Result<String> {
     })
 }
 
-fn config_next(current: &str, remove: bool, skip: bool) -> io::Result<String> {
+fn autopilot_policy_block(current: &str) -> String {
+    format!("\n{AUTOPILOT_START}\n{AUTOPILOT_POLICY}\n{AUTOPILOT_END}\n")
+        .replace('\n', eol(current))
+}
+
+fn autopilot_policy_next(current: &str, remove: bool, install: bool) -> io::Result<String> {
+    let range = owned_range(current, AUTOPILOT_START, AUTOPILOT_END, true)?;
+    if let Some(range) = range {
+        if current[range.clone()] != autopilot_policy_block(current) {
+            return Err(invalid(
+                "Managed autopilot instructions were edited; preserve your changes by removing only their codeunlimited marker lines, then retry",
+            ));
+        }
+        if remove {
+            return Ok(format!(
+                "{}{}",
+                &current[..range.start],
+                &current[range.end..]
+            ));
+        }
+        return Ok(current.to_string());
+    }
+    if remove || !install {
+        Ok(current.to_string())
+    } else {
+        Ok(format!("{current}{}", autopilot_policy_block(current)))
+    }
+}
+
+fn config_next(current: &str, remove: bool, skip: bool, autopilot: bool) -> io::Result<String> {
     // A UTF-8 BOM is valid only at byte zero. Keep it outside owned ranges so
     // insertion, subsequent upgrades, and removal all preserve the same bytes.
     let (prefix, body) = current
         .strip_prefix('\u{feff}')
         .map_or(("", current), |body| ("\u{feff}", body));
-    let next = format!("{prefix}{}", config_body_next(body, remove, skip)?);
+    let ordinary = config_body_next(body, remove, skip)?;
+    let next = format!(
+        "{prefix}{}",
+        autopilot_config_body_next(&ordinary, remove, autopilot)?
+    );
     next.parse::<toml::Value>()
         .map_err(|_| invalid("Generated Codex configuration is invalid; no setup files changed"))?;
     Ok(next)
+}
+
+fn autopilot_config_body_next(current: &str, remove: bool, install: bool) -> io::Result<String> {
+    let parsed: toml::Value = current
+        .parse()
+        .map_err(|_| invalid("Invalid Codex config.toml; no setup files changed"))?;
+    if let Some(range) = owned_range(current, AUTOPILOT_CONFIG_START, AUTOPILOT_CONFIG_END, false)?
+    {
+        let expected = format!(
+            "{AUTOPILOT_CONFIG_START}\n{COMPACTION_THRESHOLD}\n{COMPACTION_SCOPE}\n{AUTOPILOT_CONFIG_END}\n"
+        )
+        .replace('\n', eol(current));
+        if current[range.clone()] != expected
+            || parsed
+                .get("model_auto_compact_token_limit")
+                .and_then(|value| value.as_integer())
+                != Some(64_000)
+            || parsed
+                .get("model_auto_compact_token_limit_scope")
+                .and_then(|value| value.as_str())
+                != Some("body_after_prefix")
+        {
+            return Err(invalid(
+                "Managed Codex compaction policy was edited; preserve your values by removing only its codeunlimited comment markers, then retry",
+            ));
+        }
+        if remove {
+            return Ok(format!(
+                "{}{}",
+                &current[..range.start],
+                &current[range.end..]
+            ));
+        }
+        return Ok(current.to_string());
+    }
+    if remove || !install {
+        return Ok(current.to_string());
+    }
+    if parsed.get("model_auto_compact_token_limit").is_some()
+        || parsed.get("model_auto_compact_token_limit_scope").is_some()
+    {
+        return Ok(current.to_string());
+    }
+    let block = format!(
+        "{AUTOPILOT_CONFIG_START}\n{COMPACTION_THRESHOLD}\n{COMPACTION_SCOPE}\n{AUTOPILOT_CONFIG_END}\n"
+    )
+    .replace('\n', eol(current));
+    Ok(format!("{block}{current}"))
 }
 
 fn config_body_next(current: &str, remove: bool, skip: bool) -> io::Result<String> {
@@ -171,7 +266,7 @@ struct Target {
     next: String,
 }
 
-fn targets(remove: bool, skip: bool) -> io::Result<Vec<Target>> {
+fn targets(remove: bool, skip: bool, autopilot: bool) -> io::Result<Vec<Target>> {
     let claude = provider_home("CLAUDE_CONFIG_DIR", ".claude")?;
     let codex = provider_home("CODEX_HOME", ".codex")?;
     let override_path = codex.join("AGENTS.override.md");
@@ -186,7 +281,9 @@ fn targets(remove: bool, skip: bool) -> io::Result<Vec<Target>> {
     let mut result = Vec::new();
     for path in paths {
         let current = read(&path)?;
-        let next = policy_next(current.as_deref().unwrap_or(""), remove)?;
+        let current_text = current.as_deref().unwrap_or("");
+        let next = policy_next(current_text, remove)?;
+        let next = autopilot_policy_next(&next, remove, autopilot)?;
         result.push(Target {
             path,
             current,
@@ -195,7 +292,7 @@ fn targets(remove: bool, skip: bool) -> io::Result<Vec<Target>> {
     }
     let path = codex.join("config.toml");
     let current = read(&path)?;
-    let next = config_next(current.as_deref().unwrap_or(""), remove, skip)?;
+    let next = config_next(current.as_deref().unwrap_or(""), remove, skip, autopilot)?;
     result.push(Target {
         path,
         current,
@@ -225,30 +322,73 @@ fn inspect() -> io::Result<Value> {
     };
     let mut files = Vec::new();
     let mut enabled = true;
+    let mut autopilot_enabled = true;
     for path in [claude.join("CLAUDE.md"), active_codex] {
         let text = read(&path)?.unwrap_or_default();
         let active =
             owned_range(&text, START, END, true)?.is_some_and(|r| text[r] == policy_block(&text));
+        let autopilot_active = owned_range(&text, AUTOPILOT_START, AUTOPILOT_END, true)?
+            .is_some_and(|r| text[r] == autopilot_policy_block(&text));
         enabled &= active;
-        files.push(json!({ "path": path, "policy_installed": active }));
+        autopilot_enabled &= autopilot_active;
+        files.push(json!({
+            "path": path,
+            "policy_installed": active,
+            "autopilot_installed": autopilot_active
+        }));
     }
     let config_text = read(&codex.join("config.toml"))?.unwrap_or_default();
     let config: toml::Value = config_text
         .parse()
         .map_err(|_| invalid("Invalid Codex config.toml"))?;
+    let managed_compaction = owned_range(
+        config_text.strip_prefix('\u{feff}').unwrap_or(&config_text),
+        AUTOPILOT_CONFIG_START,
+        AUTOPILOT_CONFIG_END,
+        false,
+    )?
+    .is_some();
+    let threshold = config
+        .get("model_auto_compact_token_limit")
+        .and_then(|value| value.as_integer());
+    let scope = config
+        .get("model_auto_compact_token_limit_scope")
+        .and_then(|value| value.as_str());
+    let compaction_ownership = if managed_compaction {
+        "codeunlimited"
+    } else if threshold.is_some() || scope.is_some() {
+        "user"
+    } else {
+        "default"
+    };
     Ok(json!({
         "schema_version": 1,
         "enabled": enabled,
         "activation": "new_local_sessions",
         "files": files,
         "codex_tool_output_token_limit": config.get("tool_output_token_limit").and_then(|v| v.as_integer()),
+        "autopilot": {
+            "enabled": autopilot_enabled,
+            "routing": "host_agent_instructions",
+            "desktop_interception": false
+        },
+        "compaction": {
+            "threshold": threshold,
+            "scope": scope,
+            "ownership": compaction_ownership
+        },
+        "runtime": {
+            "available": true,
+            "active_managed_run": false,
+            "statement": "Setup installs policy only; it does not start or prove an active managed run."
+        },
         "realized_savings_verified": false,
         "scope": "Local global defaults; project/profile overrides and host instruction limits may take precedence. Existing sessions are not restarted."
     }))
 }
 
-fn apply(remove: bool, skip: bool) -> io::Result<()> {
-    let changes = targets(remove, skip)?;
+fn apply(remove: bool, skip: bool, autopilot: bool) -> io::Result<()> {
+    let changes = targets(remove, skip, autopilot)?;
     for target in changes {
         if target.current.as_deref().unwrap_or("") == target.next {
             continue;
@@ -269,10 +409,16 @@ fn apply(remove: bool, skip: bool) -> io::Result<()> {
     Ok(())
 }
 
-pub fn run(remove: bool, status: bool, json_output: bool, no_tool_limit: bool) -> i32 {
+pub fn run(
+    remove: bool,
+    status: bool,
+    json_output: bool,
+    no_tool_limit: bool,
+    autopilot: bool,
+) -> i32 {
     let result = (|| {
         if !status {
-            apply(remove, no_tool_limit)?;
+            apply(remove, no_tool_limit, autopilot)?;
         }
         inspect()
     })();
@@ -311,6 +457,26 @@ pub fn run(remove: bool, status: bool, json_output: bool, no_tool_limit: bool) -
                 if let Some(cap) = report["codex_tool_output_token_limit"].as_i64() {
                     println!("  Codex configured tool-output history cap: {cap} tokens (explicit overrides take precedence)");
                 }
+                println!(
+                    "  Autopilot routing: {} (host-agent instructions; desktop interception unsupported)",
+                    if report["autopilot"]["enabled"] == true {
+                        "installed"
+                    } else {
+                        "not installed"
+                    }
+                );
+                println!(
+                    "  Native compaction: threshold={} scope={} ownership={}",
+                    report["compaction"]["threshold"]
+                        .as_i64()
+                        .map_or_else(|| "provider default".into(), |value| value.to_string()),
+                    report["compaction"]["scope"]
+                        .as_str()
+                        .unwrap_or("provider default"),
+                    report["compaction"]["ownership"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
                 if enabled {
                     println!("Global defaults are ready for automatic loading in new local Claude Code/Codex sessions. No per-project init, daemon or API key needed.");
                     println!("Project/profile overrides and host instruction limits may take precedence; this check verifies installed files, not a running model.");

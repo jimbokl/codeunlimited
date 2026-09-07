@@ -124,6 +124,17 @@ Stable instructions and changing state have separate transport channels.
 surface when the task does not need it. External OpenAI and Anthropic APIs are
 a separate, optional metered layer with no local coding tools.
 
+For already-approved substantial work, `run start` combines local initialization
+with one finite subscription batch. It requires a verifier, defaults to Codex,
+six attempts, a 1,000,000 reported-token soft admission budget, and a 600-second
+per-process timeout. It never resumes or overwrites a named run:
+
+```bash
+codeunlimited run start sprint-3 \
+  --objective "Implement and verify the approved change" \
+  --verify-program cargo --verify-arg test --json
+```
+
 ```bash
 codeunlimited run init sprint-2 --skill workflow.md \
   --objective "Implement and verify the next planned increment" \
@@ -193,11 +204,17 @@ For an existing binary, `cargo install`, or a manually downloaded release, run
 
 ```bash
 codeunlimited setup --status       # read-only installation check
+codeunlimited setup --autopilot    # opt in to native compaction + bounded runtime routing
 codeunlimited setup --remove       # remove owned defaults; keep your edits/backups
 codeunlimited setup --no-tool-limit # install rules without adding the Codex cap
 codeunlimited monitor status        # all-project usage and latest check, saved JSON
 codeunlimited monitor disable       # stop local monitoring, keep its reports
 ```
+
+Autopilot is instruction-based routing, not interception of the Codex desktop
+app or an OS-level guarantee. Ordinary chat continues to use native Codex
+compaction; already-authorized substantial coding work may be routed to the
+finite runtime. See [autopilot behavior and removal](docs/AUTOPILOT.md).
 
 `CODEUNLIMITED_SKIP_SETUP=1` opts out of activation and monitoring in either installer.
 `CODEUNLIMITED_SKIP_MONITOR=1` skips only monitoring. The native daily job requires

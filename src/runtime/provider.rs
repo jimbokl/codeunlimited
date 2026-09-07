@@ -595,6 +595,7 @@ pub(crate) fn capture_process(
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)
+        .env("CODEUNLIMITED_RUNTIME_WORKER", "1")
         .current_dir(project_root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

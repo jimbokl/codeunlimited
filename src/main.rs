@@ -132,6 +132,9 @@ enum Cmd {
         /// Do not add the Codex tool-output history cap (existing settings stay intact)
         #[arg(long)]
         no_tool_limit: bool,
+        /// Install bounded-runtime routing instructions and a native Codex compaction budget
+        #[arg(long, conflicts_with_all = ["remove", "status"])]
+        autopilot: bool,
     },
     /// Find estimated reclaimable opportunities (offline, local logs only)
     Audit {
@@ -265,8 +268,15 @@ fn main() {
             status,
             json,
             no_tool_limit,
+            autopilot,
         } => {
-            std::process::exit(setupcmd::run(remove, status, json, no_tool_limit));
+            std::process::exit(setupcmd::run(
+                remove,
+                status,
+                json,
+                no_tool_limit,
+                autopilot,
+            ));
         }
         Cmd::Audit {
             source,
