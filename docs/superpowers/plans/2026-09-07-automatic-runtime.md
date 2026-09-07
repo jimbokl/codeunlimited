@@ -40,7 +40,7 @@
 - Status declares `autopilot.enabled`, `autopilot.routing = "host_agent_instructions"`, `autopilot.desktop_interception = false`; compaction exposes configured threshold/scope/ownership and a runtime statement that setup does not mean a managed run is active.
 - Before a new Start worker dispatch, safely write a private ignore-all .gitignore within its newly created run directory; preserve root .gitignore and existing runs. Test real git check-ignore/status, not just file text.
 
-- [ ] **Step 1: Write RED setup behavior tests.**
+- [x] **Step 1: Write RED setup behavior tests.**
 Use existing `command(root)` subprocess helper, compare parsed TOML and actual file preservation rather than source-code strings:
 ```rust
 #[test]
@@ -62,10 +62,10 @@ fn autopilot_installs_native_growth_budget_and_is_reversible() {
 Add cases for conflicting user threshold or scope, edited managed block, invalid config/symlink preflight, CRLF/BOM, override instructions, status no writes, plain setup preserving opt-in and default setup not enabling autopilot.
 Run `cargo test --locked --test setup_cli autopilot`, record expected unknown-flag RED.
 
-- [ ] **Step 2: Implement owned configuration and instruction lifecycle.**
+- [x] **Step 2: Implement owned configuration and instruction lifecycle.**
 Use the existing owned-range/safeio preflight/update mechanism; no wholesale TOML serialization. Add a clap bool and pass it into setup. Use a separate marker pair for autopilot so legacy removal ownership stays valid. Autopilot prose: for authorized multi-step scoped coding with a deterministic verifier, the host may prepare a bounded workflow/plan and invoke Start automatically; never for ordinary chat/read-only work; never inside an explicit runtime worker; retain explicit current model and effort via supported provider args, otherwise do not silently switch; checkpoints contain objective, completed/remaining, decisions, evidence and next step. Never clear the live desktop thread. Run focused tests.
 
-- [ ] **Step 3: Write RED Start behavioral tests.**
+- [x] **Step 3: Write RED Start behavioral tests.**
 Assert new CLI rejects no-verifier, API provider, zero budgets and duplicate names without worker calls. Exercise an actual fixture executable speaking the selected built-in provider protocol, not a mock of the engine. Example CLI expectations:
 ```rust
 Command::cargo_bin("codeunlimited").unwrap()
@@ -78,12 +78,12 @@ Command::cargo_bin("codeunlimited").unwrap()
 ```
 For valid local fixture runs assert terminal state, real verifier outcome, bounded attempt count, ledger totals/unknown coverage, and unchanged state on duplicate Start. Cover failed verification, blocked worker, budget exhaustion, malformed response requiring recovery, and finite failure handling. Record RED unknown-subcommand before implementation.
 
-- [ ] **Step 4: Implement Start over existing validated engine.**
+- [x] **Step 4: Implement Start over existing validated engine.**
 Define a narrow Start args type, translate to InitRequest with standard Codex/Claude ProviderConfig only, validate all input before init. Snapshot an optional workflow or a built-in bounded workflow; use a temp file only if the existing init API requires a path. Built-in workflow must explicitly say it is a runtime worker and never launch a nested run; it must preserve the declared objective and verify gate. Set CODEUNLIMITED_RUNTIME_WORKER=1 in provider child processes and reject provider-invoking start/step/auto/cache-probe from marked workers before mutation or dispatch; retain read-only commands. Test actual fixture-observed environment and CLI refusal without run creation. Invoke init_run then existing run_steps for the finite cap, return existing classified exit codes and truthful JSON. No second state loop, no new retry policy, no silent existing-run resume, no detached daemon. Run focused tests and existing runtime CLI/packets/ledger tests.
 
-- [ ] **Step 5: Stabilize the observed live-ledger fixture race.**
+- [x] **Step 5: Stabilize the observed live-ledger fixture race.**
 In tests/fixtures/runtime_driver.py add a bounded test-only ready/release handshake. The live-ledger test must wait for provider readiness (all engine preparation complete), inspect an unchanged live run, then release and join the worker. Keep timeout and cleanup to avoid orphan fixtures on assertion failure. Do not ignore NotFound broadly or alter production ledger semantics. Run the named test then runtime_ledger.
 
-- [ ] **Step 6: Document, verify, commit, report.**
+- [x] **Step 6: Document, verify, commit, report.**
 Describe native compaction versus runtime, automatic host routing versus unsupported desktop interception, cold context costs, soft budget overshoot, checkpoint/verification gates, uninstall and platform/version compatibility (scope supported by inspected Codex 0.153.4). Explain that the user can keep ordinary chat while substantial approved execution routes to Start, but instructions are not an OS-level guarantee. Do not claim measured savings.
 Run `cargo fmt --check`, focused integration tests and full `cargo test --locked --quiet` once after integration, `cargo clippy --locked --all-targets -- -D warnings`; save verbose logs and return exact exits. Commit only owned changes; write task report with RED/GREEN evidence. Controller owns independent review and local installation.

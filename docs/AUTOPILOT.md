@@ -72,6 +72,11 @@ reached token boundary ends the finite batch. The token boundary is soft: an
 already-running provider cannot be preempted at an exact internal token count
 and may overshoot before the next admission check.
 
+Known diagnostic limitation: an early failed verification currently returns the
+same exit code and plain-text "run attempt limit reached" message as attempt
+exhaustion, even when fewer attempts were used. The batch does stop immediately;
+use `--json` and inspect `verification_passed: false` to distinguish this case.
+
 An ambiguous dispatch is never retried blindly. Inspect `run status` and
 `run ledger`, then use the existing explicit recovery workflow. Continuing a
 non-terminal run uses `run auto` only after inspection; a duplicate `run start`
